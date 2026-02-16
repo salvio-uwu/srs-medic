@@ -5,7 +5,11 @@ import {
   Users, Baby, Zap, HeartPulse, CheckCircle, ChevronDown 
 } from 'lucide-react';
 
-  const SeccionAntecedentes = ({ expediente, updateCampo, sexo, edad }) => {
+const SeccionAntecedentes = ({ 
+  expediente, updateCampo, sexo, edad, 
+  tempAlergia, setTempAlergia, 
+  tempCirugia, setTempCirugia 
+}) => {
   const [activeSubTab, setActiveSubTab] = useState('hereditarios');
   const [activeGinecoTab, setActiveGinecoTab] = useState('menstruaciones');
 
@@ -14,26 +18,6 @@ import {
   const [sugerenciasCie10, setSugerenciasCie10] = useState([]);
   const [mostrarCie10, setMostrarCie10] = useState(false);
   const [busquedaCie10, setBusquedaCie10] = useState('');
-
-  useEffect(() => {
-    const cargarCie10 = async () => {
-      try {
-        const res = await fetch('/data/cie10.json');
-        if (res.ok) setCatalogoCie10(await res.json());
-      } catch (error) {
-        console.error("Error cargando CIE-10:", error);
-      }
-    };
-    cargarCie10();
-  }, []);
-
-  // Estados temporales originales
-  const [tempAlergia, setTempAlergia] = useState({ nombre: '' });
-  const [tempVacuna, setTempVacuna] = useState({ nombre: '', fecha: '', nota: '', seAplicoAqui: false });
-  const [tempCirugia, setTempCirugia] = useState({
-    procedimiento: '', operacion: '', nota: '', unidad: '',
-    tipoFecha: 'fecha', ano: '2024', fechaHora: '', diagnostico: ''
-  });
 
   // --- CARGA DE CATÁLOGO CIE-10 ---
   useEffect(() => {
@@ -48,6 +32,10 @@ import {
     cargarCie10();
   }, []);
 
+  // Estados temporales locales (Solo Vacuna se queda aquí)
+  const [tempVacuna, setTempVacuna] = useState({ nombre: '', fecha: '', nota: '', seAplicoAqui: false });
+
+  // --- AQUÍ EMPIEZAN LOS RENDERS...
   // --- ESTILOS ---
   const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full w-full flex flex-col overflow-hidden";
   const labelClass = "text-[11px] font-bold text-slate-400 uppercase mb-1.5 ml-1 block tracking-wider";

@@ -190,7 +190,7 @@ const Usuarios = () => {
                     <Award size={14}/> Cédula Profesional
                   </label>
                   <input type="text" required className="w-full p-2 border rounded-lg bg-white outline-none focus:border-blue-500" 
-                    placeholder="Ej. 14107539"
+                    placeholder="Escribe la cédula profesional del medico"
                     value={formData.cedula} onChange={e => setFormData({...formData, cedula: e.target.value})} />
                 </div>
                 <div>
@@ -198,7 +198,7 @@ const Usuarios = () => {
                     <GraduationCap size={14}/> Universidad de Egreso
                   </label>
                   <input type="text" required className="w-full p-2 border rounded-lg bg-white outline-none focus:border-blue-500" 
-                    placeholder="Ej. Universidad Autónoma de Nuevo León"
+                    placeholder="Escribe la universidad del medico"
                     value={formData.universidad} onChange={e => setFormData({...formData, universidad: e.target.value})} />
                 </div>
               </div>

@@ -1,3 +1,4 @@
+// src/pages/doctor/expediente/SeccionConsulta.jsx
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, Activity, ArrowLeft, Droplet, Eye, FlaskConical, 
@@ -5,8 +6,16 @@ import {
   Eraser, CheckCircle, AlertCircle, Plus, ChevronRight
 } from 'lucide-react';
 
-const SeccionConsulta = ({ expediente, updateCampo, activeConsulta, setActiveConsulta }) => {
-  // --- ESTADOS INTERNOS (INTACTOS) ---
+// 1. Aquí recibimos tempMed y setTempMed del padre
+const SeccionConsulta = ({ 
+  expediente, 
+  updateCampo, 
+  activeConsulta, 
+  setActiveConsulta, 
+  tempMed, 
+  setTempMed 
+}) => {  
+  
   const [activeExploracion, setActiveExploracion] = useState('signos');
   const [activeEstudiosTab, setActiveEstudiosTab] = useState('paquetes');
   
@@ -18,15 +27,17 @@ const SeccionConsulta = ({ expediente, updateCampo, activeConsulta, setActiveCon
   const [sugerenciasMeds, setSugerenciasMeds] = useState([]);
   const [mostrarMeds, setMostrarMeds] = useState(false);
 
-  const [tempMed, setTempMed] = useState({ nombre: '', dosis: '' });
+  // --- CORRECCIÓN: Se eliminó la línea de useState para tempMed porque ya viene en los props ---
+  
+  // Glucosa se queda local (a menos que decidas subirla también después)
   const [tempGlucosa, setTempGlucosa] = useState({ fecha: '', categoria: 'Antes del desayuno', valor: '' });
 
   // --- CLASES DE ESTILO ORIGINALES ---
-  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full flex flex-col overflow-hidden w-full"; // Aseguramos w-full aquí
+  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full flex flex-col overflow-hidden w-full"; 
   const labelClass = "text-[11px] font-bold text-slate-400 uppercase mb-1.5 ml-1 block tracking-wider";
   const inputClass = "w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm font-medium text-slate-700";
 
-  // Carga de catálogos (INTACTO)
+  // Carga de catálogos
   useEffect(() => {
     const cargarCatalogos = async () => {
       try {
@@ -41,7 +52,7 @@ const SeccionConsulta = ({ expediente, updateCampo, activeConsulta, setActiveCon
 
   // --- RENDERS DE SUB-SECCIONES ---
 
-  // 1. PADEZIMIENTO ACTUAL
+  // 1. PADECIMIENTO ACTUAL
   const renderPadecimiento = () => (
     <div className={sectionClass}>
       <div className="flex items-center gap-3 mb-6 shrink-0">
