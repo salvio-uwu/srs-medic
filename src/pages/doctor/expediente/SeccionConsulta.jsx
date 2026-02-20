@@ -2,11 +2,16 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FileText, Activity, ArrowLeft, Droplet, Eye, FlaskConical, 
-  Search, List, Trash2, Scissors, Camera, HelpCircle, Package, 
-  Eraser, CheckCircle, AlertCircle, Plus, ChevronRight
+  Search, Trash2, Scissors, HelpCircle, Package, 
+  CheckCircle, Mic, Zap, AlertTriangle, ChevronRight, Pill, Sparkles, Brain, X, Check
 } from 'lucide-react';
 
-// 1. Aquí recibimos tempMed y setTempMed del padre
+// --- CONFIGURACIÓN ---
+const API_KEY = "AIzaSyCW6JzQuMgVZDsT4p9EqwtZOYaUl47O4u8"; 
+
+let cacheCie10 = null;
+let cacheMeds = null;
+
 const SeccionConsulta = ({ 
   expediente, 
   updateCampo, 
@@ -16,426 +21,595 @@ const SeccionConsulta = ({
   setTempMed 
 }) => {  
   
+  // --- ESTADOS DE NAVEGACIÓN ---
   const [activeExploracion, setActiveExploracion] = useState('signos');
   const [activeEstudiosTab, setActiveEstudiosTab] = useState('paquetes');
   
-  const [catalogoCie10, setCatalogoCie10] = useState([]);
+  // --- ESTADOS DE BUSCADORES ---
   const [sugerenciasCie10, setSugerenciasCie10] = useState([]);
   const [mostrarCie10, setMostrarCie10] = useState(false);
-
-  const [catalogoMeds, setCatalogoMeds] = useState([]);
   const [sugerenciasMeds, setSugerenciasMeds] = useState([]);
   const [mostrarMeds, setMostrarMeds] = useState(false);
-
-  // --- CORRECCIÓN: Se eliminó la línea de useState para tempMed porque ya viene en los props ---
   
-  // Glucosa se queda local (a menos que decidas subirla también después)
+  // --- ESTADOS IA & DICTADO ---
+  const [analizandoRiesgo, setAnalizandoRiesgo] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [sugiriendoDosis, setSugiriendoDosis] = useState(false);
+  const [generandoPlan, setGenerandoPlan] = useState(false);
+  
+  // --- MEMORIA DE LA IA ---
+  const [planIA, setPlanIA] = useState(null); 
+
+  // --- ESTADOS UI (MODALES) ---
+  const [showRiskModal, setShowRiskModal] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false); 
+  const [riskData, setRiskData] = useState({ mensaje: '', medicamento: '' });
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [tempGlucosa, setTempGlucosa] = useState({ fecha: '', categoria: 'Antes del desayuno', valor: '' });
 
-  // --- CLASES DE ESTILO ORIGINALES ---
-  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full flex flex-col overflow-hidden w-full"; 
-  const labelClass = "text-[11px] font-bold text-slate-400 uppercase mb-1.5 ml-1 block tracking-wider";
-  const inputClass = "w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm font-medium text-slate-700";
-
-  // Carga de catálogos
+  // --- CARGA INICIAL ---
   useEffect(() => {
     const cargarCatalogos = async () => {
-      try {
-        const resCie = await fetch('/data/cie10.json'); 
-        if (resCie.ok) setCatalogoCie10(await resCie.json());
-        const resMeds = await fetch('/data/medicamentos.json');
-        if (resMeds.ok) setCatalogoMeds(await resMeds.json());
-      } catch (error) { console.error("Error cargando catálogos:", error); }
+      if (!cacheCie10) {
+        try { const res = await fetch('/data/cie10.json'); if (res.ok) cacheCie10 = await res.json(); } catch (e) { console.error("Error CIE10", e); }
+      }
+      if (!cacheMeds) {
+        try { const res = await fetch('/data/medicamentos.json'); if (res.ok) cacheMeds = await res.json(); } catch (e) { console.error("Error Meds", e); }
+      }
     };
     cargarCatalogos();
   }, []);
 
-  // --- RENDERS DE SUB-SECCIONES ---
+  // Timer Toast
+  useEffect(() => {
+    if (toast.show) {
+      const t = setTimeout(() => setToast({ ...toast, show: false }), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [toast.show]);
 
-  // 1. PADECIMIENTO ACTUAL
+  const showNotification = (msg, type = 'success') => setToast({ show: true, message: msg, type });
+
+  // ==========================================
+  // FUNCIONES IA (Back-end Logic)
+  // ==========================================
+
+  const cleanJSON = (text) => {
+    let cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const iStart = cleaned.indexOf('{');
+    const iEnd = cleaned.lastIndexOf('}');
+    if (iStart !== -1 && iEnd !== -1) cleaned = cleaned.substring(iStart, iEnd + 1);
+    return cleaned;
+  };
+
+  const analizarRiesgoConIA = async (medicamentoNuevo) => {
+    setAnalizandoRiesgo(true);
+    try {
+      const listaAlergias = expediente.antecedentes?.alergias?.lista || [];
+      const nombresLista = listaAlergias.map(a => a.sustancia);
+      const textoOtras = expediente.antecedentes?.alergias?.otras || "";
+      const alergiasBase = expediente.px_info?.alergias_base || "";
+      const contextoAlergias = [...nombresLista, textoOtras, alergiasBase].filter(Boolean).join(", ");
+      const medicamentosActuales = expediente.consulta.diagnostico.tratamiento_lista?.map(m => m.nombre).join(", ") || "Ninguno";
+
+      if (!contextoAlergias.trim() && medicamentosActuales === "Ninguno") {
+         setAnalizandoRiesgo(false); return { riesgo: false };
+      }
+
+      const promptText = `Eres experto en seguridad farmacológica. Paciente con alergias: "${contextoAlergias}". Medicamentos actuales: "${medicamentosActuales}". Se intenta agregar: "${medicamentoNuevo}". Detecta riesgos GRAVES. Responde JSON: { "riesgo": true/false, "mensaje": "Explicación breve" }`;
+      
+      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
+      const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] }) });
+      const data = await response.json();
+      const text = cleanJSON(data.candidates[0].content.parts[0].text);
+      setAnalizandoRiesgo(false);
+      return JSON.parse(text);
+    } catch (error) {
+      setAnalizandoRiesgo(false); return { riesgo: true, mensaje: "Error de conexión. Verifique manualmente." }; 
+    }
+  };
+
+  const sugerirDosisIA = async () => {
+    if (!tempMed.nombre) return;
+    setSugiriendoDosis(true);
+    try {
+        const edad = expediente.px_info?.edad || "No especificada";
+        const peso = expediente.consulta.exploracion.antropometria?.peso || "No registrado";
+        const promptText = `Calcula dosis para "${tempMed.nombre}". Paciente: ${edad}, Peso: ${peso}kg. Responde SOLO la indicación.`;
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
+        const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] }) });
+        const data = await response.json();
+        setTempMed(prev => ({ ...prev, dosis: data.candidates[0].content.parts[0].text.trim() }));
+    } catch (error) { console.error(error); } finally { setSugiriendoDosis(false); }
+  };
+
+  const generarPlanCompleto = async () => {
+    if (!expediente.consulta.padecimiento) { showNotification("Escribe el padecimiento primero", "error"); return; }
+    
+    setGenerandoPlan(true);
+    try {
+      const datos = {
+        padecimiento: expediente.consulta.padecimiento,
+        signos: expediente.consulta.exploracion.signos, 
+        antropometria: expediente.consulta.exploracion.antropometria, 
+        edad: expediente.px_info?.edad || "?",
+        alergias: [...(expediente.antecedentes?.alergias?.lista?.map(a=>a.sustancia)||[]), expediente.antecedentes?.alergias?.otras].join(", ")
+      };
+
+      const prompt = `
+        Actúa como médico especialista.
+        DATOS CLÍNICOS:
+        - Motivo: "${datos.padecimiento}"
+        - Vitales: ${JSON.stringify(datos.signos)}
+        - Físico: Peso ${datos.antropometria?.peso}kg, Talla ${datos.antropometria?.talla}m, IMC ${datos.antropometria?.imc}
+        - Edad: ${datos.edad}
+        - Alergias: ${datos.alergias}
+
+        Genera un plan clínico. Si el paciente es pediátrico o tiene bajo peso, ajusta dosis.
+        Para medicamentos, sugiere PRINCIPIO ACTIVO.
+        
+        Responde SOLO JSON: 
+        { 
+            "diagnosticos": [{ "codigo": "CIE10", "nombre": "Nombre" }], 
+            "tratamiento": [{ "nombre": "Sustancia", "dosis": "Dosis calculada" }], 
+            "indicaciones": "Texto notas" 
+        }
+      `;
+
+      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
+      const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+      const data = await response.json();
+      const rawPlan = JSON.parse(cleanJSON(data.candidates[0].content.parts[0].text));
+
+      const planValidado = {
+          ...rawPlan,
+          tratamiento: rawPlan.tratamiento.map(t => {
+              let match = null;
+              if (cacheMeds) {
+                  match = cacheMeds.find(m => 
+                      m["*SUSTANCIA(S) ACTIVA(S)"]?.toUpperCase().includes(t.nombre.toUpperCase())
+                  );
+              }
+              return match 
+                ? { nombre: match["*NOMBRE COMERCIAL"], dosis: t.dosis, enInventario: true, sustancia: t.nombre } 
+                : { nombre: t.nombre, dosis: t.dosis, enInventario: false };
+          })
+      };
+      
+      setPlanIA(planValidado);
+      showNotification("✨ Análisis completado. Sugerencias disponibles.", "success");
+      
+    } catch (e) { showNotification("Error al analizar el caso", "error"); } finally { setGenerandoPlan(false); }
+  };
+
+  // --- ACTIONS ---
+  const handleAgregarMedicamento = async () => {
+    if (!tempMed.nombre) return;
+    const yaExiste = expediente.consulta.diagnostico.tratamiento_lista?.some(m => m.nombre.toLowerCase() === tempMed.nombre.toLowerCase());
+    if (yaExiste) { setRiskData({ mensaje: "Este medicamento ya está en la lista.", medicamento: tempMed.nombre }); setShowRiskModal(true); return; }
+    
+    const resultadoIA = await analizarRiesgoConIA(tempMed.nombre);
+    if (resultadoIA.riesgo) { setRiskData({ mensaje: resultadoIA.mensaje, medicamento: tempMed.nombre }); setShowRiskModal(true); return; }
+    
+    ejecutarAgregado();
+  };
+
+  const ejecutarAgregado = () => {
+    updateCampo('consulta.diagnostico.tratamiento_lista', [...(expediente.consulta.diagnostico.tratamiento_lista || []), tempMed]);
+    setTempMed({nombre:'', dosis:''}); setShowRiskModal(false); showNotification("Medicamento agregado", "success");
+  };
+
+  const toggleDictado = () => {
+    if (!('webkitSpeechRecognition' in window)) return alert("Navegador no soportado");
+    if (isListening) { setIsListening(false); return; }
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.lang = 'es-MX'; recognition.onstart = () => setIsListening(true); recognition.onend = () => setIsListening(false);
+    recognition.onresult = (e) => { const t = e.results[0][0].transcript; updateCampo('consulta.padecimiento', (expediente.consulta.padecimiento || '') + " " + t); };
+    recognition.start();
+  };
+
+  // --- STYLES ---
+  // Estilos más equilibrados (ni muy grandes ni muy chicos)
+  const glassCard = "bg-white border border-slate-200 shadow-sm rounded-3xl overflow-hidden flex flex-col";
+  const inputStyle = "w-full p-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all text-sm text-slate-700 placeholder:text-slate-400 shadow-sm";
+  const labelStyle = "text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1 block tracking-wide";
+  const buttonPrimary = "bg-slate-900 text-white shadow-lg hover:bg-black";
+
+  // ==========================================
+  // RENDERS
+  // ==========================================
+
   const renderPadecimiento = () => (
-    <div className={sectionClass}>
-      <div className="flex items-center gap-3 mb-6 shrink-0">
-        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl"><FileText size={20}/></div>
-        <div>
-            <h3 className="font-bold text-slate-800 text-lg leading-none">Padecimiento Actual</h3>
-            <p className="text-xs text-slate-400 mt-1">Síntomas y motivo de la consulta</p>
+    <div className={`${glassCard} min-h-full p-8 animate-in fade-in`}>
+      <div className="flex justify-between items-center mb-6 shrink-0">
+        <div className="flex items-center gap-4">
+            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100"><FileText size={24}/></div>
+            <div><h3 className="font-bold text-slate-800 text-xl tracking-tight">Motivo de Consulta</h3><p className="text-sm text-slate-400 font-medium">Historia clínica y síntomas</p></div>
         </div>
+        <button onClick={toggleDictado} className={`p-4 rounded-2xl transition-all flex items-center gap-2 ${isListening ? 'bg-rose-500 text-white animate-pulse shadow-lg' : 'bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100'}`}><Mic size={22}/></button>
       </div>
-      <textarea 
-        className="flex-1 w-full p-5 bg-slate-50/50 border border-slate-200 rounded-2xl outline-none text-slate-700 text-base resize-none focus:bg-white focus:border-blue-500 transition-all leading-relaxed shadow-inner"
-        placeholder="Describa aquí los signos, síntomas y motivo de la consulta"
-        value={expediente.consulta.padecimiento}
-        onChange={e => updateCampo('consulta.padecimiento', e.target.value)}
-      />
-      <div className="flex justify-end mt-6 shrink-0">
-        <button onClick={() => setActiveConsulta('exploracion')} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all flex items-center gap-2 active:scale-95">
-          Continuar Exploración <ArrowLeft size={18} className="rotate-180"/>
+      
+      <div className="flex-1 flex flex-col min-h-[300px]">
+          <textarea className="flex-1 w-full p-6 bg-slate-50 border border-slate-200 rounded-3xl outline-none text-slate-700 text-base leading-relaxed focus:bg-white focus:border-indigo-300 transition-all resize-none shadow-inner"
+            placeholder="¿Cuál es el motivo de la consulta hoy?" value={expediente.consulta.padecimiento} onChange={e => updateCampo('consulta.padecimiento', e.target.value)} />
+          
+          <div className="flex gap-2 mt-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
+            {["Paciente Asintomático", "Cefalea Intensa", "Cuadro Gripal", "Dolor Abdominal", "Control Niño Sano", "Hipertensión"].map(m => (
+               <button key={m} onClick={() => updateCampo('consulta.padecimiento', (expediente.consulta.padecimiento || '') + (expediente.consulta.padecimiento ? "\n" : "") + m + ": ")} 
+               className="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-xl text-xs font-bold shadow-sm transition-all whitespace-nowrap active:scale-95">{m}</button>
+            ))}
+          </div>
+      </div>
+
+      <div className="mt-8 flex items-center justify-between shrink-0 pt-6 border-t border-slate-100">
+        <button onClick={generarPlanCompleto} disabled={generandoPlan || !expediente.consulta.padecimiento}
+            className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 flex items-center gap-3 relative overflow-hidden group ${generandoPlan ? 'bg-slate-100 text-slate-400 cursor-wait' : 'bg-white border border-indigo-100 text-indigo-600 hover:bg-indigo-50 shadow-sm'}`}>
+            {generandoPlan ? <><Sparkles className="animate-spin text-indigo-500"/> Pensando...</> : <><Brain className="text-indigo-600"/> Analizar Caso</>}
+        </button>
+
+        <button onClick={() => setActiveConsulta('exploracion')} className={`px-8 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95 ${buttonPrimary}`}>
+          Siguiente <ArrowLeft size={18} className="rotate-180"/>
         </button>
       </div>
     </div>
   );
 
-  // 2. EXPLORACIÓN FÍSICA
   const renderExploracion = () => (
     <div className="flex h-full w-full gap-6 animate-in fade-in">
-      <div className="w-56 flex flex-col gap-2 shrink-0 bg-slate-50/50 p-2 rounded-2xl border border-slate-100">
-        {[
-          {id:'signos', label:'Vitales', icon:<Activity size={18}/>},
-          {id:'colesterol', label:'Lípidos', icon:<Droplet size={18}/>},
-          {id:'fisica', label:'Física', icon:<Eye size={18}/>},
-          {id:'glucosa', label:'Glucosa', icon:<FlaskConical size={18}/>},
-        ].map(item => (
-          <button key={item.id} onClick={()=>setActiveExploracion(item.id)}
-            className={`p-3.5 rounded-xl flex items-center gap-3 text-xs font-bold transition-all ${
-                activeExploracion === item.id 
-                ? 'bg-white text-blue-600 shadow-sm border border-slate-200 ring-2 ring-blue-50' 
-                : 'text-slate-400 hover:bg-white/60 hover:text-slate-600'
-            }`}
-          >
-            <span className={activeExploracion === item.id ? 'text-blue-500' : 'text-slate-400'}>{item.icon}</span>
-            {item.label}
-          </button>
-        ))}
-      </div>
+        {/* BARRA LATERAL + ALERTA DE ALERGIAS */}
+        <div className="w-64 flex flex-col gap-3 shrink-0 bg-white p-4 rounded-3xl border border-slate-200 h-full overflow-y-auto shadow-sm">
+            {[{id:'signos', l:'Signos Vitales', i:<Activity size={18}/>}, {id:'colesterol', l:'Bioquímica', i:<Droplet size={18}/>}, {id:'fisica', l:'Exploración Física', i:<Eye size={18}/>}, {id:'glucosa', l:'Glucometría', i:<FlaskConical size={18}/>}].map(it => (
+                <button key={it.id} onClick={()=>setActiveExploracion(it.id)} className={`p-4 rounded-2xl flex items-center gap-3 text-sm font-bold transition-all ${activeExploracion===it.id ? 'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100' : 'text-slate-500 hover:bg-slate-50'}`}>
+                    <span className={activeExploracion===it.id?'text-indigo-500':''}>{it.i}</span> {it.l}
+                </button>
+            ))}
+            
+            <div className="flex-1"></div>
 
-      <div className={sectionClass}>
-        <div className="flex-1 w-full overflow-y-auto custom-scrollbar pr-2">
-            {activeExploracion === 'signos' && (
-              <div className="space-y-8 w-full">
-                <div className="animate-in fade-in slide-in-from-right-2">
-                  <h4 className="text-[13px] font-black text-blue-900 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <Activity size={16} className="text-blue-500"/> Signos Vitales
-                  </h4>
-                  {/* Grid expandido a w-full */}
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 w-full">
-                    {['TA','Temp','FC','FR','SpO2'].map(l => (
-                      <div key={l} className="w-full">
-                        <label className={labelClass}>{l}</label>
-                        <input className={inputClass} placeholder="--" 
-                          value={expediente.consulta.exploracion.signos[l.toLowerCase()]} 
-                          onChange={e => updateCampo(`consulta.exploracion.signos.${l.toLowerCase()}`, e.target.value)} 
-                        />
-                      </div>
-                    ))}
-                  </div>
+            {/* --- ALERTA DE ALERGIAS MOVIDA AQUÍ --- */}
+            {expediente.px_info?.alergias_base && (
+                <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl shadow-sm animate-in slide-in-from-bottom-2">
+                    <div className="flex items-center gap-2 mb-2 text-rose-600">
+                        <AlertTriangle size={18} />
+                        <span className="text-xs font-black uppercase tracking-wider">Alergias</span>
+                    </div>
+                    <p className="text-sm font-bold text-rose-800 leading-tight">
+                        {expediente.px_info.alergias_base}
+                    </p>
                 </div>
-
-                <div className="animate-in fade-in slide-in-from-right-4">
-                  <h4 className="text-[13px] font-black text-blue-900 uppercase tracking-widest mb-4 flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <Scissors className="rotate-90 text-blue-500" size={16}/> Antropometría
-                  </h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-5 w-full">
-                    {['Talla','Peso','Cintura','Cadera','IMC','Peso_ideal'].map(l => (
-                      <div key={l} className="w-full">
-                        <label className={labelClass}>{l.replace('_',' ')}</label>
-                        <input className={inputClass} placeholder="0.00"
-                          value={expediente.consulta.exploracion.antropometria[l.toLowerCase()]}
-                          onChange={e => updateCampo(`consulta.exploracion.antropometria.${l.toLowerCase()}`, e.target.value)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeExploracion === 'colesterol' && (
-              <div className="space-y-6 w-full animate-in fade-in slide-in-from-right-2">
-                <h4 className="text-[13px] font-black text-cyan-600 uppercase tracking-widest border-b border-slate-100 pb-2">Lípidos y Bioquímica</h4>
-                {/* Grid expandido a w-full */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
-                  <div><label className={labelClass}>Triglicéridos (mg/dl)</label><input type="number" className={inputClass} value={expediente.consulta.exploracion.colesterol.trigliceridos} onChange={e => updateCampo('consulta.exploracion.colesterol.trigliceridos', e.target.value)} /></div>
-                  <div><label className={labelClass}>Colesterol (mg/dl)</label><input type="number" className={inputClass} value={expediente.consulta.exploracion.colesterol.colesterol} onChange={e => updateCampo('consulta.exploracion.colesterol.colesterol', e.target.value)} /></div>
-                  <div><label className={labelClass}>HbA1c (%)</label><input type="number" className={inputClass} value={expediente.consulta.exploracion.colesterol.hba1c} onChange={e => updateCampo('consulta.exploracion.colesterol.hba1c', e.target.value)} /></div>
-                </div>
-              </div>
-            )}
-
-            {activeExploracion === 'fisica' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 w-full animate-in fade-in slide-in-from-right-2">
-                {['Habitus','Cabeza','Cuello','Torax','Genitales','Extremidades','Columna','Abdomen'].map(area => (
-                  <div key={area} className="w-full">
-                    <label className={`${labelClass} text-blue-900`}>{area}</label>
-                    <textarea className={`${inputClass} h-32 resize-none bg-white`} 
-                      value={expediente.consulta.exploracion.fisica[area.toLowerCase()]}
-                      onChange={e => updateCampo(`consulta.exploracion.fisica.${area.toLowerCase()}`, e.target.value)}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeExploracion === 'glucosa' && (
-               <div className="h-full w-full flex flex-col animate-in fade-in slide-in-from-right-2">
-                  <h3 className="text-cyan-600 font-bold text-lg mb-6 shrink-0">Control de Glucosa Capilar</h3>
-                  <div className="flex flex-col md:flex-row gap-4 mb-8 bg-slate-50 p-4 rounded-2xl border border-slate-100 items-end shrink-0 w-full">
-                      <div className="flex flex-col gap-1 flex-1">
-                          <label className={labelClass}>Categoría de toma</label>
-                          <select className={inputClass} value={tempGlucosa.categoria} onChange={e => setTempGlucosa({...tempGlucosa, categoria: e.target.value})}>
-                              {['Antes del desayuno', '2 horas después del desayuno', 'Antes de la comida', '2 horas después de la comida', 'Antes de la cena', '2 horas después de la cena'].map(c => <option key={c}>{c}</option>)}
-                          </select>
-                      </div>
-                      <div className="flex flex-col gap-1 w-36">
-                          <label className={labelClass}>Valor (mg/dL)</label>
-                          <input type="number" className={inputClass} placeholder="000" value={tempGlucosa.valor} onChange={e => setTempGlucosa({...tempGlucosa, valor: e.target.value})} />
-                      </div>
-                      <button onClick={() => {
-                          if(tempGlucosa.valor) {
-                            const fecha = new Date().toISOString().split('T')[0];
-                            updateCampo('consulta.exploracion.glucosa.lista', [...expediente.consulta.exploracion.glucosa.lista, { ...tempGlucosa, fecha }]);
-                            setTempGlucosa({...tempGlucosa, valor: ''});
-                          }
-                      }} className="bg-cyan-500 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:bg-cyan-600 transition-all active:scale-95">Agregar</button>
-                  </div>
-                  
-                  <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
-                      <div className="grid grid-cols-3 bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
-                        <span>Fecha</span><span>Estado</span><span>Nivel</span>
-                      </div>
-                      <div className="flex-1 overflow-y-auto custom-scrollbar">
-                        {expediente.consulta.exploracion.glucosa.lista.map((g, i) => (
-                            <div key={i} className="grid grid-cols-3 py-3 text-center text-sm border-b border-slate-50 hover:bg-slate-50 transition-colors relative group items-center">
-                            <span className="text-slate-500 font-medium">{g.fecha}</span>
-                            <span className="text-slate-600 text-xs">{g.categoria}</span>
-                            <span className="font-bold text-cyan-600">{g.valor} mg/dL</span>
-                            <button onClick={() => updateCampo('consulta.exploracion.glucosa.lista', expediente.consulta.exploracion.glucosa.lista.filter((_, idx) => idx !== i))} className="absolute right-4 opacity-0 group-hover:opacity-100 text-red-400 p-1 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={14}/></button>
-                            </div>
-                        ))}
-                        {expediente.consulta.exploracion.glucosa.lista.length === 0 && (
-                            <p className="p-20 text-center text-slate-400 text-xs italic">No hay registros de glucosa.</p>
-                        )}
-                      </div>
-                  </div>
-               </div>
             )}
         </div>
-      </div>
-    </div>
-  );
 
-  // 3. DIAGNÓSTICO Y PLAN
-  const renderDiagnostico = () => (
-    <div className="flex gap-6 h-full w-full animate-in fade-in">
-      {/* Columna Izquierda */}
-      <div className="w-1/2 flex flex-col gap-6">
-        <div className={sectionClass}>
-            <div className="flex justify-between items-center mb-6 shrink-0">
-                <h4 className="text-[13px] font-black text-blue-900 uppercase tracking-widest flex items-center gap-2">
-                    <CheckCircle size={16} className="text-blue-500"/> Juicio Clínico
-                </h4>
-                <HelpCircle className="text-slate-300 hover:text-blue-500 cursor-pointer transition-colors" size={20} />
-            </div>
-            
-            <div className="relative z-[60] mb-6 shrink-0 w-full">
-                <label className={labelClass}>Diagnóstico (CIE-10)</label>
-                <div className="relative w-full">
-                    <input className={`${inputClass} pr-12`} placeholder="Escribe código o nombre de la patología" value={expediente.consulta.diagnostico.enfermedad_actual}
-                    onChange={(e) => {
-                        const t = e.target.value;
-                        updateCampo('consulta.diagnostico.enfermedad_actual', t);
-                        if(t.length > 2 && catalogoCie10.length > 0) {
-                        const res = catalogoCie10.filter(i => i.code?.toLowerCase().startsWith(t.toLowerCase()) || i.description?.toLowerCase().includes(t.toLowerCase())).slice(0, 50);
-                        setSugerenciasCie10(res); setMostrarCie10(true);
-                        } else setMostrarCie10(false);
-                    }}
-                    onBlur={() => setTimeout(() => setMostrarCie10(false), 200)}
-                    />
-                    <div className="absolute right-3 top-3 text-blue-500"><Search size={20}/></div>
-                    {mostrarCie10 && sugerenciasCie10.length > 0 && (
-                        <div className="absolute top-full left-0 w-full bg-white border rounded-2xl shadow-2xl mt-2 max-h-64 overflow-y-auto z-[100] border-slate-200 p-2">
-                            {sugerenciasCie10.map((item, idx) => (
-                            <div key={idx} onClick={() => { updateCampo('consulta.diagnostico.enfermedad_actual', `${item.code} - ${item.description}`); setMostrarCie10(false); }} className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-0 text-sm flex gap-3 items-start rounded-xl transition-colors">
-                                <span className="bg-blue-600 text-white px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 shadow-sm">{item.code}</span>
-                                <span className="text-slate-700 font-semibold leading-tight">{item.description}</span>
-                            </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <div className="flex-1 w-full bg-slate-50/50 p-5 rounded-2xl border border-slate-200 flex flex-col">
-                <h4 className="text-xs font-black text-cyan-600 uppercase mb-4 tracking-widest shrink-0">Prescribir Medicamento</h4>
-                <div className="space-y-4 flex-1 flex flex-col w-full">
-                    <div className="relative z-[50] w-full">
-                        <label className={labelClass}>Buscador de fármacos</label>
-                        <input className={inputClass} placeholder="Nombre comercial del medicamento o sustancia" value={tempMed.nombre} 
-                            onChange={e => {
-                                const val = e.target.value;
-                                setTempMed({...tempMed, nombre: val});
-                                if(val.length > 1 && catalogoMeds.length > 0) {
-                                    const filtrados = catalogoMeds.filter(m => m["*NOMBRE COMERCIAL"]?.toLowerCase().includes(val.toLowerCase()) || m["*SUSTANCIA(S) ACTIVA(S)"]?.toLowerCase().includes(val.toLowerCase())).slice(0, 50);
-                                    setSugerenciasMeds(filtrados); setMostrarMeds(true);
-                                } else setMostrarMeds(false);
-                            }}
-                            onBlur={() => setTimeout(() => setMostrarMeds(false), 200)}
-                        />
-                        {mostrarMeds && sugerenciasMeds.length > 0 && (
-                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-2xl shadow-2xl mt-2 max-h-64 overflow-y-auto z-[100] p-2">
-                                {sugerenciasMeds.map((item, idx) => (
-                                    <div key={idx} onClick={() => { setTempMed({ nombre: item["*NOMBRE COMERCIAL"], dosis: item["DOSIS"] || '' }); setMostrarMeds(false); }} className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-0 rounded-xl transition-colors">
-                                        <div className="font-bold text-slate-800">{item["*NOMBRE COMERCIAL"]}</div>
-                                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tighter">{item["*SUSTANCIA(S) ACTIVA(S)"]}</div>
+        {/* CONTENIDO EXPLORACIÓN */}
+        <div className={`${glassCard} flex-1`}>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                {activeExploracion === 'signos' && (
+                    <div className="space-y-8">
+                        <div>
+                            <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex gap-2 border-b border-slate-100 pb-2">
+                                <Activity size={18} className="text-indigo-500"/> Vitales
+                            </h4>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-5">
+                                {['TA','Temp','FC','FR','SpO2'].map(l => (
+                                    <div key={l}>
+                                        <label className={labelStyle}>{l}</label>
+                                        <input 
+                                            className={inputStyle} 
+                                            placeholder="--" 
+                                            value={expediente.consulta.exploracion.signos[l.toLowerCase()]} 
+                                            onChange={e => updateCampo(`consulta.exploracion.signos.${l.toLowerCase()}`, e.target.value)}
+                                        />
                                     </div>
                                 ))}
                             </div>
-                        )}
+                        </div>
+
+                        <div>
+                            <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex gap-2 border-b border-slate-100 pb-2">
+                                <Scissors className="rotate-90 text-indigo-500"/> Antropometría
+                            </h4>
+                            <div className="grid grid-cols-3 gap-5">
+                                <div>
+                                    <label className={labelStyle}>Peso (kg)</label>
+                                    <input 
+                                        type="number" 
+                                        className={inputStyle} 
+                                        value={expediente.consulta.exploracion.antropometria.peso} 
+                                        onChange={e => {
+                                            updateCampo('consulta.exploracion.antropometria.peso', e.target.value); 
+                                            const t = expediente.consulta.exploracion.antropometria.talla; 
+                                            if(t) updateCampo('consulta.exploracion.antropometria.imc', (e.target.value/(t*t)).toFixed(2));
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label className={labelStyle}>Talla (m)</label>
+                                    <input 
+                                        type="number" 
+                                        className={inputStyle} 
+                                        value={expediente.consulta.exploracion.antropometria.talla} 
+                                        onChange={e => {
+                                            updateCampo('consulta.exploracion.antropometria.talla', e.target.value); 
+                                            const p = expediente.consulta.exploracion.antropometria.peso; 
+                                            if(p) updateCampo('consulta.exploracion.antropometria.imc', (p/(e.target.value*e.target.value)).toFixed(2));
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label className={labelStyle}>IMC</label>
+                                    <input 
+                                        readOnly 
+                                        className={`${inputStyle} bg-slate-100/50 text-slate-500`} 
+                                        value={expediente.consulta.exploracion.antropometria.imc || ''}
+                                    />
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div className="flex flex-col flex-1 w-full">
-                        <label className={labelClass}>Dosis e indicaciones</label>
-                        <textarea className={`${inputClass} flex-1 resize-none bg-white`} placeholder="Indique la dosis" value={tempMed.dosis} onChange={e => setTempMed({...tempMed, dosis: e.target.value})} />
+                )}
+
+                {activeExploracion === 'colesterol' && (
+                    <div className="grid grid-cols-2 gap-8">
+                        <div><label className={labelStyle}>Triglicéridos</label><input className={inputStyle} type="number" value={expediente.consulta.exploracion.colesterol.trigliceridos} onChange={e=>updateCampo('consulta.exploracion.colesterol.trigliceridos',e.target.value)}/></div>
+                        <div><label className={labelStyle}>Colesterol Total</label><input className={inputStyle} type="number" value={expediente.consulta.exploracion.colesterol.colesterol} onChange={e=>updateCampo('consulta.exploracion.colesterol.colesterol',e.target.value)}/></div>
                     </div>
-                    <button onClick={() => {
-                        if(tempMed.nombre) {
-                        updateCampo('consulta.diagnostico.tratamiento_lista', [...(expediente.consulta.diagnostico.tratamiento_lista || []), tempMed]);
-                        setTempMed({nombre:'', dosis:''});
-                        }
-                    }} className="bg-cyan-500 text-white w-full py-3.5 rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:bg-cyan-600 transition-all active:scale-[0.98] shrink-0">
-                    Agregar a Receta
+                )}
+
+                {activeExploracion === 'fisica' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {['Cabeza','Cuello','Torax','Abdomen','Extremidades','Neurologico'].map(area => (
+                            <div key={area}>
+                                <label className={labelStyle}>{area}</label>
+                                <textarea className={`${inputStyle} h-28 resize-none`} value={expediente.consulta.exploracion.fisica[area.toLowerCase()]} onChange={e=>updateCampo(`consulta.exploracion.fisica.${area.toLowerCase()}`,e.target.value)}/>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {activeExploracion === 'glucosa' && (
+                    <div className="flex flex-col gap-6">
+                        <div className="flex gap-4 items-end bg-slate-50 p-6 rounded-2xl border border-slate-200">
+                            <div className="flex-1">
+                                <label className={labelStyle}>Momento</label>
+                                <select className={inputStyle} value={tempGlucosa.categoria} onChange={e=>setTempGlucosa({...tempGlucosa,categoria:e.target.value})}>
+                                    {['Ayuno','Postprandial','Casual'].map(o=><option key={o}>{o}</option>)}
+                                </select>
+                            </div>
+                            <div className="w-40">
+                                <label className={labelStyle}>Valor mg/dL</label>
+                                <input type="number" className={inputStyle} value={tempGlucosa.valor} onChange={e=>setTempGlucosa({...tempGlucosa,valor:e.target.value})}/>
+                            </div>
+                            <button onClick={()=>{if(tempGlucosa.valor){updateCampo('consulta.exploracion.glucosa.lista',[...expediente.consulta.exploracion.glucosa.lista,{...tempGlucosa,fecha:new Date().toLocaleDateString()}]);setTempGlucosa({...tempGlucosa,valor:''});}}} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-indigo-700 h-fit">Registrar</button>
+                        </div>
+                        <div className="space-y-3">
+                            {expediente.consulta.exploracion.glucosa.lista.map((g,i)=>(
+                                <div key={i} className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                                    <div className="flex gap-4 items-center">
+                                        <div className="bg-indigo-50 p-2 rounded-lg text-indigo-600 font-bold">{g.valor}</div>
+                                        <span className="text-sm font-medium text-slate-600">{g.categoria}</span>
+                                    </div>
+                                    <span className="text-xs text-slate-400">{g.fecha}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+            
+            <div className="p-6 border-t border-slate-100 bg-white flex justify-end shrink-0">
+                <button onClick={() => setActiveConsulta('diagnostico')} className={`px-8 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95 ${buttonPrimary}`}>
+                    Siguiente <ArrowLeft size={18} className="rotate-180"/>
+                </button>
+            </div>
+        </div>
+    </div>
+  );
+
+  const renderDiagnostico = () => (
+    <div className="flex gap-6 h-full w-full animate-in fade-in relative">
+      <div className="w-1/2 flex flex-col gap-6 h-full">
+        <div className={`${glassCard} flex-1 flex flex-col`}>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+                <div className="relative z-20">
+                    <label className={labelStyle}>Diagnóstico Final (CIE-10)</label>
+                    <div className="relative">
+                        <input className={inputStyle} placeholder="Buscar patología..." value={expediente.consulta.diagnostico.enfermedad_actual}
+                        onChange={(e)=>{const t=e.target.value; updateCampo('consulta.diagnostico.enfermedad_actual',t); if(t.length>2 && cacheCie10){setSugerenciasCie10(cacheCie10.filter(i=>i.description.toLowerCase().includes(t.toLowerCase())).slice(0,20));setMostrarCie10(true)}else{setMostrarCie10(false)}}} onBlur={()=>setTimeout(()=>setMostrarCie10(false),200)}/>
+                        <Search className="absolute right-4 top-4 text-slate-400" size={18}/>
+                        {mostrarCie10 && <div className="absolute top-full w-full bg-white border border-slate-200 rounded-xl shadow-2xl mt-1 max-h-48 overflow-y-auto p-1 z-50">{sugerenciasCie10.map((s,i)=><div key={i} onClick={()=>{updateCampo('consulta.diagnostico.enfermedad_actual',`${s.code} - ${s.description}`);setMostrarCie10(false)}} className="p-2 hover:bg-blue-50 rounded-lg text-xs cursor-pointer truncate border-b border-slate-50 last:border-0 text-slate-600">{s.code} - {s.description}</div>)}</div>}
+                    </div>
+                </div>
+
+                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 flex flex-col gap-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex gap-2"><Zap size={14}/> Nueva Receta</h4>
+                    <div className="relative z-10">
+                        <input className={inputStyle} placeholder="Nombre del medicamento..." value={tempMed.nombre} 
+                        onChange={e=>{const v=e.target.value; setTempMed({...tempMed,nombre:v}); if(v.length>2 && cacheMeds){setSugerenciasMeds(cacheMeds.filter(m=>m["*NOMBRE COMERCIAL"].toLowerCase().includes(v.toLowerCase())).slice(0,20));setMostrarMeds(true)}else{setMostrarMeds(false)}}} onBlur={()=>setTimeout(()=>setMostrarMeds(false),200)}/>
+                        {mostrarMeds && <div className="absolute top-full w-full bg-white border border-slate-200 rounded-xl shadow-2xl mt-1 max-h-48 overflow-y-auto p-1 z-50">{sugerenciasMeds.map((m,i)=><div key={i} onClick={()=>{setTempMed({nombre:m["*NOMBRE COMERCIAL"],dosis:m["DOSIS"]||''});setMostrarMeds(false)}} className="p-2.5 hover:bg-blue-50 rounded-lg text-xs cursor-pointer font-bold text-slate-700 border-b border-slate-50 last:border-0">{m["*NOMBRE COMERCIAL"]} <span className="text-[10px] text-slate-400 font-normal ml-2">{m["*SUSTANCIA(S) ACTIVA(S)"]}</span></div>)}</div>}
+                    </div>
+                    
+                    <div className="flex gap-2 relative">
+                        <textarea className={`${inputStyle} resize-none h-24 pr-10`} placeholder="Dosis e indicaciones..." value={tempMed.dosis} onChange={e=>setTempMed({...tempMed,dosis:e.target.value})}/>
+                        <button onClick={sugerirDosisIA} disabled={!tempMed.nombre || sugiriendoDosis} className="absolute right-3 top-3 p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors border border-indigo-100" title="Calcular dosis con IA"><Sparkles size={14} className={sugiriendoDosis?'animate-spin':''}/></button>
+                    </div>
+
+                    <button onClick={handleAgregarMedicamento} disabled={analizandoRiesgo} className={`mt-2 w-full py-4 rounded-xl font-bold text-sm shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 ${analizandoRiesgo ? 'bg-slate-800 text-slate-400 cursor-wait' : 'bg-slate-900 text-white hover:bg-black'}`}>
+                        {analizandoRiesgo ? <><Activity className="animate-spin" size={16}/> Verificando...</> : "Agregar a Receta"}
                     </button>
                 </div>
             </div>
         </div>
       </div>
-      
-      {/* Columna Derecha */}
-      <div className="w-1/2 flex flex-col gap-5">
-         <div className="flex-1 w-full border border-slate-200 rounded-3xl overflow-hidden bg-white flex flex-col shadow-sm">
-            <div className="grid grid-cols-[1.2fr_2fr_40px] bg-slate-50 text-[10px] font-black text-slate-500 uppercase tracking-widest py-3 px-4 border-b border-slate-100 shrink-0 w-full">
-                <span>Medicamento</span><span>Indicación</span><span></span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-50/30 custom-scrollbar w-full">
-                {expediente.consulta.diagnostico.tratamiento_lista?.map((m, i) => (
-                    <div key={i} className="grid grid-cols-[1.2fr_2fr_40px] text-xs py-3 px-4 bg-white border border-slate-100 rounded-xl shadow-sm items-center w-full">
-                        <span className="font-bold text-blue-900">{m.nombre}</span>
-                        <span className="text-slate-600 italic px-2">{m.dosis}</span>
-                        <button onClick={() => updateCampo('consulta.diagnostico.tratamiento_lista', expediente.consulta.diagnostico.tratamiento_lista.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+
+      {/* COLUMNA DERECHA: RECETA LISTA */}
+      <div className="w-1/2 flex flex-col gap-6">
+         <div className={`${glassCard} flex-1 flex flex-col`}>
+            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center"><span className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><FileText size={14}/> Receta Actual</span><span className="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg text-[10px] font-black">{expediente.consulta.diagnostico.tratamiento_lista?.length || 0} items</span></div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                {expediente.consulta.diagnostico.tratamiento_lista?.map((m,i)=>(
+                    <div key={i} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex justify-between items-center group hover:border-indigo-200 transition-all">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-slate-50 p-2.5 rounded-xl text-slate-400"><Pill size={20}/></div>
+                            <div><p className="font-bold text-slate-800 text-sm">{m.nombre}</p><p className="text-xs text-slate-500 mt-0.5">{m.dosis}</p></div>
+                        </div>
+                        <button onClick={()=>updateCampo('consulta.diagnostico.tratamiento_lista',expediente.consulta.diagnostico.tratamiento_lista.filter((_,idx)=>idx!==i))} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"><Trash2 size={18}/></button>
                     </div>
                 ))}
-                {(!expediente.consulta.diagnostico.tratamiento_lista || expediente.consulta.diagnostico.tratamiento_lista.length === 0) && (
-                    <div className="h-full flex items-center justify-center text-slate-400 italic text-xs py-20">Sin medicamentos en receta</div>
-                )}
+                {(!expediente.consulta.diagnostico.tratamiento_lista || expediente.consulta.diagnostico.tratamiento_lista.length === 0) && <div className="h-full flex flex-col items-center justify-center text-slate-300 text-sm gap-2"><Package size={40} className="opacity-20"/><span className="italic">No hay medicamentos aún</span></div>}
+            </div>
+            
+            <div className="p-5 border-t border-slate-100 bg-slate-50">
+                 {planIA?.indicaciones && <button onClick={()=>updateCampo('consulta.diagnostico.indicaciones', planIA.indicaciones)} className="mb-3 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-2 w-fit transition-all ml-auto"><Zap size={12}/> Pegar notas sugeridas</button>}
+                 <label className={labelStyle}>Indicaciones Generales</label>
+                 <textarea className={`${inputStyle} h-24 resize-none bg-white`} placeholder="Dieta, cuidados, signos de alarma..." value={expediente.consulta.diagnostico.indicaciones} onChange={e=>updateCampo('consulta.diagnostico.indicaciones',e.target.value)}/>
             </div>
          </div>
-         <div className="flex-[0.6] flex flex-col gap-4 w-full">
-            <div className="flex-1 flex flex-col w-full">
-                <label className={labelClass}>Notas e Instrucciones Adicionales</label>
-                <textarea className={`${inputClass} flex-1 resize-none border-blue-100 focus:border-blue-500 bg-white`} placeholder="Medidas higiénico-dietéticas, cuidados especiales u otros" value={expediente.consulta.diagnostico.indicaciones} onChange={e => updateCampo('consulta.diagnostico.indicaciones', e.target.value)} />
-            </div>
-            <input className={`${inputClass} bg-white shadow-sm shrink-0 w-full`} placeholder="Pronóstico del paciente (Uso interno)" value={expediente.consulta.diagnostico.pronostico} onChange={e => updateCampo('consulta.diagnostico.pronostico', e.target.value)} />
+         
+         <div className="flex justify-end shrink-0">
+            <button onClick={() => setActiveConsulta('estudios')} className={`px-8 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all active:scale-95 ${buttonPrimary}`}>
+                Siguiente <ArrowLeft size={18} className="rotate-180"/>
+            </button>
          </div>
       </div>
+
+        {/* --- BOTÓN FLOTANTE SUGERENCIAS --- */}
+        {planIA && (
+            <button 
+                onClick={() => setShowPlanModal(true)}
+                className="absolute bottom-6 right-1/2 translate-x-1/2 z-50 bg-slate-900 text-white pl-4 pr-6 py-3 rounded-full shadow-2xl flex items-center gap-3 hover:scale-105 active:scale-95 transition-all border border-slate-700 animate-in fade-in slide-in-from-bottom-10"
+            >
+                <div className="bg-indigo-500 rounded-full p-1.5 animate-pulse"><Sparkles size={16} className="text-white"/></div>
+                <span className="font-bold text-sm">Ver Sugerencias IA</span>
+            </button>
+        )}
     </div>
   );
 
-  // 4. ESTUDIOS CLÍNICOS
   const renderEstudios = () => (
     <div className="flex h-full w-full gap-6 animate-in fade-in">
-        <div className="w-56 flex flex-col gap-2 shrink-0 bg-slate-50/50 p-2 rounded-2xl border border-slate-100">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-2">Tipo de Orden</p>
-            <button onClick={()=>setActiveEstudiosTab('paquetes')} className={`p-4 rounded-xl border flex flex-col items-center gap-3 font-bold text-xs transition-all ${activeEstudiosTab==='paquetes' ? 'bg-white text-blue-600 border-slate-200 shadow-sm ring-2 ring-blue-50' : 'text-slate-400 hover:bg-white/60'}`}><Package size={24}/> Paquetes</button>
-            <button onClick={()=>setActiveEstudiosTab('estudios')} className={`p-4 rounded-xl border flex flex-col items-center gap-3 font-bold text-xs transition-all ${activeEstudiosTab==='estudios' ? 'bg-white text-blue-600 border-slate-200 shadow-sm ring-2 ring-blue-50' : 'text-slate-400 hover:bg-white/60'}`}><FlaskConical size={24}/> Individual</button>
+        <div className="w-64 flex flex-col gap-3 shrink-0 bg-white p-4 rounded-3xl border border-slate-200 h-full">
+            <button onClick={()=>setActiveEstudiosTab('paquetes')} className={`p-4 rounded-2xl flex flex-col items-center gap-2 text-xs font-bold transition-all ${activeEstudiosTab==='paquetes'?'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200':'text-slate-500 hover:bg-slate-50'}`}><Package size={24}/> Paquetes Lab</button>
+            <button onClick={()=>setActiveEstudiosTab('estudios')} className={`p-4 rounded-2xl flex flex-col items-center gap-2 text-xs font-bold transition-all ${activeEstudiosTab==='estudios'?'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200':'text-slate-500 hover:bg-slate-50'}`}><FlaskConical size={24}/> Individual</button>
         </div>
-        
-        <div className={sectionClass}>
-            {activeEstudiosTab === 'paquetes' ? (
-                <div className="h-full w-full flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 overflow-hidden">
-                    <h3 className="text-blue-900 font-bold text-lg flex items-center gap-2 mb-2 shrink-0 border-b pb-2"><Package size={20} className="text-blue-500"/> Solicitud por Paquetes</h3>
-                    <div className="flex-1 w-full flex gap-6 overflow-hidden">
-                        <div className="flex-1 border border-slate-200 rounded-2xl overflow-y-auto p-4 space-y-3 bg-slate-50/30 custom-scrollbar w-full">
-                            {['Check up general', 'Perfil Diabético', 'Biometría Completa', 'Química Sanguínea', 'Perfil de Lípidos', 'Perfil Hepático', 'Pruebas de Función Tiroidea'].map(pkg => (
-                                <label key={pkg} className="flex items-center justify-between p-3.5 bg-white border border-slate-100 hover:border-blue-300 rounded-xl cursor-pointer transition-all shadow-sm group w-full">
-                                    <span className="text-sm font-bold text-slate-700 group-hover:text-blue-600 transition-colors">{pkg}</span>
-                                    <input type="checkbox" className="w-5 h-5 accent-blue-600 rounded-lg" checked={expediente.consulta.estudios.paquetes_seleccionados.some(p => p.nombre === pkg)}
-                                        onChange={e => {
-                                            const list = expediente.consulta.estudios.paquetes_seleccionados;
-                                            updateCampo('consulta.estudios.paquetes_seleccionados', e.target.checked ? [...list, {nombre: pkg, nota: ''}] : list.filter(p => p.nombre !== pkg));
-                                        }} />
-                                </label>
-                            ))}
-                        </div>
-                        <div className="flex-1 border border-blue-100 rounded-2xl bg-blue-50/30 p-4 overflow-y-auto custom-scrollbar w-full">
-                            <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-4">Notas específicas</h4>
-                            {expediente.consulta.estudios.paquetes_seleccionados.map((item, i) => (
-                                <div key={i} className="mb-3 bg-white p-3 rounded-xl shadow-sm border border-blue-100 animate-in zoom-in-95 w-full">
-                                    <p className="text-xs font-bold text-slate-800 flex justify-between">{item.nombre} <Trash2 size={12} className="text-slate-300 cursor-pointer" onClick={() => updateCampo('consulta.estudios.paquetes_seleccionados', expediente.consulta.estudios.paquetes_seleccionados.filter(p => p.nombre !== item.nombre))}/></p>
-                                    <input className="w-full mt-2 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] outline-none focus:border-blue-400" placeholder="Ej: Ayuno de 12 horas..." value={item.nota} onChange={e => {
-                                        const newList = [...expediente.consulta.estudios.paquetes_seleccionados];
-                                        newList[i].nota = e.target.value;
-                                        updateCampo('consulta.estudios.paquetes_seleccionados', newList);
-                                    }} />
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            ) : (
-                <div className="h-full w-full flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 overflow-hidden">
-                    <h3 className="text-blue-900 font-bold text-lg mb-2 shrink-0 border-b pb-2">Estudios Individuales</h3>
-                    <div className="relative mb-2 shrink-0 w-full">
-                        <Search className="absolute left-4 top-3.5 text-slate-400" size={20}/>
-                        <input className={`${inputClass} pl-12 h-14 text-base shadow-sm w-full`} placeholder="Teclee estudio clínico" onKeyDown={e => {
-                            if(e.key === 'Enter' && e.target.value) {
-                                updateCampo('consulta.estudios.estudios_seleccionados', [...expediente.consulta.estudios.estudios_seleccionados, {nombre: e.target.value, nota: ''}]);
-                                e.target.value = '';
-                            }
-                        }} />
-                    </div>
-                    <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden shadow-sm bg-white flex flex-col">
-                        <div className="grid grid-cols-[1.2fr_2fr_50px] bg-slate-50 py-3 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-100 shrink-0 w-full">
-                            <span>Estudio</span><span>Observaciones</span><span></span>
-                        </div>
-                        <div className="flex-1 overflow-y-auto custom-scrollbar w-full">
-                            {expediente.consulta.estudios.estudios_seleccionados.map((est, i) => (
-                                <div key={i} className="grid grid-cols-[1.2fr_2fr_50px] p-3 border-b border-slate-50 items-center text-sm group hover:bg-slate-50 transition-colors w-full">
-                                    <span className="font-bold text-slate-700">{est.nombre}</span>
-                                    <input className="mx-2 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs" placeholder="Nota..." value={est.nota} onChange={e => {
-                                        const newList = [...expediente.consulta.estudios.estudios_seleccionados];
-                                        newList[i].nota = e.target.value;
-                                        updateCampo('consulta.estudios.estudios_seleccionados', newList);
-                                    }} />
-                                    <button className="flex justify-center" onClick={() => updateCampo('consulta.estudios.estudios_seleccionados', expediente.consulta.estudios.estudios_seleccionados.filter((_, idx) => idx !== i))}><Trash2 size={16} className="text-slate-300 hover:text-red-500 transition-colors"/></button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
-            <div className="mt-6 shrink-0 w-full">
-                <label className={labelClass}>Instrucciones generales para el laboratorio</label>
-                <textarea className={`${inputClass} h-20 resize-none border-blue-100`} placeholder="Notas globales para la orden de estudios" value={expediente.consulta.estudios.notas_generales} onChange={e => updateCampo('consulta.estudios.notas_generales', e.target.value)} />
+        <div className={`${glassCard} flex-1`}>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                <h3 className="font-black text-xl mb-6 text-slate-800 tracking-tight">{activeEstudiosTab==='paquetes'?'Paquetes Comunes':'Estudios Individuales'}</h3>
+                {activeEstudiosTab==='paquetes' ? (
+                    <div className="grid grid-cols-2 gap-4">{['Biometría Hemática','Química Sanguínea 6','Examen General de Orina','Perfil Lipídico','Perfil Hepático','Tiempos de Coagulación'].map(p=>(<label key={p} className="flex gap-4 items-center p-4 bg-white border border-slate-100 rounded-2xl cursor-pointer hover:border-indigo-200 hover:shadow-md transition-all group"><div className="relative flex items-center justify-center"><input type="checkbox" className="peer appearance-none w-6 h-6 border-2 border-slate-300 rounded-lg checked:bg-indigo-500 checked:border-indigo-500 transition-all"/><Check size={14} className="absolute text-white opacity-0 peer-checked:opacity-100 pointer-events-none"/></div><span className="font-bold text-slate-700 text-sm group-hover:text-indigo-700">{p}</span></label>))}</div>
+                ):(
+                    <div className="flex flex-col gap-6"><input className={inputStyle} placeholder="Escriba el estudio y presione Enter" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value){updateCampo('consulta.estudios.estudios_seleccionados',[...expediente.consulta.estudios.estudios_seleccionados,{nombre:e.target.value,nota:''}]);e.target.value=''}}}/>
+                    <div className="space-y-2">{expediente.consulta.estudios.estudios_seleccionados.map((est,i)=>(<div key={i} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-100 shadow-sm"><span className="font-bold text-slate-700 text-sm">{est.nombre}</span><button onClick={()=>updateCampo('consulta.estudios.estudios_seleccionados',expediente.consulta.estudios.estudios_seleccionados.filter((_,x)=>x!==i))} className="p-2 text-rose-400 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={16}/></button></div>))}</div></div>
+                )}
+                <div className="mt-8"><label className={labelStyle}>Notas para Laboratorio</label><textarea className={`${inputStyle} h-24`} placeholder="Indicaciones especiales..." value={expediente.consulta.estudios.notas_generales} onChange={e=>updateCampo('consulta.estudios.notas_generales',e.target.value)}/></div>
             </div>
         </div>
     </div>
   );
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white rounded-3xl shadow-sm border border-slate-200 w-full">
-      <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 shrink-0 gap-8 overflow-x-auto w-full">
-        {[
-          {id:'padecimiento', label:'Motivo', icon:<FileText size={16}/>}, 
-          {id:'exploracion', label:'Exploración', icon:<Activity size={16}/>}, 
-          {id:'diagnostico', label:'Diagnóstico', icon:<CheckCircle size={16}/>}, 
-          {id:'estudios', label:'Estudios', icon:<FlaskConical size={16}/>}
-        ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveConsulta(tab.id)}
-            className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${
-                activeConsulta === tab.id 
-                ? 'border-blue-600 text-blue-700' 
-                : 'border-transparent text-slate-400 hover:text-slate-600'
-            }`}>
-            {tab.icon} {tab.label.toUpperCase()}
-          </button>
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50 relative">
+      <div className="absolute inset-0 bg-slate-50 -z-10 pointer-events-none"/>
+      
+      {/* TABS HEADER */}
+      <div className="flex border-b border-slate-200 bg-white px-8 shrink-0 gap-8 overflow-x-auto z-20 h-16 items-center shadow-sm">
+        {[{id:'padecimiento',l:'Motivo',i:<FileText size={18}/>},{id:'exploracion',l:'Exploración',i:<Activity size={18}/>},{id:'diagnostico',l:'Diagnóstico',i:<CheckCircle size={18}/>},{id:'estudios',l:'Estudios',i:<FlaskConical size={18}/>}].map(t=>(
+            <button key={t.id} onClick={()=>setActiveConsulta(t.id)} className={`py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${activeConsulta===t.id?'bg-slate-900 text-white shadow-lg':'text-slate-500 hover:bg-slate-100'}`}>{t.i} {t.l.toUpperCase()}</button>
         ))}
       </div>
       
-      <div className="flex-1 p-6 overflow-hidden bg-slate-50/30 w-full">
+      {/* CONTENIDO PRINCIPAL */}
+      <div className="flex-1 p-6 overflow-hidden w-full relative z-10">
         {activeConsulta === 'padecimiento' && renderPadecimiento()}
         {activeConsulta === 'exploracion' && renderExploracion()}
         {activeConsulta === 'diagnostico' && renderDiagnostico()}
         {activeConsulta === 'estudios' && renderEstudios()}
       </div>
+
+      {/* --- TOAST --- */}
+      <div className={`fixed bottom-8 right-8 z-[100] transition-all duration-500 transform ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0'}`}>
+        <div className={`px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 backdrop-blur-xl border border-white/20 ${toast.type==='error'?'bg-rose-500/90 text-white':'bg-slate-900/90 text-white'}`}>
+            {toast.type==='error'?<AlertTriangle size={24}/>:<CheckCircle size={24} className="text-emerald-400"/>}
+            <span className="font-bold text-sm tracking-wide">{toast.message}</span>
+        </div>
+      </div>
+
+      {/* --- MODAL DE RIESGO --- */}
+      {showRiskModal && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 p-6 border-b border-orange-100 flex items-start gap-4">
+              <div className="bg-white p-3 rounded-full shadow-md text-orange-500"><AlertTriangle size={28}/></div>
+              <div><h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Alerta Clínica</h3><p className="text-xs font-bold text-orange-600 mt-1 uppercase tracking-wider">Validación de Seguridad</p></div>
+            </div>
+            <div className="p-8 space-y-6">
+                <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Medicamento</p><div className="text-xl font-black text-slate-800">{riskData.medicamento}</div></div>
+                <div className="bg-orange-50 border-l-4 border-orange-400 p-4 rounded-r-xl"><p className="text-sm font-medium text-slate-700 leading-relaxed">"{riskData.mensaje}"</p></div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+              <button onClick={()=>setShowRiskModal(false)} className="flex-1 py-3.5 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all">Cancelar</button>
+              <button onClick={ejecutarAgregado} className="flex-1 py-3.5 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-xl hover:bg-black transition-all flex justify-center gap-2 items-center"><span>Autorizar Riesgo</span><ChevronRight size={16}/></button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL PLAN IA --- */}
+      {showPlanModal && planIA && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white w-full max-w-4xl max-h-[85vh] rounded-[2rem] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95">
+                <div className="p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center shrink-0">
+                    <div>
+                        <h3 className="text-xl font-black text-slate-800 flex items-center gap-2"><Sparkles className="text-indigo-500"/> Plan Sugerido por IA</h3>
+                        <p className="text-sm text-slate-400">Basado en síntomas y exploración física</p>
+                    </div>
+                    <button onClick={()=>setShowPlanModal(false)} className="p-2 bg-white border border-slate-200 rounded-full hover:bg-slate-100 text-slate-500"><X size={20}/></button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-50/30">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Diagnósticos Probables</h4>
+                            <div className="flex flex-wrap gap-3">
+                                {planIA.diagnosticos.map((d, i) => (
+                                    <button key={i} onClick={()=>{updateCampo('consulta.diagnostico.enfermedad_actual', `${d.codigo} - ${d.nombre}`); showNotification("Diagnóstico aplicado");}} className="bg-white border border-indigo-100 hover:border-indigo-500 text-slate-700 px-4 py-3 rounded-xl text-sm font-bold shadow-sm transition-all hover:shadow-md text-left w-full flex items-center gap-3 group">
+                                        <span className="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg text-xs font-black group-hover:bg-indigo-600 group-hover:text-white transition-colors">{d.codigo}</span>
+                                        {d.nombre}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Tratamiento Recomendado</h4>
+                            <div className="space-y-3">
+                                {planIA.tratamiento.map((t, i) => (
+                                    <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-bold text-slate-800">{t.nombre}</span>
+                                                {t.enInventario && <span className="bg-emerald-100 text-emerald-700 text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1"><Check size={10}/> Inventario</span>}
+                                            </div>
+                                            <button onClick={()=>{setTempMed({nombre:t.nombre, dosis:t.dosis}); setShowPlanModal(false);}} className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 active:scale-95 transition-all">Usar</button>
+                                        </div>
+                                        <p className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">{t.dosis}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    {planIA.indicaciones && (
+                        <div className="mt-8 pt-6 border-t border-slate-200">
+                            <div className="flex justify-between items-center mb-4">
+                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Notas e Indicaciones</h4>
+                                <button onClick={()=>{updateCampo('consulta.diagnostico.indicaciones', planIA.indicaciones); showNotification("Notas copiadas");}} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-2"><Zap size={14}/> Copiar al expediente</button>
+                            </div>
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 text-sm text-slate-600 italic">
+                                {planIA.indicaciones}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

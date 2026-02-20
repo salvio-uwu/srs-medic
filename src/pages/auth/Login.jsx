@@ -1,11 +1,12 @@
 // src/pages/auth/Login.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // 1. Importamos useEffect
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, LogIn, AlertCircle, Lock, Mail, Info } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 const Login = () => {
-  const { login } = useAuth();
+  // 2. Extraemos 'user' además de 'login' para poder vigilar su estado
+  const { login, user } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -13,21 +14,35 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // 3. EFECTO DE REDIRECCIÓN AUTOMÁTICA
+  // Este bloque se ejecuta cada vez que cambia el objeto 'user'.
+  // Solo navega cuando el usuario existe Y ya tiene el rol cargado desde la BD.
+  useEffect(() => {
+    if (user && user.rol) {
+      navigate('/portal');
+    }
+  }, [user, navigate]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      // 1. Autenticación (Email/Pass)
+      // 4. Solo ejecutamos la autenticación
       await login(email, password);
       
-      // 2. Redirección Directa al Portal de Bienvenida
-      // El Portal se encargará de leer el rol y mostrar las opciones correctas.
-      navigate('/portal');
+      // IMPORTANTE: Hemos quitado navigate('/portal') de aquí.
+      // Dejamos que el useEffect de arriba se encargue cuando los datos estén listos.
+      
+      // Nota: No ponemos setLoading(false) aquí para que el botón siga mostrando 
+      // "Iniciando..." mientras se cargan los datos del perfil en segundo plano.
 
     } catch (err) {
       console.error("Error login:", err);
+      // 5. Solo detenemos la carga si hubo un error
+      setLoading(false);
+
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
         setError("Correo o contraseña incorrectos.");
       } else if (err.code === 'auth/too-many-requests') {
@@ -36,7 +51,6 @@ const Login = () => {
         setError("Error de conexión: " + err.message);
       }
     }
-    setLoading(false);
   };
 
   return (

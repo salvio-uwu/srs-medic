@@ -1,16 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Calendar as CalIcon, Clock, User, Plus, ChevronLeft, ChevronRight, 
-  Search, MapPin, CheckCircle, XCircle, Video, Phone, FileText,
-  MessageCircle, Send, AlertTriangle, History, DollarSign, Activity,
-  LayoutGrid, List, MoreVertical
+  Search, MapPin, CheckCircle, XCircle, Video, MessageCircle, 
+  AlertTriangle, DollarSign, Activity, LayoutGrid, List, 
+  Lock, Info, CheckCircle2, AlertCircle, Zap // Iconos nuevos
 } from 'lucide-react';
 import { db } from '../config/firebase'; 
-import { collection, addDoc, query, where, getDocs, orderBy, updateDoc, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, updateDoc, doc, onSnapshot, getDocs } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import ModalPaciente from '../components/ModalPaciente';
 import sonidoCampana from '../assets/notificaciondeconsulta.wav';
+
+// --- COMPONENTE INTERNO: TOAST NOTIFICATION (Reemplazo de alert) ---
+const Toast = ({ msg, type, onClose }) => (
+  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top duration-500 backdrop-blur-md ${
+    type === 'error' ? 'bg-red-50/95 border-red-200 text-red-700' : 
+    type === 'warning' ? 'bg-amber-50/95 border-amber-200 text-amber-700' :
+    'bg-slate-900/95 border-slate-800 text-white'
+  }`}>
+    {type === 'error' ? <AlertCircle size={20}/> : type === 'warning' ? <Lock size={20}/> : <CheckCircle2 size={20}/>}
+    <span className="font-bold text-sm">{msg}</span>
+    <button onClick={onClose} className="ml-4 opacity-70 hover:opacity-100"><XCircle size={16}/></button>
+  </div>
+);
+
 const Agenda = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -30,17 +44,17 @@ const Agenda = () => {
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
   
-  // --- SONIDO CAMBIADO: 'Glass Ping' suave y elegante ---
-  // Este sonido es un "ding" de cristal, muy usado en apps modernas, no asusta.
-const [audio] = useState(new Audio(sonidoCampana));
-  
-  const prevCitasLength = useRef(0); // Para controlar el sonido
+  // Sonido y Notificaciones
+  const [audio] = useState(new Audio(sonidoCampana));
+  const prevCitasLength = useRef(0); 
+  const [toast, setToast] = useState(null); // Estado para alertas personalizadas
 
   const [vista, setVista] = useState('dashboard'); 
   const [activeTabDerecha, setActiveTabDerecha] = useState('alertas');
   const [showCitaModal, setShowCitaModal] = useState(false);
   const [showPacienteModal, setShowPacienteModal] = useState(false);
   const [selectedCita, setSelectedCita] = useState(null);
+  const [citaUrgencia, setCitaUrgencia] = useState(null); // <--- NUEVO: Para "Romper el Vidrio"
   const [todosLosPacientes, setTodosLosPacientes] = useState([]); 
   const [sugerencias, setSugerencias] = useState([]);
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
@@ -62,7 +76,13 @@ const [audio] = useState(new Audio(sonidoCampana));
     { id: 2, nombre: 'Dexametasona', uso: 'Hace 45 min' },
   ];
 
-  // --- TIEMPO REAL + SONIDO ---
+  // --- HELPER PARA MOSTRAR TOAST ---
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // --- TIEMPO REAL + SONIDO INTELIGENTE (Punto 2) ---
   useEffect(() => {
     if (!user) return;
     setLoading(true);
@@ -75,11 +95,31 @@ const [audio] = useState(new Audio(sonidoCampana));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const nuevasCitas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       
-      // Solo suena si hay MAS citas que antes (evita sonar al borrar o editar)
-      if (nuevasCitas.length > prevCitasLength.current && prevCitasLength.current > 0) {
-         // Bajamos un poco el volumen para que sea sutil
-         audio.volume = 0.6; 
-         audio.play().catch(err => console.log("Sonido bloqueado por navegador", err));
+      // Solo ejecutamos lógica de sonido si NO es la primera carga
+      if (prevCitasLength.current > 0) {
+        snapshot.docChanges().forEach((change) => {
+          const data = change.doc.data();
+
+          // CASO A: Nuevo Paciente Agendado (Sonido suave)
+          if (change.type === "added") {
+             audio.volume = 0.4; 
+             audio.play().catch(err => console.log("Audio bloqueado:", err));
+          }
+
+          // CASO B: Triage Terminado (Sonido Fuerte + Notificación)
+          if (change.type === "modified" && data.estado === 'en_espera') {
+             audio.volume = 1.0; 
+             audio.play().catch(err => console.log("Audio bloqueado:", err));
+             
+             // Notificación Nativa del Sistema
+             if (Notification.permission === "granted") {
+                new Notification("Paciente Listo", { 
+                    body: `${data.paciente} ha terminado Triage y está listo para consulta.` 
+                });
+             }
+             showToast(`Paciente ${data.paciente} listo para pasar`, 'success');
+          }
+        });
       }
       
       prevCitasLength.current = nuevasCitas.length;
@@ -89,6 +129,13 @@ const [audio] = useState(new Audio(sonidoCampana));
 
     return () => unsubscribe();
   }, [user, audio]);
+
+  // Permisos de notificación al cargar
+  useEffect(() => {
+    if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const fetchPacientes = async () => {
     try {
@@ -140,7 +187,7 @@ const [audio] = useState(new Audio(sonidoCampana));
   };
 
   const enviarWhatsApp = (telefono, mensaje) => {
-    if (!telefono) return alert("El paciente no tiene teléfono registrado");
+    if (!telefono) return showToast("El paciente no tiene teléfono registrado", "error");
     let phone = telefono.replace(/\D/g, ''); 
     if (phone.length === 10) phone = `52${phone}`;
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(mensaje)}`, '_blank');
@@ -168,7 +215,8 @@ const [audio] = useState(new Audio(sonidoCampana));
 
       setShowCitaModal(false);
       setNuevaCita({ paciente: '', pacienteId: '', pacienteTelefono: '', fecha: '', hora: '', motivo: 'Consulta', esTeleconsulta: false, doctorAsignado: '' });
-    } catch (error) { alert(error.message); }
+      showToast("Cita agendada correctamente");
+    } catch (error) { showToast(error.message, "error"); }
   };
 
   const cambiarEstado = async (id, estado) => {
@@ -200,6 +248,9 @@ const [audio] = useState(new Audio(sonidoCampana));
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans overflow-hidden">
       
+      {/* TOAST FLOTANTE */}
+      {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+
       {/* HEADER */}
       <div className="z-30 px-6 py-3 border-b border-slate-200 bg-white flex justify-between items-center shadow-sm">
          <div className="flex items-center gap-4">
@@ -229,9 +280,7 @@ const [audio] = useState(new Audio(sonidoCampana));
              </button>
              <button 
                 onClick={() => setVista('semanal')} 
-                className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${vista === 'semanal' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
              >
-                <LayoutGrid size={16}/> Calendario Completo
              </button>
          </div>
 
@@ -324,7 +373,6 @@ const [audio] = useState(new Audio(sonidoCampana));
                                           <div>
                                               <h3 className="font-bold text-lg text-slate-800">{cita.paciente}</h3>
                                               
-                                              {/* AQUÍ ESTÁ EL CAMBIO SOLICITADO: ESTATUS DENTRO DEL BOX */}
                                               <div className="flex gap-2 mt-2 flex-wrap">
                                                   {/* Motivo Base */}
                                                   <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded uppercase">{cita.motivo}</span>
@@ -346,16 +394,35 @@ const [audio] = useState(new Audio(sonidoCampana));
                                                   {cita.esTeleconsulta && <span className="bg-indigo-50 text-indigo-600 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 border border-indigo-100"><Video size={10}/> Teleconsulta</span>}
                                               </div>
                                           </div>
+                                          
+                                          {/* --- BOTÓN DE ACCIÓN CON BLOQUEO Y URGENCIA (Punto 3 + Urgencia) --- */}
                                           <div className="flex gap-2">
                                               {cita.pacienteTelefono && (
                                                   <button onClick={() => enviarWhatsApp(cita.pacienteTelefono, "Confirmar cita")} className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-xl transition-colors"><MessageCircle size={18}/></button>
                                               )}
-                                              <button 
-                                                onClick={() => navigate('/doctor/expediente', { state: { pacienteId: cita.pacienteId, citaId: cita.id, motivo: cita.motivo } })}
-                                                className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
-                                              >
-                                                Iniciar <ChevronRight size={14}/>
-                                              </button>
+                                              
+                                              {cita.estado === 'pendiente' ? (
+                                                  <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation(); // Evitar abrir el drawer
+                                                        setCitaUrgencia(cita); // Activar modal urgencia
+                                                    }}
+                                                    className="group bg-slate-100 border border-slate-200 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all hover:bg-red-50 hover:border-red-200 hover:text-red-600 hover:shadow-md cursor-pointer"
+                                                    title="Clic para ingreso de URGENCIA"
+                                                  >
+                                                    <Lock size={14} className="group-hover:hidden"/> 
+                                                    <AlertTriangle size={14} className="hidden group-hover:block animate-pulse"/>
+                                                    <span className="group-hover:hidden">Triage Pendiente</span>
+                                                    <span className="hidden group-hover:inline">INGRESO URGENCIA</span>
+                                                  </button>
+                                              ) : (
+                                                  <button 
+                                                    onClick={() => navigate('/doctor/expediente', { state: { pacienteId: cita.pacienteId, citaId: cita.id, motivo: cita.motivo } })}
+                                                    className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
+                                                  >
+                                                    Iniciar <ChevronRight size={14}/>
+                                                  </button>
+                                              )}
                                           </div>
                                       </div>
                                   </div>
@@ -457,7 +524,7 @@ const [audio] = useState(new Audio(sonidoCampana));
                     <p className="text-slate-400 text-sm mt-1 flex items-center gap-2"><Clock size={14}/> {selectedCita.hora} • {selectedCita.motivo}</p>
                 </div>
                 
-                {/* MOSTRAR SIGNOS VITALES SI EXISTEN (Panel Lateral) */}
+                {/* MOSTRAR SIGNOS VITALES SI EXISTEN */}
                 {selectedCita.signos_vitales && (
                     <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 grid grid-cols-3 gap-2">
                         <div className="text-center">
@@ -478,12 +545,27 @@ const [audio] = useState(new Audio(sonidoCampana));
                 )}
 
                 <div className="p-6 grid grid-cols-2 gap-4">
-                    <button onClick={() => navigate('/doctor/expediente', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id, motivo: selectedCita.motivo } })} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:bg-blue-50 font-bold text-slate-700 text-sm flex flex-col items-center gap-2">
-                        <FileText size={24} className="text-blue-500"/> Expediente
-                    </button>
-                    <button onClick={() => navigate('/doctor/consulta', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id } })} className="p-4 bg-blue-600 rounded-2xl shadow-lg hover:bg-blue-700 font-bold text-white text-sm flex flex-col items-center gap-2">
-                        <Activity size={24}/> Iniciar Consulta
-                    </button>
+                    {selectedCita.estado === 'pendiente' ? (
+                        // --- ESTADO BLOQUEADO (Drawer) ---
+                        <>
+                            <button className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 font-bold text-sm flex flex-col items-center gap-2 cursor-not-allowed opacity-60">
+                                <Lock size={24}/> Expediente Bloqueado
+                            </button>
+                            <button className="p-4 bg-slate-100 rounded-2xl text-slate-400 font-bold text-sm flex flex-col items-center gap-2 cursor-not-allowed">
+                                <Lock size={24}/> Esperando Signos
+                            </button>
+                        </>
+                    ) : (
+                        // --- ESTADO ACTIVO (Drawer) ---
+                        <>
+                            <button onClick={() => navigate('/doctor/expediente', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id, motivo: selectedCita.motivo } })} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:bg-blue-50 font-bold text-slate-700 text-sm flex flex-col items-center gap-2 transition-colors">
+                                <FileText size={24} className="text-blue-500"/> Expediente Completo
+                            </button>
+                            <button onClick={() => navigate('/doctor/consulta', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id } })} className="p-4 bg-blue-600 rounded-2xl shadow-lg hover:bg-blue-700 font-bold text-white text-sm flex flex-col items-center gap-2 transition-colors">
+                                <Activity size={24}/> Nota Rápida
+                            </button>
+                        </>
+                    )}
                 </div>
                 <div className="px-6 space-y-3">
                    {selectedCita.estado === 'pendiente' && (
@@ -493,6 +575,54 @@ const [audio] = useState(new Audio(sonidoCampana));
             </div>
          )}
       </div>
+
+      {/* --- MODAL CONFIRMACIÓN DE URGENCIA (BREAK GLASS) --- */}
+      {citaUrgencia && (
+        <div className="fixed inset-0 z-[200] bg-red-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border-2 border-red-100 animate-in zoom-in-95">
+            
+            <div className="bg-red-50 p-6 flex flex-col items-center text-center border-b border-red-100">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4 shadow-inner animate-pulse">
+                <AlertTriangle size={32} strokeWidth={2.5} />
+              </div>
+              <h3 className="text-xl font-black text-red-900 uppercase tracking-tight">Protocolo de Urgencia</h3>
+              <p className="text-xs font-bold text-red-400 uppercase mt-1">Ingreso directo sin signos vitales</p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 text-center font-medium leading-relaxed">
+                Estás a punto de saltar el Triage para el paciente <span className="font-bold text-slate-800">{citaUrgencia.paciente}</span>.
+                <br/><br/>
+                Esta acción debe usarse <b>exclusivamente</b> cuando la vida del paciente corre peligro y no hay tiempo para la toma de signos.
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-100 grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => setCitaUrgencia(null)}
+                className="py-3 bg-white border border-slate-200 text-slate-500 rounded-xl font-bold text-xs hover:bg-slate-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                    navigate('/doctor/expediente', { 
+                        state: { 
+                            pacienteId: citaUrgencia.pacienteId, 
+                            citaId: citaUrgencia.id, 
+                            motivo: "URGENCIA: " + citaUrgencia.motivo 
+                        } 
+                    });
+                    setCitaUrgencia(null);
+                }}
+                className="py-3 bg-red-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-red-600/20 hover:bg-red-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Zap size={14} fill="currentColor"/> CONFIRMAR ACCESO
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- MODAL CREAR CITA --- */}
       {showCitaModal && (

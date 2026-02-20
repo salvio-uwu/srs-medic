@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom'; // 1. Importar Navigate
 import { useAuth } from '../../context/AuthContext';
 import { 
   ShieldCheck, 
@@ -17,10 +17,29 @@ const PortalAcceso = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Normalización de texto (seguridad para acentos/mayúsculas)
+  // --- 2. PROTECCIÓN CONTRA PANTALLA BLANCA ---
+  // Si por error alguien llega aquí sin usuario (o al cerrar sesión), 
+  // lo mandamos al Login inmediatamente en lugar de renderizar "null".
+  if (!user) {
+    return <Navigate to="/" replace />;
+  }
+
+  // --- 3. FUNCIÓN DE SALIDA SEGURA ---
+  const handleSalir = async () => {
+    try {
+      // Esperamos a que Firebase termine de cerrar todo antes de movernos
+      await logout(); 
+      navigate('/');
+    } catch (error) {
+      console.error("Error al salir:", error);
+    }
+  };
+
+  // Normalización de texto
   const normalizar = (txt) => txt ? txt.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : '';
 
   const getRoleConfig = (rol) => {
+    // ... (Tu lógica de roles se mantiene igual) ...
     const rolLimpio = normalizar(rol);
 
     switch (rolLimpio) {
@@ -32,10 +51,9 @@ const PortalAcceso = () => {
           description: 'Control total del sistema',
           icon: <ShieldCheck size={56} className="text-white" />,
           path: '/admin/dashboard', 
-          theme: 'from-blue-600 to-indigo-700', // Gradiente
+          theme: 'from-blue-600 to-indigo-700',
           shadow: 'shadow-blue-500/30'
         };
-
       case 'medico':
       case 'doctor':
         return {
@@ -46,7 +64,6 @@ const PortalAcceso = () => {
           theme: 'from-teal-500 to-emerald-600',
           shadow: 'shadow-teal-500/30'
         };
-
       case 'enfermeria':
       case 'enfermera': 
       case 'enfermero':
@@ -58,7 +75,6 @@ const PortalAcceso = () => {
           theme: 'from-rose-500 to-pink-600',
           shadow: 'shadow-rose-500/30'
         };
-
       case 'recepcion':
         return {
           label: 'Recepción',
@@ -68,7 +84,6 @@ const PortalAcceso = () => {
           theme: 'from-violet-500 to-purple-600',
           shadow: 'shadow-violet-500/30'
         };
-
       case 'contadores':
         return {
           label: 'Contabilidad',
@@ -78,7 +93,6 @@ const PortalAcceso = () => {
           theme: 'from-slate-600 to-slate-800',
           shadow: 'shadow-slate-500/30'
         };
-
       case 'limpieza':
         return {
           label: 'Servicios Generales',
@@ -88,7 +102,6 @@ const PortalAcceso = () => {
           theme: 'from-cyan-500 to-blue-500',
           shadow: 'shadow-cyan-500/30'
         };
-
       default:
         return {
           label: 'Usuario Operativo',
@@ -102,18 +115,15 @@ const PortalAcceso = () => {
     }
   };
 
-  if (!user) return null; 
-
   const config = getRoleConfig(user.rol);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
       
-      {/* --- FONDO LIQUID (Efecto visual) --- */}
+      {/* ... (Tus fondos animados se mantienen igual) ... */}
       <div className="absolute top-[-10%] left-[-10%] w-[600px] h-[600px] bg-blue-100/50 rounded-full blur-[100px] animate-pulse pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-indigo-100/50 rounded-full blur-[100px] animate-pulse pointer-events-none"></div>
 
-      {/* --- TARJETA DE ACCESO (Glassmorphism) --- */}
       <div className="relative z-10 max-w-sm w-full bg-white/70 backdrop-blur-2xl rounded-[2rem] shadow-2xl border border-white/50 overflow-hidden animate-in fade-in zoom-in-95 duration-300">
         
         {/* Cabecera Usuario */}
@@ -128,7 +138,6 @@ const PortalAcceso = () => {
         {/* Cuerpo del Rol */}
         <div className="px-8 pb-10 flex flex-col items-center gap-6">
           
-          {/* Icono del Rol con Gradiente */}
           <div className={`p-6 rounded-3xl bg-gradient-to-br ${config.theme} shadow-lg ${config.shadow} transform transition-transform hover:scale-105 duration-300`}>
             {config.icon}
           </div>
@@ -142,7 +151,6 @@ const PortalAcceso = () => {
             </p>
           </div>
 
-          {/* Botón Principal */}
           <button 
             onClick={() => navigate(config.path)}
             className={`w-full py-4 rounded-2xl font-bold text-white shadow-xl bg-gradient-to-r ${config.theme} ${config.shadow} hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-3`}
@@ -150,9 +158,9 @@ const PortalAcceso = () => {
             Ingresar al Portal <ArrowRight size={20} />
           </button>
 
-          {/* Botón Salir */}
+          {/* 4. USAR LA NUEVA FUNCIÓN DE SALIDA */}
           <button 
-            onClick={() => { logout(); navigate('/'); }}
+            onClick={handleSalir} 
             className="text-slate-400 text-xs font-bold flex items-center gap-2 hover:text-red-500 transition-colors py-2"
           >
             <LogOut size={14} /> Cerrar Sesión Segura
@@ -160,7 +168,6 @@ const PortalAcceso = () => {
 
         </div>
         
-        {/* Alerta Discreta si no hay rol */}
         {config.isDefault && (
           <div className="bg-orange-50 p-3 text-center border-t border-orange-100">
             <p className="text-[10px] text-orange-600 font-bold flex items-center justify-center gap-2">

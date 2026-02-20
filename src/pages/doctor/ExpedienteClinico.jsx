@@ -5,7 +5,8 @@ import {
   ChevronRight, Images, Send, FileOutput, FileSignature, PlusSquare, 
   History as HistoryIcon, User, Clock, Activity, MoreVertical, Stethoscope,
   Droplet, Baby, Scissors, AlertTriangle, X, Printer, 
-  FlaskConical, Syringe, FileBadge, ShieldCheck, CheckCircle2, AlertCircle, HeartHandshake 
+  FlaskConical, Syringe, FileBadge, ShieldCheck, CheckCircle2, AlertCircle, HeartHandshake,
+  Trash2, RefreshCw // <--- Iconos para el nuevo modal
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { db, auth } from "../../config/firebase";
@@ -145,8 +146,12 @@ const ExpedienteClinico = () => {
   const [loading, setLoading] = useState(false);
   const [historialCompleto, setHistorialCompleto] = useState([]);
 
-  // --- NUEVOS ESTADOS PARA DATOS TEMPORALES (ELEVACIÓN DE ESTADO) ---
-  // Estos estados "viven" aquí para no perderse si el médico no da clic en "Agregar"
+  // --- NUEVOS ESTADOS PARA LOCAL STORAGE ---
+  const DRAFT_KEY = `draft_expediente_${pacienteId || 'nuevo'}`;
+  const [lastSaved, setLastSaved] = useState(null);
+  const [draftFound, setDraftFound] = useState(null); // Estado para controlar el modal de borrador
+
+  // --- NUEVOS ESTADOS PARA DATOS TEMPORALES ---
   const [tempMed, setTempMed] = useState({ nombre: '', dosis: '' });
   const [tempAlergia, setTempAlergia] = useState({ nombre: '' });
   const [tempCirugia, setTempCirugia] = useState({ 
@@ -311,78 +316,186 @@ const ExpedienteClinico = () => {
     }
   }, [expediente.px_info.fum]);
 
+
+// src/pages/doctor/ExpedienteClinico.jsx
+
+  // ... (inicio del componente)
+
+  // --- EFECTO DE CARGA DE DATOS (VERSIÓN FINAL CON ALERGIAS) ---
   useEffect(() => {
     const fetchDatos = async () => {
       if (!pacienteId) return;
+      setLoading(true); 
       try {
-        const docSnap = await getDoc(doc(db, "pacientes", pacienteId));
-        if (docSnap.exists()) {
-          const dataPx = docSnap.data();
+        // 1. OBTENER TODO EN PARALELO
+        const [pxSnap, historialSnap, citaSnap] = await Promise.all([
+            getDoc(doc(db, "pacientes", pacienteId)),
+            getDocs(query(collection(db, "historial_clinico"), where("pacienteId", "==", pacienteId), orderBy("fecha", "desc"), limit(1))),
+            citaId ? getDoc(doc(db, "citas", citaId)) : Promise.resolve(null)
+        ]);
+
+        let nuevosDatos = { ...expediente }; 
+
+        // 2. PROCESAR DATOS PACIENTE
+        if (pxSnap.exists()) {
+          const dataPx = pxSnap.data();
           setPacienteNombre(dataPx.nombreCompleto);
           setPacienteData(dataPx);
 
           let edadCalc = '--';
           if (dataPx.fechaNacimiento) {
-            const birthDate = new Date(dataPx.fechaNacimiento);
+            const birth = new Date(dataPx.fechaNacimiento);
             const today = new Date();
-            edadCalc = today.getFullYear() - birthDate.getFullYear();
-            const m = today.getMonth() - birthDate.getMonth();
-            if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) edadCalc--;
+            edadCalc = today.getFullYear() - birth.getFullYear();
+            if (today < new Date(today.getFullYear(), birth.getMonth(), birth.getDate())) edadCalc--;
           }
 
-          let idReceta = '';
-          if (dataPx.fechaNacimiento) {
-            idReceta = dataPx.fechaNacimiento.split('-').reverse().join('') + (dataPx.nombre || '').toUpperCase().split(' ')[0];
-          }
-
-          updateCampo('px_info', {
-            ...expediente.px_info,
+          nuevosDatos.px_info = {
+            ...nuevosDatos.px_info,
             edad: `${edadCalc} años`,
-            fecha_nacimiento: dataPx.fechaNacimiento, 
-            id_receta: idReceta,
+            fecha_nacimiento: dataPx.fechaNacimiento,
+            id_receta: dataPx.fechaNacimiento ? dataPx.fechaNacimiento.replace(/-/g, '') : '',
             telefono: dataPx.telefonoMovil || '',
-            alergias_base: dataPx.notasPersonales || '',
-            grupo_sanguineo: dataPx.grupoSanguineo || ''
-          });
+            grupo_sanguineo: dataPx.grupoSanguineo || '',
+            alergias_base: dataPx.notasPersonales || '' 
+          };
         }
 
-        const qHistorial = query(
-          collection(db, "historial_clinico"),
-          where("pacienteId", "==", pacienteId),
-          orderBy("fecha", "desc"),
-          limit(1)
-        );
+        // 3. PROCESAR HISTORIAL PREVIO
+        if (!historialSnap.empty) {
+          const ultimo = historialSnap.docs[0].data();
+          if (ultimo.antecedentes) nuevosDatos.antecedentes = ultimo.antecedentes;
+          if (ultimo.control_embarazo) nuevosDatos.control_embarazo = ultimo.control_embarazo;
+        }
 
-        const snapHistorial = await getDocs(qHistorial);
-        if (!snapHistorial.empty) {
-          const ultimoExpediente = snapHistorial.docs[0].data();
-          if (ultimoExpediente.antecedentes) {
-             updateCampo('antecedentes', ultimoExpediente.antecedentes);
+        // 4. PROCESAR DATOS DE LA CITA (TRIAGE)
+        if (citaSnap && citaSnap.exists()) {
+          const dataCita = citaSnap.data();
+          
+          // A) Signos Vitales
+          if (dataCita.signos_vitales) {
+             nuevosDatos.consulta.exploracion.signos = {
+                 ...nuevosDatos.consulta.exploracion.signos,
+                 ...dataCita.signos_vitales 
+             };
+             if(dataCita.signos_vitales.peso) nuevosDatos.consulta.exploracion.antropometria.peso = dataCita.signos_vitales.peso;
+             if(dataCita.signos_vitales.talla) nuevosDatos.consulta.exploracion.antropometria.talla = dataCita.signos_vitales.talla;
+             if(dataCita.signos_vitales.imc) nuevosDatos.consulta.exploracion.antropometria.imc = dataCita.signos_vitales.imc;
           }
-          if(ultimoExpediente.control_embarazo) {
-             updateCampo('control_embarazo', ultimoExpediente.control_embarazo);
+
+          // B) Motivo de Triage
+          if (dataCita.triage_motivo) {
+             nuevosDatos.consulta.padecimiento = dataCita.triage_motivo;
+          }
+
+          // C) ALERGIAS DE TRIAGE (MEJORADO)
+          if (dataCita.triage_alergias) {
+             const nueva = dataCita.triage_alergias;
+             
+             // 1. Insertar en Ficha Técnica (Para alertas rápidas e IA)
+             const baseInfo = nuevosDatos.px_info.alergias_base || '';
+             if (!baseInfo.includes(nueva)) {
+                 nuevosDatos.px_info.alergias_base = baseInfo ? `${baseInfo} / ${nueva} (Triage)` : nueva;
+             }
+
+             // 2. Insertar en Sección Antecedentes -> Alergias -> Otras (Para que el doctor lo vea en la lista)
+             // Aseguramos que existe la estructura antes de escribir
+             if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otras: '' };
+             
+             const baseOtras = nuevosDatos.antecedentes.alergias.otras || '';
+             // Solo agregamos si no está ya escrito para no duplicar texto
+             if (!baseOtras.includes(nueva)) {
+                 nuevosDatos.antecedentes.alergias.otras = baseOtras 
+                    ? `${baseOtras}. Reportado en Triage: ${nueva}` 
+                    : `Reportado en Triage: ${nueva}`;
+             }
           }
         }
 
-        if (citaId) {
-          const citaSnap = await getDoc(doc(db, "citas", citaId));
-          if (citaSnap.exists()) {
-            const dataCita = citaSnap.data();
-            if (dataCita.signos_vitales) {
-              const s = dataCita.signos_vitales;
-              updateCampo('consulta.exploracion.signos', { 
-                  ta: s.ta || '', temp: s.temp || '', fc: s.fc || '', fr: s.fr || '', spo2: s.spo2 || '' 
-              });
-              updateCampo('consulta.exploracion.antropometria', { 
-                  peso: s.peso || '', talla: s.talla || '', imc: s.imc || '' 
-              });
-            }
-          }
-        }
-      } catch (e) { showToast("Error cargando datos del paciente", "error"); }
+        // 5. IMPACTAR EL ESTADO
+        setExpediente(nuevosDatos);
+
+      } catch (e) {
+        console.error(e);
+        showToast("Error cargando expediente", "error");
+      }
+      setLoading(false);
     };
+
     fetchDatos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacienteId, citaId]);
+  
+  useEffect(() => {
+    if (!pacienteId || loading) return;
+
+    const timer = setTimeout(() => {
+      const datosBorrador = {
+        expediente,
+        tempMed,
+        tempAlergia,
+        tempCirugia,
+        timestamp: new Date().toISOString()
+      };
+      
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(datosBorrador));
+        setLastSaved(new Date());
+      } catch (e) {
+        console.error("Error guardando borrador local", e);
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [expediente, tempMed, tempAlergia, tempCirugia, pacienteId]);
+
+  useEffect(() => {
+    const borradorGuardado = localStorage.getItem(DRAFT_KEY);
+    
+    if (borradorGuardado) {
+      try {
+        const parsed = JSON.parse(borradorGuardado);
+        
+        // --- NUEVO: VALIDACIÓN DE CADUCIDAD (24 Horas) ---
+        const fechaGuardado = new Date(parsed.timestamp);
+        const ahora = new Date();
+        // Calculamos la diferencia en horas
+        const horasDiferencia = Math.abs(ahora - fechaGuardado) / 36e5; 
+
+        // Si el borrador tiene más de 24 horas, lo consideramos "basura vieja"
+        if (horasDiferencia > 24) {
+           console.log("Borrador expirado eliminado automáticamente.");
+           localStorage.removeItem(DRAFT_KEY);
+           return; // Salimos sin mostrar el modal
+        }
+        // ----------------------------------------------------
+
+        // Si es reciente (menos de 24h), mostramos el modal
+        setDraftFound(parsed); 
+      } catch (e) {
+        console.error("Error leyendo borrador", e);
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    }
+  }, [pacienteId, DRAFT_KEY]);
+
+  // --- FUNCIONES DEL MODAL DE BORRADOR ---
+  const handleRestaurarBorrador = () => {
+    if (!draftFound) return;
+    setExpediente(draftFound.expediente);
+    if(draftFound.tempMed) setTempMed(draftFound.tempMed);
+    if(draftFound.tempAlergia) setTempAlergia(draftFound.tempAlergia);
+    if(draftFound.tempCirugia) setTempCirugia(draftFound.tempCirugia);
+    
+    showToast("Información recuperada con éxito", "success");
+    setDraftFound(null); // Cerrar modal
+  };
+
+  const handleDescartarBorrador = () => {
+    localStorage.removeItem(DRAFT_KEY);
+    setDraftFound(null); // Cerrar modal
+    showToast("Borrador eliminado", "info");
+  };
 
   const handleVerHistoria = async () => {
     setLoading(true);
@@ -428,32 +541,24 @@ const ExpedienteClinico = () => {
     setLoading(false);
   };
 
-  // --- LÓGICA DE GUARDADO MEJORADA CON RESCATE DE DATOS ---
- // --- A. FUNCIÓN QUE VALIDA ANTES DE GUARDAR ---
   const handleGuardar = () => {
-    // Revisamos si hay medicamentos o estudios pendientes
     const tieneReceta = (expediente.consulta.diagnostico.tratamiento_lista?.length > 0) || (tempMed.nombre?.trim() !== '');
     const tieneEstudios = (expediente.consulta.estudios.paquetes_seleccionados?.length > 0) || (expediente.consulta.estudios.estudios_seleccionados?.length > 0);
 
-    // Si hay cosas por imprimir, mostramos nuestro modal personalizado (NO alerta nativa)
     if (tieneReceta || tieneEstudios) {
         setShowPrintAlert(true);
     } else {
-        // Si no hay nada especial, guardamos directo
         executeSave();
     }
   };
 
-  // --- B. FUNCIÓN QUE EJECUTA EL GUARDADO (REALIZA LA ACCIÓN) ---
   const executeSave = async () => {
     setLoading(true);
-    setShowPrintAlert(false); // Cerramos el modal si estaba abierto
+    setShowPrintAlert(false);
 
     try {
-      // 1. CLONAR EXPEDIENTE
       const expedienteFinal = { ...expediente };
 
-      // 2. RESCATE DE DATOS (Tu lógica de seguridad)
       if (tempMed.nombre.trim() !== '') {
          const listaActual = expedienteFinal.consulta.diagnostico.tratamiento_lista || [];
          expedienteFinal.consulta.diagnostico.tratamiento_lista = [...listaActual, tempMed];
@@ -473,7 +578,6 @@ const ExpedienteClinico = () => {
          expedienteFinal.antecedentes.cirugias.lista = [...listaCirugias, nuevaCirugia];
       }
 
-      // 3. GUARDAR EN FIREBASE
       await addDoc(collection(db, "historial_clinico"), { 
           ...expedienteFinal, 
           pacienteId, 
@@ -485,7 +589,10 @@ const ExpedienteClinico = () => {
 
       if(citaId) await updateDoc(doc(db, "citas", citaId), { estado: 'completada' });
       
-      // 4. LIMPIEZA
+      // --- 3. LIMPIAR BORRADOR AL FINALIZAR ---
+      localStorage.removeItem(DRAFT_KEY);
+      setLastSaved(null);
+      
       setTempMed({ nombre: '', dosis: '' });
       setTempAlergia({ nombre: '' });
       setTempCirugia({ procedimiento: '', operacion: '', nota: '', unidad: '', tipoFecha: 'fecha', ano: '2024', fechaHora: '', diagnostico: '' });
@@ -499,6 +606,7 @@ const ExpedienteClinico = () => {
     }
     setLoading(false);
   };
+
   const handleOpenPasaporte = () => {
     setShowFormatSelector(false); 
     setShowPasaporteModal(true);
@@ -578,6 +686,13 @@ const ExpedienteClinico = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* INDICADOR DE AUTO-GUARDADO */}
+          {lastSaved && (
+              <span className="text-[10px] font-bold text-slate-400 uppercase hidden md:block animate-pulse">
+                  Autoguardado: {lastSaved.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              </span>
+          )}
+
           <div className="relative">
              <button 
                 onClick={() => setShowMenuQx(!showMenuQx)}
@@ -701,6 +816,7 @@ const ExpedienteClinico = () => {
                 {activeMainTab === 'consulta' && (
                   <div className="flex-1 h-full w-full animate-in fade-in duration-300">
                     <SeccionConsulta 
+                       key={pacienteId}
                        expediente={expediente} 
                        updateCampo={updateCampo} 
                        activeConsulta={activeConsulta} 
@@ -713,6 +829,7 @@ const ExpedienteClinico = () => {
                 {activeMainTab === 'antecedentes' && (
                   <div className="flex-1 h-full w-full animate-in fade-in duration-300">
                     <SeccionAntecedentes 
+                       key={pacienteId}
                        expediente={expediente} 
                        updateCampo={updateCampo} 
                        sexo={pacienteData?.sexo} 
@@ -725,14 +842,15 @@ const ExpedienteClinico = () => {
                   </div>
                 )}
                 {activeMainTab === 'resumen' && (
-  <div className="flex-1 h-full w-full animate-in fade-in duration-300">
-    <SeccionResumen 
-       expediente={expediente} 
-       updateCampo={updateCampo} 
-       pacienteId={pacienteId} // <--- ¡ESTE ES EL CAMBIO CLAVE!
-    />
-  </div>
-)}
+                  <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                    <SeccionResumen 
+                       key={pacienteId}
+                       expediente={expediente} 
+                       updateCampo={updateCampo} 
+                       pacienteId={pacienteId} 
+                    />
+                  </div>
+                )}
             </div>
           </div>
         </main>
@@ -742,7 +860,44 @@ const ExpedienteClinico = () => {
          <FormatoReceta expediente={{...expediente, pacienteNombre}} doctor={user} />
       </div>
       
-      {/* --- MODALES BÁSICOS --- */}
+      {/* --- MODAL RECUPERACIÓN DE BORRADOR (Sustituye alert nativo) --- */}
+      {draftFound && (
+         <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 border border-white/20">
+             <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 p-6 border-b border-slate-100 flex items-center gap-4">
+               <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm text-blue-600 border border-slate-100">
+                 <History size={24} strokeWidth={2.5} />
+               </div>
+               <div>
+                 <h3 className="text-lg font-black text-slate-800 leading-tight">Borrador Detectado</h3>
+                 <p className="text-xs font-medium text-slate-500 mt-0.5">No guardaste la última sesión.</p>
+               </div>
+             </div>
+             <div className="p-6 space-y-4">
+               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
+                 <Clock size={18} className="text-blue-500 mt-0.5 shrink-0" />
+                 <div>
+                   <p className="text-sm font-bold text-blue-900">Guardado automáticamente</p>
+                   <p className="text-xs text-blue-600 mt-1">
+                     {new Date(draftFound.timestamp).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })} • {new Date(draftFound.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                   </p>
+                 </div>
+               </div>
+               <p className="text-sm text-slate-600 leading-relaxed text-center px-2">¿Deseas restaurar la información pendiente o prefieres iniciar una consulta en blanco?</p>
+             </div>
+             <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
+               <button onClick={handleDescartarBorrador} className="flex-1 py-3 bg-white border border-slate-200 text-slate-500 rounded-xl font-bold text-sm hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center gap-2">
+                 <Trash2 size={16} /> Descartar
+               </button>
+               <button onClick={handleRestaurarBorrador} className="flex-[1.5] py-3 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-lg shadow-slate-900/20 hover:bg-slate-800 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+                 <RefreshCw size={16} /> Restaurar Datos
+               </button>
+             </div>
+           </div>
+         </div>
+      )}
+
+      {/* --- OTROS MODALES --- */}
       {showHistoriaModal && <HistoriaClinicaModal onClose={() => setShowHistoriaModal(false)} paciente={{...pacienteData, nombre: pacienteNombre}} historial={historialCompleto} doctor={user} expedienteActual={expediente} />}
       {showDocsModal && <DocumentosImagenesModal onClose={() => setShowDocsModal(false)} pacienteId={pacienteId} pacienteNombre={pacienteNombre} />}
       {showExportModal && <ExportarHistoriaModal onClose={() => setShowExportModal(false)} pacienteNombre={pacienteNombre} historial={historialCompleto} />}
@@ -802,54 +957,28 @@ const ExpedienteClinico = () => {
                    <FormatCard label="Buena Salud (Adulto)" onClick={() => { setShowCartaSalud(true); setShowFormatSelector(false); }} />
                    <FormatCard label="Buena Salud (Menor)" icon={<Baby size={28}/>} onClick={() => { setShowCartaSalud(true); setShowFormatSelector(false); }} /> 
                    <FormatCard label="Pasaporte (Menor/Mayor)" icon={<FileText size={28}/>} onClick={handleOpenPasaporte} />
-                   
-                   {/* --- CORREGIDO: Solicitud DIF ahora tiene cierre correcto --- */}
                    <FormatCard label="Solicitud DIF" icon={<FileText size={28}/>} onClick={() => { setShowFormatSelector(false); setShowDIFModal(true); }} /> 
-                   
                    <FormatCard label="Prenupciales" icon={<HeartHandshake size={28}/>} onClick={() => { setShowFormatSelector(false); setShowPrenupcialModal(true); }} />
                 </div>
               </div>
 
-              {/* Otras secciones (Legal, Lab) se mantienen igual... */}
               <div>
                 <h4 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-3 border-b border-slate-200 pb-2"><ShieldCheck size={18}/> Legal y Privacidad</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
                    <FormatCard label="Consentimiento Info." icon={<FileSignature size={28}/>} onClick={() => { setShowConsentimientoModal(true); setShowFormatSelector(false); }} />
-
-                <FormatCard 
-                  label="Aviso de Privacidad" 
-                    icon={<ShieldCheck size={28}/>} 
-                    onClick={() => { setShowFormatSelector(false); setShowAvisoPrivacidad(true); }} 
-                />
-
+                   <FormatCard label="Aviso de Privacidad" icon={<ShieldCheck size={28}/>} onClick={() => { setShowFormatSelector(false); setShowAvisoPrivacidad(true); }} />
                 </div>
               </div>
 
               <div>
                 <h4 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-3 border-b border-slate-200 pb-2"><FlaskConical size={18}/> Pruebas Rápidas</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
-                <FormatCard 
-    label="Antidoping (Orina)" 
-    icon={<FlaskConical size={28}/>} // Asegúrate de importar FlaskConical de lucide-react
-    onClick={() => { setShowFormatSelector(false); setShowAntidopingModal(true); }} 
-/>
-<FormatCard 
-    label="COVID-19 (Ag)" 
-    icon={<Activity size={28}/>} 
-    onClick={() => { setShowFormatSelector(false); setShowCovidModal(true); }} 
-/>
-<FormatCard 
-    label="Influenza A+B" 
-    icon={<Activity size={28}/>} // O usa Thermometer si lo importas
-    onClick={() => { setShowFormatSelector(false); setShowInfluenzaModal(true); }} 
-/>                   <FormatCard label="Panel Viral (Combo)" icon={<Activity size={28}/>} onClick={() => showToast("Pendiente: Panel Viral")} />
-                   <FormatCard label="Panel Viral + VSR" icon={<Activity size={28}/>} onClick={() => showToast("Pendiente: Panel VSR")} />
-
-<FormatCard 
-    label="Prueba Dengue" 
-    icon={<Droplet size={28}/>} 
-    onClick={() => { setShowFormatSelector(false); setShowDengueModal(true); }} 
-/>
+                  <FormatCard label="Antidoping (Orina)" icon={<FlaskConical size={28}/>} onClick={() => { setShowFormatSelector(false); setShowAntidopingModal(true); }} />
+                  <FormatCard label="COVID-19 (Ag)" icon={<Activity size={28}/>} onClick={() => { setShowFormatSelector(false); setShowCovidModal(true); }} />
+                  <FormatCard label="Influenza A+B" icon={<Activity size={28}/>} onClick={() => { setShowFormatSelector(false); setShowInfluenzaModal(true); }} />
+                  <FormatCard label="Panel Viral (Combo)" icon={<Activity size={28}/>} onClick={() => showToast("Pendiente: Panel Viral")} />
+                  <FormatCard label="Panel Viral + VSR" icon={<Activity size={28}/>} onClick={() => showToast("Pendiente: Panel VSR")} />
+                  <FormatCard label="Prueba Dengue" icon={<Droplet size={28}/>} onClick={() => { setShowFormatSelector(false); setShowDengueModal(true); }} />
                 </div>
               </div>
 
@@ -860,99 +989,16 @@ const ExpedienteClinico = () => {
 
       {/* --- MODALES DOCUMENTOS --- */}
       {showCartaSalud && <CartaBuenaSaludModal onClose={() => setShowCartaSalud(false)} expediente={expediente} pacienteNombre={pacienteNombre} doctor={user} />}
-
       {showPasaporteModal && <CartaPasaporteModal onClose={() => setShowPasaporteModal(false)} onBackToMenu={handleBackFromPasaporte} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A" }} doctor={user} />}
+      {showDIFModal && <SolicitudDIFModal onClose={() => setShowDIFModal(false)} onBackToMenu={() => { setShowDIFModal(false); setShowFormatSelector(true); }} paciente={{...pacienteData, nombre: pacienteNombre, edad: expediente?.px_info?.edad}} doctor={user} />}
+      {showPrenupcialModal && <PrenupcialesModal onClose={() => setShowPrenupcialModal(false)} onBackToMenu={() => { setShowPrenupcialModal(false); setShowFormatSelector(true); }} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A", sexo: pacienteData?.sexo || "Masculino" }} doctor={user} />}
+      {showAvisoPrivacidad && <AvisoPrivacidadModal onClose={() => setShowAvisoPrivacidad(false)} onBackToMenu={() => { setShowAvisoPrivacidad(false); setShowFormatSelector(true); }} />}
+      {showAntidopingModal && <AntidopingModal onClose={() => setShowAntidopingModal(false)} onBackToMenu={() => { setShowAntidopingModal(false); setShowFormatSelector(true); }} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A" }} doctor={user} />}
+      {showCovidModal && <CovidModal onClose={() => setShowCovidModal(false)} onBackToMenu={() => { setShowCovidModal(false); setShowFormatSelector(true); }} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A" }} doctor={user} />}
+      {showInfluenzaModal && <InfluenzaModal onClose={() => setShowInfluenzaModal(false)} onBackToMenu={() => { setShowInfluenzaModal(false); setShowFormatSelector(true); }} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A" }} doctor={user} />}
+      {showDengueModal && <DengueModal onClose={() => setShowDengueModal(false)} onBackToMenu={() => { setShowDengueModal(false); setShowFormatSelector(true); }} paciente={{ nombre: pacienteNombre || "Paciente", apellidoPaterno: pacienteData?.apellidoPaterno || "", apellidoMaterno: pacienteData?.apellidoMaterno || "", edad: expediente?.px_info?.edad || "N/A" }} doctor={user} />}
 
-      {showDIFModal && (
-        <SolicitudDIFModal 
-          onClose={() => setShowDIFModal(false)} 
-          // --- CORREGIDO: Se pasa la función para regresar ---
-          onBackToMenu={() => { setShowDIFModal(false); setShowFormatSelector(true); }}
-          paciente={{...pacienteData, nombre: pacienteNombre, edad: expediente?.px_info?.edad}}
-          doctor={user}
-        />
-      )}
-
-      {showPrenupcialModal && (
-        <PrenupcialesModal 
-          onClose={() => setShowPrenupcialModal(false)}
-          // --- CORREGIDO: Se pasa la función para regresar ---
-          onBackToMenu={() => { setShowPrenupcialModal(false); setShowFormatSelector(true); }}
-          // --- CORREGIDO: Datos seguros para evitar crash ---
-          paciente={{
-              nombre: pacienteNombre || "Paciente", 
-              apellidoPaterno: pacienteData?.apellidoPaterno || "",
-              apellidoMaterno: pacienteData?.apellidoMaterno || "",
-              edad: expediente?.px_info?.edad || "N/A",
-              sexo: pacienteData?.sexo || "Masculino" 
-          }}
-          doctor={user}
-        />
-      )}
-
-  {showAvisoPrivacidad && (
-    <AvisoPrivacidadModal 
-      onClose={() => setShowAvisoPrivacidad(false)} 
-      onBackToMenu={() => { setShowAvisoPrivacidad(false); setShowFormatSelector(true); }}
-    />
-  )}
-      
-{showAntidopingModal && (
-    <AntidopingModal 
-      onClose={() => setShowAntidopingModal(false)}
-      onBackToMenu={() => { setShowAntidopingModal(false); setShowFormatSelector(true); }}
-      paciente={{
-          nombre: pacienteNombre || "Paciente", 
-          apellidoPaterno: pacienteData?.apellidoPaterno || "",
-          apellidoMaterno: pacienteData?.apellidoMaterno || "",
-          edad: expediente?.px_info?.edad || "N/A"
-      }}
-      doctor={user}
-    />
-  )}
-
-  {showCovidModal && (
-    <CovidModal 
-      onClose={() => setShowCovidModal(false)}
-      onBackToMenu={() => { setShowCovidModal(false); setShowFormatSelector(true); }}
-      paciente={{
-          nombre: pacienteNombre || "Paciente", 
-          apellidoPaterno: pacienteData?.apellidoPaterno || "",
-          apellidoMaterno: pacienteData?.apellidoMaterno || "",
-          edad: expediente?.px_info?.edad || "N/A"
-      }}
-      doctor={user}
-    />
-  )}
-
-  {showInfluenzaModal && (
-    <InfluenzaModal 
-      onClose={() => setShowInfluenzaModal(false)}
-      onBackToMenu={() => { setShowInfluenzaModal(false); setShowFormatSelector(true); }}
-      paciente={{
-          nombre: pacienteNombre || "Paciente", 
-          apellidoPaterno: pacienteData?.apellidoPaterno || "",
-          apellidoMaterno: pacienteData?.apellidoMaterno || "",
-          edad: expediente?.px_info?.edad || "N/A"
-      }}
-      doctor={user} // <--- ¡CRÍTICO PARA QUE SALGA EL NOMBRE DEL DR!
-    />
-  )}
-
-{showDengueModal && (
-    <DengueModal 
-      onClose={() => setShowDengueModal(false)}
-      onBackToMenu={() => { setShowDengueModal(false); setShowFormatSelector(true); }}
-      paciente={{
-          nombre: pacienteNombre || "Paciente", 
-          apellidoPaterno: pacienteData?.apellidoPaterno || "",
-          apellidoMaterno: pacienteData?.apellidoMaterno || "",
-          edad: expediente?.px_info?.edad || "N/A"
-      }}
-      doctor={user}
-    />
-  )}
-{/* --- MODAL DE ADVERTENCIA DE IMPRESIÓN --- */}
+      {/* --- MODAL DE ADVERTENCIA DE IMPRESIÓN --- */}
       {showPrintAlert && (
         <div className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200">

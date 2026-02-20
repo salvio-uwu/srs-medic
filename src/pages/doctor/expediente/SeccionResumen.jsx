@@ -2,16 +2,20 @@
 import React, { useState, useEffect } from 'react';
 import { 
   History, Activity, Clock, FileText, Calendar, 
-  Stethoscope, ChevronRight, X, Pill, TrendingUp, CheckCircle 
+  Stethoscope, ChevronRight, X, Pill, TrendingUp, CheckCircle,
+  Sparkles, Brain 
 } from 'lucide-react';
 import { db } from '../../../config/firebase'; 
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 
-// --- IMPORTACIONES PARA GRÁFICAS ---
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
   ResponsiveContainer, ScatterChart, Scatter, ReferenceLine 
 } from 'recharts';
+
+// --- CONFIGURACIÓN API ---
+// Recuerda: En producción, usa variables de entorno (.env)
+const API_KEY = "AIzaSyCW6JzQuMgVZDsT4p9EqwtZOYaUl47O4u8"; 
 
 const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
   // --- ESTADOS ---
@@ -19,6 +23,11 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
   const [historial, setHistorial] = useState([]);
   const [loading, setLoading] = useState(false);
   const [consultaSeleccionada, setConsultaSeleccionada] = useState(null);
+
+  // --- ESTADOS IA ---
+  const [analizando, setAnalizando] = useState(false);
+  const [resumenIA, setResumenIA] = useState(null);
+  const [tendenciasIA, setTendenciasIA] = useState(null);
 
   // Estados para Gráficas
   const [datosGraficas, setDatosGraficas] = useState({
@@ -29,7 +38,17 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     tensionArterial: []
   });
 
-  // --- HELPER: CALCULAR EDAD ---
+  // --- HELPER: Limpiar formato Markdown residual ---
+  const limpiarTextoIA = (texto) => {
+    if (!texto) return "";
+    return texto
+      .replace(/\*\*/g, "") // Elimina negritas (**)
+      .replace(/\*/g, "")   // Elimina asteriscos sueltos
+      .replace(/^Here is.*$/im, "") // Elimina introducciones en inglés si las hubiera
+      .replace(/^Aquí tienes.*$/im, "") // Elimina introducciones en español
+      .trim();
+  };
+
   const calcularEdadEnFecha = (fechaNacimiento, fechaConsulta) => {
     if (!fechaNacimiento) return 0;
     const nac = new Date(fechaNacimiento);
@@ -39,13 +58,12 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     return parseFloat(diffYears.toFixed(2));
   };
 
-  // --- CARGA DE DATOS (HISTORIAL + GRÁFICAS) ---
+  // --- CARGA DE DATOS ---
   useEffect(() => {
     const fetchHistorial = async () => {
         if (!pacienteId) return;
         setLoading(true);
         try {
-            // Traemos orden ASC (antiguo -> nuevo) para dibujar las gráficas correctamente
             const q = query(
                 collection(db, "historial_clinico"),
                 where("pacienteId", "==", pacienteId),
@@ -64,7 +82,6 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                 const data = d.data();
                 const fechaObj = data.fecha?.toDate ? data.fecha.toDate() : new Date();
                 
-                // 1. Datos para la Lista (Timeline)
                 docsList.push({
                     id: d.id,
                     ...data,
@@ -72,11 +89,9 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     horaFormato: fechaObj.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
                 });
 
-                // 2. Datos para Gráficas
                 const vitales = data.consulta?.exploracion?.signos || {};
                 const antropo = data.consulta?.exploracion?.antropometria || {};
                 
-                // Validamos fecha de nacimiento para el eje X
                 if (expediente?.px_info?.fecha_nacimiento) {
                     const edadAlMomento = calcularEdadEnFecha(expediente.px_info.fecha_nacimiento, fechaObj);
                     const fechaCorta = fechaObj.toLocaleDateString('es-MX');
@@ -93,10 +108,8 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                 }
             });
 
-            // IMPORTANTE: Invertimos el orden solo para la lista visual (Timeline), para que lo más nuevo salga arriba
-            setHistorial([...docsList].reverse()); 
+            setHistorial([...docsList].reverse());
             
-            // Guardamos datos para gráficas (Orden ASC original)
             setDatosGraficas({
                 pesoEdad: dataPeso,
                 tallaEdad: dataTalla,
@@ -114,7 +127,91 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     fetchHistorial();
   }, [pacienteId, expediente?.px_info?.fecha_nacimiento]);
 
-  // --- CLASES ---
+  // ==========================================
+  // FUNCIONES INTELIGENCIA ARTIFICIAL (CORREGIDAS)
+  // ==========================================
+
+  // 1. Resumen Evolutivo
+  const generarResumenClinico = async () => {
+    if (historial.length === 0) return alert("No hay historial suficiente.");
+    setAnalizando(true);
+    try {
+      const contexto = historial.slice(0, 10).map(c => ({
+        fecha: c.fechaFormato,
+        motivo: c.consulta?.padecimiento,
+        diagnostico: c.consulta?.diagnostico?.enfermedad_actual,
+        tratamiento: c.consulta?.diagnostico?.tratamiento_lista?.map(t => t.nombre).join(', ')
+      }));
+
+      // PROMPT AJUSTADO: Cero formato chat, tono clínico puro.
+      const prompt = `
+        Actúa como un médico especialista redactando una nota de evolución clínica formal.
+        
+        Datos del historial cronológico:
+        ${JSON.stringify(contexto)}
+
+        INSTRUCCIONES ESTRICTAS:
+        1. NO uses saludos, ni introducciones, ni despedidas.
+        2. NO uses asteriscos (**), ni negritas, ni formato Markdown. Solo texto plano.
+        3. NO uses etiquetas como "Resumen:" o "Conclusión:".
+        4. Redacta en un solo párrafo cohesivo o dos breves.
+        5. Usa lenguaje médico técnico, impersonal y directo.
+        
+        Objetivo de la nota: Sintetizar la evolución del paciente, adherencia terapéutica y recurrencia de patologías.
+      `;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`, { 
+          method: "POST", headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
+      });
+      
+      const data = await response.json();
+      const rawText = data.candidates[0].content.parts[0].text;
+      setResumenIA(limpiarTextoIA(rawText));
+
+    } catch (e) { console.error(e); alert("Error al conectar con IA"); }
+    setAnalizando(false);
+  };
+
+  // 2. Análisis de Tendencias
+  const analizarTendencias = async () => {
+    if (datosGraficas.pesoEdad.length < 2) return alert("Se necesitan más datos para analizar tendencias.");
+    setAnalizando(true);
+    try {
+        const dataParaIA = {
+            peso: datosGraficas.pesoEdad.map(d => ({ fecha: d.fecha, valor: d.y })),
+            imc: datosGraficas.imcEdad.map(d => ({ fecha: d.fecha, valor: d.y })),
+            tension: datosGraficas.tensionArterial
+        };
+
+        // PROMPT AJUSTADO: Lista técnica directa
+        const prompt = `
+          Analiza estos datos biométricos de un paciente:
+          ${JSON.stringify(dataParaIA)}
+
+          Genera una lista de hallazgos clínicos relevantes.
+
+          INSTRUCCIONES ESTRICTAS:
+          1. NO uses asteriscos (**) ni formato Markdown.
+          2. NO uses frases como "Aquí están los hallazgos" o "Basado en los datos".
+          3. Usa guiones simples (-) para listar.
+          4. Sé extremadamente directo y técnico. Ejemplo: "- Descenso ponderal de 3kg en el último mes."
+          5. Si detectas valores biológicamente improbables (ej. peso 22kg y luego 89kg en días), señálalo como "Error de captura probable" o "Dato inconsistente".
+        `;
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`, { 
+            method: "POST", headers: { "Content-Type": "application/json" }, 
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
+        });
+        
+        const data = await response.json();
+        const rawText = data.candidates[0].content.parts[0].text;
+        setTendenciasIA(limpiarTextoIA(rawText));
+
+    } catch (e) { console.error(e); }
+    setAnalizando(false);
+  };
+
   const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full w-full flex flex-col overflow-hidden";
 
   return (
@@ -122,20 +219,10 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
       
       {/* TABS SUPERIORES */}
       <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 shrink-0 gap-8 overflow-x-auto w-full">
-        <button 
-            onClick={() => setActiveResumenTab('consulta_previa')}
-            className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${
-                activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'
-            }`}
-        >
+        <button onClick={() => setActiveResumenTab('consulta_previa')} className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
             <History size={16} /> LÍNEA DE TIEMPO
         </button>
-        <button 
-            onClick={() => setActiveResumenTab('graficas')}
-            className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${
-                activeResumenTab === 'graficas' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'
-            }`}
-        >
+        <button onClick={() => setActiveResumenTab('graficas')} className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${activeResumenTab === 'graficas' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
             <TrendingUp size={16} /> GRÁFICAS EVOLUTIVAS
         </button>
       </div>
@@ -143,13 +230,37 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
       {/* ÁREA DE TRABAJO */}
       <div className="flex-1 p-6 overflow-hidden bg-slate-50/30 w-full flex flex-col">
         
-        {/* --- VISTA 1: HISTORIAL (TIMELINE ORIGINAL RESTAURADO) --- */}
+        {/* --- VISTA 1: HISTORIAL --- */}
         {activeResumenTab === 'consulta_previa' && (
           <div className="flex h-full w-full gap-6 animate-in fade-in">
             
-            {/* PANEL IZQUIERDO: TIMELINE */}
             <div className="flex-[3] flex flex-col h-full">
+                {/* --- BLOQUE IA (RESUMEN CLÍNICO) --- */}
+                <div className="mb-4 bg-white border border-slate-200 p-5 rounded-2xl flex flex-col gap-3 shadow-sm">
+                    <div className="flex justify-between items-start">
+                        <h5 className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-2">
+                            <Brain size={14} className="text-indigo-500"/> Análisis Evolutivo
+                        </h5>
+                        <button onClick={generarResumenClinico} disabled={analizando} className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-2">
+                            {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
+                            {analizando ? "Procesando..." : "Generar Nota de Resumen"}
+                        </button>
+                    </div>
+                    
+                    {resumenIA ? (
+                        <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-100 animate-in fade-in">
+                            {/* Renderizamos texto limpio */}
+                            {resumenIA}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-slate-400 italic pl-1">
+                            Solicita un análisis para ver un resumen clínico profesional de la evolución del paciente.
+                        </p>
+                    )}
+                </div>
+
                 <div className={sectionClass}>
+                    {/* ... (Resto del código del timeline se mantiene igual) ... */}
                     <div className="flex items-center justify-between mb-4 shrink-0">
                         <div className="flex items-center gap-3">
                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl"><History size={20}/></div>
@@ -166,71 +277,25 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                         </div>
                     </div>
                     
-                    {/* TIMELINE SCROLLABLE */}
                     <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 relative">
-                        {historial.length > 0 && (
-                            <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>
-                        )}
-
+                        {historial.length > 0 && <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>}
                         {loading ? (
-                            <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
-                                <Clock className="animate-spin" size={24}/>
-                                <span className="text-xs font-bold">Cargando historia...</span>
-                            </div>
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2"><Clock className="animate-spin" size={24}/><span className="text-xs font-bold">Cargando historia...</span></div>
                         ) : historial.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                                <div className="bg-white p-4 rounded-full shadow-sm mb-3">
-                                    <Clock size={32} className="text-slate-300" />
-                                </div>
-                                <p className="text-sm font-medium">No hay registros previos</p>
-                            </div>
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200"><p className="text-sm font-medium">No hay registros previos</p></div>
                         ) : (
                             <div className="space-y-6 relative z-10 pl-2 py-2">
                                 {historial.map((item, idx) => (
                                     <div key={item.id} className="flex gap-4 group">
-                                        <div className={`w-9 h-9 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 z-10 transition-colors ${idx === 0 ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                            <Calendar size={14} />
-                                        </div>
-
-                                        {/* TARJETA CLICKEABLE */}
-                                        <div 
-                                            onClick={() => setConsultaSeleccionada(item)}
-                                            className="flex-1 bg-white border border-slate-100 p-4 rounded-xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all group-hover:translate-x-1 cursor-pointer"
-                                        >
+                                        <div className={`w-9 h-9 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 z-10 transition-colors ${idx === 0 ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400'}`}><Calendar size={14} /></div>
+                                        <div onClick={() => setConsultaSeleccionada(item)} className="flex-1 bg-white border border-slate-100 p-4 rounded-xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
                                             <div className="flex justify-between items-start mb-2">
-                                                <div>
-                                                    <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wide">
-                                                        {item.tipoNota || 'Consulta General'}
-                                                    </span>
-                                                    <h4 className="text-sm font-bold text-slate-800 mt-1">
-                                                        {item.fechaFormato} <span className="text-slate-400 font-normal text-xs">• {item.horaFormato}</span>
-                                                    </h4>
-                                                </div>
-                                                <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
-                                                    <Stethoscope size={12} className="text-slate-400"/>
-                                                    <span className="text-[10px] font-bold text-slate-600 uppercase">
-                                                        {item.medicoNombre ? item.medicoNombre.split(' ')[0] : 'Dr.'}
-                                                    </span>
-                                                </div>
+                                                <div><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wide">{item.tipoNota || 'Consulta General'}</span><h4 className="text-sm font-bold text-slate-800 mt-1">{item.fechaFormato} <span className="text-slate-400 font-normal text-xs">• {item.horaFormato}</span></h4></div>
+                                                <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100"><Stethoscope size={12} className="text-slate-400"/><span className="text-[10px] font-bold text-slate-600 uppercase">{item.medicoNombre ? item.medicoNombre.split(' ')[0] : 'Dr.'}</span></div>
                                             </div>
-                                            
                                             <div className="space-y-2">
-                                                {item.consulta?.diagnostico?.enfermedad_actual && (
-                                                    <div className="flex gap-2 items-start">
-                                                        <Activity size={14} className="text-emerald-500 mt-0.5 shrink-0"/>
-                                                        <p className="text-xs text-slate-600 font-medium leading-tight line-clamp-1">
-                                                            <span className="font-bold text-slate-700">Dx:</span> {item.consulta.diagnostico.enfermedad_actual}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                                {item.consulta?.padecimiento && (
-                                                    <div className="flex gap-2 items-start">
-                                                        <FileText size={14} className="text-slate-400 mt-0.5 shrink-0"/>
-                                                        <p className="text-xs text-slate-500 line-clamp-1 italic">
-                                                            "{item.consulta.padecimiento}"
-                                                        </p>
-                                                    </div>
-                                                )}
+                                                {item.consulta?.diagnostico?.enfermedad_actual && <div className="flex gap-2 items-start"><Activity size={14} className="text-emerald-500 mt-0.5 shrink-0"/><p className="text-xs text-slate-600 font-medium line-clamp-1"><span className="font-bold text-slate-700">Dx:</span> {item.consulta.diagnostico.enfermedad_actual}</p></div>}
+                                                {item.consulta?.padecimiento && <div className="flex gap-2 items-start"><FileText size={14} className="text-slate-400 mt-0.5 shrink-0"/><p className="text-xs text-slate-500 line-clamp-1 italic">"{item.consulta.padecimiento}"</p></div>}
                                             </div>
                                         </div>
                                     </div>
@@ -241,15 +306,12 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                 </div>
             </div>
 
-            {/* PANEL DERECHO: NOTAS PERSONALES (ORIGINAL) */}
+            {/* PANEL DERECHO: NOTAS PERSONALES */}
             <div className="flex-1 flex flex-col h-full">
                 <div className={sectionClass}>
                     <div className="flex items-center gap-3 mb-4 shrink-0">
                         <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl"><FileText size={20}/></div>
-                        <div>
-                            <h3 className="font-bold text-slate-800 text-lg leading-none">Notas personales</h3>
-                            <p className="text-xs text-slate-400 mt-1">Privadas y confidenciales</p>
-                        </div>
+                        <div><h3 className="font-bold text-slate-800 text-lg leading-none">Notas personales</h3><p className="text-xs text-slate-400 mt-1">Privadas y confidenciales</p></div>
                     </div>
                     <textarea 
                         className="flex-1 w-full p-5 bg-white border-2 border-teal-500/20 rounded-2xl outline-none text-slate-700 text-sm resize-none focus:border-teal-500 transition-all leading-relaxed shadow-sm placeholder:italic placeholder:text-slate-300"
@@ -259,20 +321,36 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     />
                 </div>
             </div>
-
           </div>
         )}
 
-        {/* --- VISTA 2: GRÁFICAS (NUEVA LÓGICA) --- */}
+        {/* --- VISTA 2: GRÁFICAS --- */}
         {activeResumenTab === 'graficas' && (
           <div className="h-full w-full overflow-y-auto custom-scrollbar pr-2">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10">
+            
+            {/* --- PANEL DE INSIGHTS IA (HALLAZGOS TÉCNICOS) --- */}
+            <div className="mb-6 bg-white border border-slate-200 p-5 rounded-2xl flex flex-col gap-3 shadow-sm">
+                <div className="flex justify-between items-center">
+                    <h5 className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-2">
+                        <TrendingUp size={14} className="text-blue-500"/> Análisis de Tendencias
+                    </h5>
+                    <button onClick={analizarTendencias} disabled={analizando} className="bg-blue-50 text-blue-700 border border-blue-100 px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-2">
+                        {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
+                        {analizando ? "Analizando datos..." : "Detectar Hallazgos"}
+                    </button>
+                </div>
                 
-                {/* 1. GRÁFICA PESO PARA LA EDAD */}
+                {tendenciasIA && (
+                    <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-100 animate-in fade-in">
+                        <div style={{ whiteSpace: 'pre-line' }}>{tendenciasIA}</div>
+                    </div>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10">
+                {/* 1. GRÁFICA PESO */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-500"></span> Peso vs Edad Cronológica
-                    </h4>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500"></span> Peso vs Edad</h4>
                     <div className="flex-1 w-full text-xs">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={datosGraficas.pesoEdad}>
@@ -286,11 +364,9 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     </div>
                 </div>
 
-                {/* 2. GRÁFICA TALLA PARA LA EDAD */}
+                {/* 2. GRÁFICA TALLA */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Talla vs Edad Cronológica
-                    </h4>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Talla vs Edad</h4>
                     <div className="flex-1 w-full text-xs">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={datosGraficas.tallaEdad}>
@@ -306,9 +382,7 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
 
                 {/* 3. GRÁFICA IMC */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-purple-500"></span> IMC vs Edad
-                    </h4>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-purple-500"></span> IMC vs Edad</h4>
                     <div className="flex-1 w-full text-xs">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={datosGraficas.imcEdad}>
@@ -317,7 +391,6 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                                 <YAxis domain={[10, 40]}/>
                                 <Tooltip />
                                 <Line type="monotone" dataKey="y" stroke="#8b5cf6" strokeWidth={3} dot={{r: 4}} name="IMC"/>
-                                {/* Zonas de referencia con ReferenceLine */}
                                 <ReferenceLine y={25} label="Sobrepeso" stroke="orange" strokeDasharray="3 3" />
                                 <ReferenceLine y={30} label="Obesidad" stroke="red" strokeDasharray="3 3" />
                             </LineChart>
@@ -325,11 +398,9 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     </div>
                 </div>
 
-                {/* 4. PESO PARA LA TALLA (Scatter) */}
+                {/* 4. PESO/TALLA */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col">
-                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-orange-500"></span> Peso para la Talla
-                    </h4>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span> Peso para la Talla</h4>
                     <div className="flex-1 w-full text-xs">
                         <ResponsiveContainer width="100%" height="100%">
                             <ScatterChart>
@@ -343,11 +414,9 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     </div>
                 </div>
 
-                {/* 5. TENSIÓN ARTERIAL (Doble Línea) */}
+                {/* 5. TENSIÓN ARTERIAL */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-80 flex flex-col lg:col-span-2">
-                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-rose-500"></span> Evolución Tensión Arterial
-                    </h4>
+                    <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-rose-500"></span> Evolución Tensión Arterial</h4>
                     <div className="flex-1 w-full text-xs">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={datosGraficas.tensionArterial}>
@@ -362,108 +431,38 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                         </ResponsiveContainer>
                     </div>
                 </div>
-
             </div>
           </div>
         )}
-
       </div>
 
-      {/* --- MODAL DETALLE DE CONSULTA (VISOR RÁPIDO - RESTAURADO) --- */}
+      {/* --- MODAL DETALLE CONSULTA --- */}
       {consultaSeleccionada && (
         <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-2xl max-h-[90%] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
-                
-                {/* Header Modal */}
                 <div className="px-8 py-5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
                     <div>
                         <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{consultaSeleccionada.tipoNota}</h2>
-                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2">
-                            <Calendar size={14}/> {consultaSeleccionada.fechaFormato} 
-                            <span className="w-1 h-1 bg-slate-300 rounded-full"></span> 
-                            <Clock size={14}/> {consultaSeleccionada.horaFormato}
-                        </p>
+                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2"><Calendar size={14}/> {consultaSeleccionada.fechaFormato} <span className="w-1 h-1 bg-slate-300 rounded-full"></span> <Clock size={14}/> {consultaSeleccionada.horaFormato}</p>
                     </div>
-                    <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200">
-                        <X size={24}/>
-                    </button>
+                    <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200"><X size={24}/></button>
                 </div>
-
-                {/* Contenido Modal */}
                 <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-8">
-                    
-                    {/* Signos Vitales */}
                     <div className="grid grid-cols-4 gap-4">
-                        {[
-                            {l:'Peso', v: consultaSeleccionada.consulta?.exploracion?.signos?.peso, u:'kg'},
-                            {l:'Temp', v: consultaSeleccionada.consulta?.exploracion?.signos?.temp, u:'°C'},
-                            {l:'T/A', v: consultaSeleccionada.consulta?.exploracion?.signos?.ta, u:''},
-                            {l:'SpO2', v: consultaSeleccionada.consulta?.exploracion?.signos?.spo2, u:'%'},
-                        ].map((s, i) => (
+                        {[{l:'Peso', v: consultaSeleccionada.consulta?.exploracion?.signos?.peso, u:'kg'}, {l:'Temp', v: consultaSeleccionada.consulta?.exploracion?.signos?.temp, u:'°C'}, {l:'T/A', v: consultaSeleccionada.consulta?.exploracion?.signos?.ta, u:''}, {l:'SpO2', v: consultaSeleccionada.consulta?.exploracion?.signos?.spo2, u:'%'}].map((s, i) => (
                             <div key={i} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
                                 <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{s.l}</p>
                                 <p className="text-lg font-black text-slate-700">{s.v || '--'} <span className="text-[10px] font-normal text-slate-400">{s.u}</span></p>
                             </div>
                         ))}
                     </div>
-
-                    {/* Notas SOAP */}
                     <div className="space-y-6">
-                        <div>
-                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <FileText size={14}/> Padecimiento (Subjetivo)
-                            </h4>
-                            <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed">
-                                {consultaSeleccionada.consulta?.padecimiento || 'Sin descripción'}
-                            </div>
-                        </div>
-
-                        {consultaSeleccionada.consulta?.exploracion?.fisica && (
-                            <div>
-                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                    <Activity size={14}/> Exploración (Objetivo)
-                                </h4>
-                                <div className="grid grid-cols-1 gap-2">
-                                    {Object.entries(consultaSeleccionada.consulta.exploracion.fisica).map(([key, val]) => 
-                                        val ? (
-                                            <div key={key} className="text-sm">
-                                                <span className="font-bold text-slate-700 capitalize">{key}:</span> <span className="text-slate-600">{val}</span>
-                                            </div>
-                                        ) : null
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        <div>
-                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <Stethoscope size={14}/> Diagnóstico
-                            </h4>
-                            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-sm font-bold text-emerald-800">
-                                {consultaSeleccionada.consulta?.diagnostico?.enfermedad_actual || 'Sin diagnóstico'}
-                            </div>
-                        </div>
-
-                        <div>
-                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <Pill size={14}/> Receta / Plan
-                            </h4>
-                            <div className="space-y-2">
-                                {consultaSeleccionada.consulta?.diagnostico?.tratamiento_lista?.map((med, idx) => (
-                                    <div key={idx} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
-                                        <span className="font-bold text-slate-700 text-sm">{med.nombre}</span>
-                                        <span className="text-xs text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded">{med.dosis}</span>
-                                    </div>
-                                ))}
-                                {(!consultaSeleccionada.consulta?.diagnostico?.tratamiento_lista || consultaSeleccionada.consulta.diagnostico.tratamiento_lista.length === 0) && (
-                                    <p className="text-sm text-slate-400 italic">No se prescribieron medicamentos.</p>
-                                )}
-                            </div>
-                        </div>
+                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Padecimiento</h4><div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed">{consultaSeleccionada.consulta?.padecimiento || 'Sin descripción'}</div></div>
+                        {consultaSeleccionada.consulta?.exploracion?.fisica && <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Activity size={14}/> Exploración</h4><div className="grid grid-cols-1 gap-2">{Object.entries(consultaSeleccionada.consulta.exploracion.fisica).map(([key, val]) => val ? (<div key={key} className="text-sm"><span className="font-bold text-slate-700 capitalize">{key}:</span> <span className="text-slate-600">{val}</span></div>) : null)}</div></div>}
+                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Stethoscope size={14}/> Diagnóstico</h4><div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-sm font-bold text-emerald-800">{consultaSeleccionada.consulta?.diagnostico?.enfermedad_actual || 'Sin diagnóstico'}</div></div>
+                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Pill size={14}/> Receta</h4><div className="space-y-2">{consultaSeleccionada.consulta?.diagnostico?.tratamiento_lista?.map((med, idx) => (<div key={idx} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-lg shadow-sm"><span className="font-bold text-slate-700 text-sm">{med.nombre}</span><span className="text-xs text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded">{med.dosis}</span></div>))}</div></div>
                     </div>
                 </div>
-
-                {/* Footer Modal */}
                 <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 text-right">
                     <p className="text-xs font-bold text-slate-400 uppercase">Atendido por: <span className="text-slate-600">{consultaSeleccionada.medicoNombre || 'Desconocido'}</span></p>
                 </div>

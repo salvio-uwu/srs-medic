@@ -35,9 +35,12 @@ const Triage = () => {
     }
   }, [signos.peso, signos.talla]);
 
-  // Manejador de guardado
+// src/pages/enfermeria/Triage.jsx
+
+// ... (imports y estados anteriores se mantienen igual)
+
   const guardarTriage = async () => {
-    // Validación interna (sin alert nativo)
+    // Validación interna
     if (!pacienteNombre) {
         setErrorMsg("Error: No se ha identificado al paciente.");
         return;
@@ -48,10 +51,10 @@ const Triage = () => {
     }
     
     setLoading(true);
-    setErrorMsg(''); // Limpiar errores previos
+    setErrorMsg(''); 
 
     try {
-        // 1. Guardar Triage
+        // 1. Guardar Triage (Histórico para enfermería)
         await addDoc(collection(db, "triage_enfermeria"), {
             pacienteId: pacienteId || "externo",
             pacienteNombre,
@@ -64,15 +67,19 @@ const Triage = () => {
             estado: 'esperando_doctor'
         });
 
-        // 2. Actualizar Cita
+        // 2. Actualizar Cita (Comunicación con el Médico)
         if (citaId) {
             await updateDoc(doc(db, "citas", citaId), { 
                 estado: 'en_espera', 
-                signos_vitales: signos 
+                signos_vitales: signos,
+                // --- INYECCIÓN DE DATOS PARA EL EXPEDIENTE ---
+                triage_motivo: motivo, 
+                triage_alergias: alergias
+                // ---------------------------------------------
             });
         }
 
-        // Mostrar modal bonito en lugar de alert
+        // Mostrar modal de éxito
         setShowSuccess(true);
 
     } catch (error) {
@@ -82,7 +89,7 @@ const Triage = () => {
     setLoading(false);
   };
 
-  // Clases CSS compactas
+// ... (resto del componente igual)
   const glassInput = "w-full p-2.5 bg-white/50 border border-white/60 rounded-xl outline-none focus:ring-2 focus:ring-rose-400/50 focus:bg-white/90 transition-all text-sm font-medium text-slate-700 placeholder:text-slate-400 backdrop-blur-sm shadow-sm";
   const labelStyle = "text-[10px] font-bold text-slate-500 uppercase mb-1.5 ml-1 block tracking-wider";
 
