@@ -16,11 +16,19 @@ import ExpedienteClinico from './pages/doctor/ExpedienteClinico';
 import NotaMedicaRapida from './pages/doctor/NotaMedicaRapida';
 import Pacientes from './pages/doctor/Pacientes';
 
-// Módulos Enfermería (AQUÍ ESTÁ EL CAMBIO)
-// import DashboardEnfermeria from './pages/enfermeria/DashboardEnfermeria'; <--- YA NO LO USAMOS
-import AgendaEnfermeria from './pages/enfermeria/AgendaEnfermeria'; // <--- NUEVA IMPORTACIÓN
+// Módulos Intendencia
+import RegistroLimpiezaManual from './pages/intendencia/RegistroLimpiezaManual';
+// Módulos Enfermería
+import AgendaEnfermeria from './pages/enfermeria/AgendaEnfermeria'; 
 import Triage from './pages/enfermeria/Triage';
 import HojaEnfermeria from './pages/enfermeria/HojaEnfermeria'; 
+import DashboardJefaEnfermeria from './pages/enfermeria/DashboardJefaEnfermeria';
+
+// Módulos Recursos Humanos
+import DashboardRH from './pages/rh/DashboardRH';
+import AuditoriaEmpleados from './pages/rh/AuditoriaEmpleados';
+import InventarioMacro from './pages/rh/InventarioMacro';
+import FinanzasRH from './pages/rh/FinanzasRH';
 
 // Módulos Compartidos
 import Agenda from './shared/Agenda';
@@ -29,10 +37,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Ruta Pública */}
         <Route path="/" element={<Login />} />
-
-        {/* --- RUTA PORTAL DE BIENVENIDA (INTERMEDIA) --- */}
         <Route path="/portal" element={<PortalAcceso />} />
 
         {/* --- RUTAS ADMINISTRADOR --- */}
@@ -43,14 +48,22 @@ function App() {
         <Route path="/admin/reportes" element={<Reportes />} />
         <Route path="/admin/monitor" element={<MonitorActividad />} />
 
+        {/* --- RUTAS RECURSOS HUMANOS --- */}
+        <Route path="/rh/dashboard" element={<DashboardRH />} />
+        <Route path="/rh/auditoria" element={<AuditoriaEmpleados />} />
+        <Route path="/rh/inventario-macro" element={<InventarioMacro />} />
+        <Route path="/rh/finanzas" element={<FinanzasRH />} />
+
+        {/* --- RUTAS INTENDENCIA --- */}
+        <Route path="/intendencia/registro" element={<RegistroLimpiezaManual />} />
         {/* --- RUTAS DOCTOR --- */}
         <Route path="/doctor/consulta" element={<Consultorio />} />
         <Route path="/doctor/expediente" element={<ExpedienteClinico />} />
         <Route path="/doctor/nota-rapida" element={<NotaMedicaRapida />} />
 
         {/* --- RUTAS ENFERMERÍA --- */}
-        {/* Aquí conectamos la ruta '/enfermeria/dashboard' directo a tu nueva AgendaEnfermeria */}
         <Route path="/enfermeria/dashboard" element={<AgendaEnfermeria />} /> 
+        <Route path="/enfermeria/jefatura" element={<DashboardJefaEnfermeria />} /> 
         <Route path="/enfermeria/triage" element={<Triage />} />
         <Route path="/enfermeria/hoja-enfermeria" element={<HojaEnfermeria />} />
 
@@ -58,7 +71,6 @@ function App() {
         <Route path="/agenda" element={<Agenda />} />
         <Route path="/pacientes" element={<Pacientes />} />
 
-        {/* Redirección por defecto */}
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>

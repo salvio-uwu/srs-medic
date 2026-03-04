@@ -17,23 +17,46 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   // --- 1. LOGIN SEGURO CON ESTADO INICIAL ---
-  const login = async (email, password) => {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const uid = userCredential.user.uid;
-    
-    try {
-      // Al loguearse, establecemos el estado inicial como 'disponible'
-      // Usamos setDoc con merge para no borrar datos previos del perfil
-      await setDoc(doc(db, "users", uid), {
-        lastLogin: new Date().toISOString(),
-        isOnline: true,
-        statusOperativo: 'disponible', // Inicializamos el estado para la Torre de Control
-        lastSeen: new Date().toISOString()
-      }, { merge: true });
-    } catch (error) {
-      console.error("Error actualizando login:", error);
+// --- 1. LOGIN SEGURO CON ESTADO INICIAL ---
+// SUSTITUYE TU FUNCIÓN LOGIN POR ESTA:
+const login = async (email, password) => {
+  // Solo autenticamos. Dejamos que el useEffect (onAuthStateChanged) 
+  // se encargue de actualizar la base de datos y cargar el perfil.
+  const userCredential = await signInWithEmailAndPassword(auth, email, password);
+  return userCredential.user;
+};
+
+// MODIFICA TU MONITOR DE AUTENTICACIÓN (EFECTO 1):
+// src/context/AuthContext.jsx
+
+useEffect(() => {
+  const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    if (currentUser) {
+      try {
+        const docRef = doc(db, 'users', currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          // Primero actualizamos los datos completos del usuario
+          setUser({ ...currentUser, ...docSnap.data() });
+        } else {
+          setUser(currentUser);
+        }
+      } catch (error) {
+        console.error("Error cargando perfil:", error);
+        setUser(null);
+      } finally {
+        // Garantizamos que loading se apague SOLO después de intentar traer Firestore
+        setLoading(false); 
+      }
+    } else {
+      setUser(null);
+      setLoading(false);
     }
-  };
+  });
+
+  return () => unsubscribe();
+}, []);
 
   // --- 2. LOGOUT CON LIMPIEZA DE ESTADO ---
   const logout = async () => {
@@ -77,31 +100,34 @@ export const AuthProvider = ({ children }) => {
   };
 
   // --- EFECTO 1: MONITOR DE AUTENTICACIÓN ---
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        try {
-          const docRef = doc(db, 'users', currentUser.uid);
-          const docSnap = await getDoc(docRef);
-          
-          if (docSnap.exists()) {
-            // Combinamos datos de Auth + Firestore (incluyendo statusOperativo si existe)
-            setUser({ ...currentUser, ...docSnap.data() });
-          } else {
-            setUser(currentUser);
-          }
-        } catch (error) {
-          console.error("Error cargando perfil:", error);
-          setUser(null);
+// src/context/AuthContext.jsx
+
+useEffect(() => {
+  const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    if (currentUser) {
+      try {
+        const docRef = doc(db, 'users', currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          // COMBINAMOS Y LUEGO QUITAMOS EL LOADING
+          setUser({ ...currentUser, ...docSnap.data() });
+        } else {
+          setUser(currentUser);
         }
-      } else {
+      } catch (error) {
+        console.error("Error cargando perfil:", error);
         setUser(null);
       }
-      setLoading(false);
-    });
+    } else {
+      setUser(null);
+    }
+    // ESTA LÍNEA DEBE IR AL FINAL DE TODO EL PROCESO
+    setLoading(false); 
+  });
 
-    return () => unsubscribe();
-  }, []);
+  return () => unsubscribe();
+}, []);
 
   // --- EFECTO 2: SISTEMA DE PRESENCIA (Heartbeat) ---
   useEffect(() => {

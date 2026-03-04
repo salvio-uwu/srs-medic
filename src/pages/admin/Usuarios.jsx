@@ -1,12 +1,10 @@
-// src/pages/admin/Usuarios.jsx
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Trash2, MapPin, Clock, GraduationCap, Award } from 'lucide-react'; // Agregamos iconos para los nuevos campos
+import { UserPlus, Trash2, MapPin, Clock, GraduationCap, Award } from 'lucide-react'; 
 import { db, auth } from '../../config/firebase';
 import { collection, getDocs, setDoc, doc, deleteDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 
-// --- CONFIGURACIÓN DE APP SECUNDARIA (Para crear usuarios sin cerrar sesión) ---
 const firebaseConfig = {
   apiKey: "AIzaSyCIPnSQkdWm6YgdYlIZ8G5V4wu-oTFFTfg",
   authDomain: "srs-feacb.firebaseapp.com",
@@ -30,24 +28,26 @@ const Usuarios = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
 
-  // --- 1. ESTADO DEL FORMULARIO AMPLIADO ---
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
     password: '',
     rol: 'enfermeria',
     sucursal: 'Sucursal Central',
-    // Nuevos campos para Médicos 
     cedula: '',
     universidad: ''
   });
 
   const SUCURSALES = ["Sucursal Central", "Sucursal Norte", "Sucursal Sur", "Sucursal Este"];
+  
   const ROLES = [
     { value: "medico", label: "Médico / Doctor" },
     { value: "enfermeria", label: "Enfermería" },
     { value: "recepcion", label: "Recepción" },
-    { value: "operativo", label: "Operativo / Admin" }
+    { value: "jefa_enfermeria", label: "Jefa de Enfermería" },
+    { value: "rh", label: "Recursos Humanos" },
+    { value: "operativo", label: "Operativo / Admin" },
+    { value: "intendencia", label: "Intendencia / Limpieza" }
   ];
 
   const fetchUsuarios = async () => {
@@ -56,7 +56,9 @@ const Usuarios = () => {
       const querySnapshot = await getDocs(collection(db, "users"));
       const usersList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setUsuarios(usersList);
-    } catch (error) { console.error("Error cargando usuarios:", error); }
+    } catch (error) { 
+      console.error("Error cargando usuarios:", error); 
+    }
     setLoading(false);
   };
 
@@ -84,7 +86,6 @@ const Usuarios = () => {
     return diffHrs === 0 ? `${diffMins} min` : `${diffHrs}h ${diffMins}m`;
   };
 
-  // --- 2. LÓGICA DE REGISTRO CON CREDENCIALES MÉDICAS ---
   const handleRegister = async (e) => {
     e.preventDefault();
     if (formData.password.length < 6) return alert("La contraseña debe tener al menos 6 caracteres");
@@ -93,7 +94,6 @@ const Usuarios = () => {
       const userCredential = await createUserWithEmailAndPassword(secondaryAuth, formData.email, formData.password);
       const newUser = userCredential.user;
 
-      // Estructura de datos final
       const userData = {
         uid: newUser.uid,
         nombre: formData.nombre,
@@ -107,7 +107,6 @@ const Usuarios = () => {
         isOnline: false
       };
 
-      // Si es médico, incluimos las credenciales profesionales 
       if (formData.rol === 'medico') {
         userData.cedulaProfesional = formData.cedula;
         userData.universidadEgreso = formData.universidad;
@@ -134,7 +133,9 @@ const Usuarios = () => {
     try {
       await deleteDoc(doc(db, "users", id));
       fetchUsuarios();
-    } catch (error) { alert("Error al eliminar: " + error.message); }
+    } catch (error) { 
+      alert("Error al eliminar: " + error.message); 
+    }
   };
 
   return (
@@ -142,7 +143,7 @@ const Usuarios = () => {
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Personal Médico y Operativo</h1>
-          <p className="text-slate-500 text-sm">Gestión de credenciales para recetas y accesos.</p>
+          <p className="text-slate-500 text-sm">Gestión de credenciales para accesos y roles.</p>
         </div>
         <button 
           onClick={() => setShowForm(!showForm)}
@@ -182,7 +183,6 @@ const Usuarios = () => {
               </select>
             </div>
 
-            {/* --- 3. CAMPOS DINÁMICOS PARA MÉDICOS  --- */}
             {formData.rol === 'medico' && (
               <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-5 p-4 bg-blue-50/50 rounded-xl border border-blue-100 animate-in zoom-in-95">
                 <div>
@@ -218,7 +218,6 @@ const Usuarios = () => {
         </div>
       )}
 
-      {/* --- TABLA DE USUARIOS --- */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -245,7 +244,6 @@ const Usuarios = () => {
                     <td className="p-4">
                       <p className="font-bold text-slate-700 text-sm group-hover:text-blue-600 transition-colors">{user.nombre}</p>
                       <p className="text-xs text-slate-400">{user.email}</p>
-                      {/* Mostrar Cédula en la tabla si existe */}
                       {user.cedulaProfesional && <p className="text-[10px] text-blue-500 font-bold mt-0.5">Ced. {user.cedulaProfesional}</p>}
                     </td>
                     <td className="p-4">
