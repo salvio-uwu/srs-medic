@@ -1,6 +1,6 @@
 # CONTEXTO COMPLETO DEL PROYECTO: SRS-Medic
 
-> Documento generado para dar contexto a Claude Web. Cópialo y pégalo al inicio de tu conversación.
+> Documento de contexto del proyecto. Actualizado al estado real del código.
 
 ---
 
