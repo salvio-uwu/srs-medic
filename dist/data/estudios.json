@@ -1,0 +1,1919 @@
+
+ {
+  "Clave": "L001",
+  "Descripción": "17 ALFA-HIDROXIPROGESTERONA SERICA",
+  "Precio U.": "$ 400.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "66823",
+  "Descripción": "AC ANTI ANTIGENO CENTRAL DE HEPATITIS A (SCREENING) IgM",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "2",
+  "Descripción": "AC ANTI ANTIGENO CENTRAL DE HEPATITIS A IgM",
+  "Precio U.": "$ 345.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "66825",
+  "Descripción": "AC ANTI ANTIGENO CENTRAL DE HEPATITIS B IgG",
+  "Precio U.": "$ 345.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L025",
+  "Descripción": "AC ANTI CARDIOLIPINAS IgG",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L026",
+  "Descripción": "AC ANTI CARDIOLIPINAS IgM",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "028",
+  "Descripción": "AC ANTI CHLAMYDIA TRACHOMATIS IgG",
+  "Precio U.": "$ 360.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "029",
+  "Descripción": "AC ANTI CHLAMYDIA TRACHOMATIS IgM",
+  "Precio U.": "$ 360.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "041",
+  "Descripción": "AC ANTI FOSFOLIPIDOS IgM",
+  "Precio U.": "$ 380.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L002",
+  "Descripción": "AC ANTI VIH 1 Y 2 \/ ANTIGENO P24",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "045",
+  "Descripción": "AC IGG HERPES EN SUERO",
+  "Precio U.": "$ 330.00",
+  "Exis": -1,
+  "Total ": "-$ 330.00"
+ },
+ {
+  "Clave": "788",
+  "Descripción": "AC. ANTI Chlamydia trachomatis IgA\/IgG\/IgM",
+  "Precio U.": "$ 900.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L022",
+  "Descripción": "Ac. Anti Peptido Ciclico Citrulinado IgG",
+  "Precio U.": "$ 650.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "9999-9",
+  "Descripción": "Ac. Anti-Hepatitis B core IgG",
+  "Precio U.": "$ 560.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "046",
+  "Descripción": "AC. ANTI-HERPES SIMPLEX II IGM",
+  "Precio U.": "$ 330.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "553",
+  "Descripción": "AC. ANTIRECEPTORES DE TSH (TRAb)",
+  "Precio U.": "$ 1,400.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L000",
+  "Descripción": "ACIDO FOLICO",
+  "Precio U.": "$ 270.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L003",
+  "Descripción": "ACIDO URICO",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L005",
+  "Descripción": "ACIDO URICO EN ORINA DE 24 HRS",
+  "Precio U.": "$ 80.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L004",
+  "Descripción": "ACIDO VALPROICO",
+  "Precio U.": "$ 320.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L007",
+  "Descripción": "ACIDO VANILMANDELICO EN ORINA 24HRS",
+  "Precio U.": "$ 510.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L006",
+  "Descripción": "ALBUMINA",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L009",
+  "Descripción": "ALBUMINA EN ORINA 24 HRS",
+  "Precio U.": "$ 80.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L011",
+  "Descripción": "ALCOHOL EN ORINA",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L010",
+  "Descripción": "ALCOHOL ETILICO EN SUERO",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L012",
+  "Descripción": "ALDOLASA",
+  "Precio U.": "$ 270.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L013",
+  "Descripción": "ALDOSTERONA",
+  "Precio U.": "$ 600.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0007",
+  "Descripción": "ALFAFETOPROTEINA EN SUERO",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L008",
+  "Descripción": "AMILASA",
+  "Precio U.": "$ 80.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L017",
+  "Descripción": "AMILASA EN ORINA",
+  "Precio U.": "$ 120.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L018",
+  "Descripción": "AMILASA EN ORINA DE 24 HORAS",
+  "Precio U.": "$ 120.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0009",
+  "Descripción": "AMONIO EN PLASMA",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L020",
+  "Descripción": "ANDROSTENEDIONA",
+  "Precio U.": "$ 240.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682492",
+  "Descripción": "ANTICOAGULANTE LUPICO",
+  "Precio U.": "$ 600.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1579",
+  "Descripción": "ANTICUERPO ANTI NUCLEARES",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "064",
+  "Descripción": "ANTICUERPOS ANTI TIROGLOBULINA",
+  "Precio U.": "$ 410.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "031",
+  "Descripción": "Anticuerpos anti-citomegalovirus IgG",
+  "Precio U.": "$ 330.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0011",
+  "Descripción": "ANTICUERPOS ANTI-HELICOBACTER PYLORI IGG",
+  "Precio U.": "$ 420.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L073",
+  "Descripción": "Anticuerpos Anti-Helicobacter Pylori IgM",
+  "Precio U.": "$ 420.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0012",
+  "Descripción": "ANTICUERPOS ANTI-HEPATITIS C",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "042",
+  "Descripción": "Anticuerpos anti-hepatitis C Totales",
+  "Precio U.": "$ 360.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "LO74",
+  "Descripción": "ANTICUERPOS ANTI-HETEROFILOS (PAUL BUNNELL)",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "052",
+  "Descripción": "ANTICUERPOS ANTI-MITOCONDRIALES",
+  "Precio U.": "$ 415.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "053",
+  "Descripción": "ANTICUERPOS ANTI-MUSCULO LISO",
+  "Precio U.": "$ 370.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "SINSIN63036",
+  "Descripción": "ANTICUERPOS ANTI-PEROXIDASA TIROIDEA",
+  "Precio U.": "$ 450.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L062",
+  "Descripción": "ANTICUERPOS ANTI-SSA Ro IgG",
+  "Precio U.": "$ 400.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L063",
+  "Descripción": "ANTICUERPOS ANTI-SSB LA IgG",
+  "Precio U.": "$ 365.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1006",
+  "Descripción": "ANTIDOPING III SANTA CRUZ (COC TCH ANF)",
+  "Precio U.": "$ 31.03",
+  "Exis": 2,
+  "Total ": "$ 62.06"
+ },
+ {
+  "Clave": "668262",
+  "Descripción": "ANTIDOPING V ( AMP, COC, MET, OPI, THC )",
+  "Precio U.": "$ 49.30",
+  "Exis": 9,
+  "Total ": "$ 443.70"
+ },
+ {
+  "Clave": "077",
+  "Descripción": "ANTIESTREPTOLISINAS (ASO o ASLO)",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "85121800-78",
+  "Descripción": "ANTIGENO AUSTRALIA HEP B (HBS AG)",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "668266",
+  "Descripción": "ANTIGENO CA 19-9 (PANCREATICO)",
+  "Precio U.": "$ 320.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "100",
+  "Descripción": "ANTIGENO CA 72-4 (gastrointestinal)",
+  "Precio U.": "$ 610.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "668264",
+  "Descripción": "ANTIGENO CA-125 (OVARICO)",
+  "Precio U.": "$ 360.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "079",
+  "Descripción": "ANTIGENO CARCINOEMBRIONARIO (C.E.A.)",
+  "Precio U.": "$ 230.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "95264",
+  "Descripción": "Antígeno HE4 (Proteína del Epidídimo Humano)",
+  "Precio U.": "$ 600.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "080",
+  "Descripción": "ANTIGENO HELICOBACTER PYLORI EN HECES",
+  "Precio U.": "$ 65.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "078",
+  "Descripción": "Antígeno Hepatitis B de Superficie",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "082",
+  "Descripción": "ANTIGENO PROSTATICO ESPECIFICO (PSA) CUANTITATIVO",
+  "Precio U.": "$ 215.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "083",
+  "Descripción": "ANTIGENO PROSTATICO LIBRE (PSA LIBRE)",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "085",
+  "Descripción": "BACILOSCOPIA (BAAR UNA MUESTRA)",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "086",
+  "Descripción": "BACILOSCOPIA SERIADA (BAAR 3 MUESTRAS)",
+  "Precio U.": "$ 170.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682490",
+  "Descripción": "BETA 2 GLICOPROTEINAS IgG, IgM, Ga",
+  "Precio U.": "$ 1,770.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "091",
+  "Descripción": "BILIRRUBINAS (TOTAL, INDIRECTA, DIRECTA)",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "403",
+  "Descripción": "BIOMETRIA HEMATICA (CON DIFERENCIAL)",
+  "Precio U.": "$ 105.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "511",
+  "Descripción": "BIOMETRIA HEMATICA COMPLETA (BHC)",
+  "Precio U.": "$ 65.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "LMP2022",
+  "Descripción": "BIOPSIA CHICA",
+  "Precio U.": "$ 440.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "668282",
+  "Descripción": "BRUCELLA ABORTUS POR ROSA DE BENGALA",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "8152",
+  "Descripción": "CALCIO EN ORINA DE 24 HORAS",
+  "Precio U.": "$ 80.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "101",
+  "Descripción": "CALCIO SERICO",
+  "Precio U.": "$ 230.00",
+  "Exis": -2,
+  "Total ": "-$ 460.00"
+ },
+ {
+  "Clave": "6682309",
+  "Descripción": "CARTA PRENUPCIALES",
+  "Precio U.": "$ 124.50",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1515",
+  "Descripción": "CITOLOGÍA DE MOCO FECAL",
+  "Precio U.": "$ 600.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "668293",
+  "Descripción": "CITOLOGIA VAGINAL PAPANICOLAU DOC",
+  "Precio U.": "$ 705.50",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L4583",
+  "Descripción": "CITOQUIMICO DE LIQUIDO PERITONEAL",
+  "Precio U.": "$ 500.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "890",
+  "Descripción": "CITRATO EN ORINA 24 HRS",
+  "Precio U.": "$ 410.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "CDTAB9999",
+  "Descripción": "Clostridium difficile TOXINA A + B",
+  "Precio U.": "$ 980.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "116",
+  "Descripción": "COLESTEROL DE ALTA DENSIDAD (HDL)",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "119",
+  "Descripción": "COLESTEROL TOTAL",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682313",
+  "Descripción": "COLESTEROL-TRIGLICERIDOS",
+  "Precio U.": "$ 85.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L124",
+  "Descripción": "COOMBS DIRECTO (ANTICUERPOS ANTI-RH)",
+  "Precio U.": "$ 160.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682105",
+  "Descripción": "COOMBS INDIRECTO",
+  "Precio U.": "$ 190.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682106",
+  "Descripción": "COPROCULTIVO",
+  "Precio U.": "$ 280.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682107",
+  "Descripción": "COPROLOGICO",
+  "Precio U.": "$ 75.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682108",
+  "Descripción": "COPROPARASITOSCOPICO SERIADO 3 MUESTRAS",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682109",
+  "Descripción": "COPROPARASITOSCOPICO UNICO",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "131",
+  "Descripción": "CORTISOL EN ORINA DE 24 HRS",
+  "Precio U.": "$ 230.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "130",
+  "Descripción": "CORTISOL MATUTINO",
+  "Precio U.": "$ 230.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "8809408861808",
+  "Descripción": "COVID-19 & FLU A\/B AG DUO",
+  "Precio U.": "$ 127.60",
+  "Exis": 20,
+  "Total ": "$ 2,552.00"
+ },
+ {
+  "Clave": "132",
+  "Descripción": "CPK-MB",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "135",
+  "Descripción": "CREATIN FOSFOQUINASA (CPK)",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682115",
+  "Descripción": "CREATININA EN ORINA",
+  "Precio U.": "$ 35.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0048",
+  "Descripción": "CREATININA EN ORINA DE 24 HRS",
+  "Precio U.": "$ 80.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682114",
+  "Descripción": "CREATININA EN SUERO",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682314",
+  "Descripción": "CULTIVIO DE ULCERA",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "5121",
+  "Descripción": "Cultivo de Expectoración",
+  "Precio U.": "$ 0.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682310",
+  "Descripción": "CULTIVO DE HERIDA",
+  "Precio U.": "$ 450.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L142",
+  "Descripción": "CULTIVO DE NEISSERIA GONORRHOEAE",
+  "Precio U.": "$ 335.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682324",
+  "Descripción": "CULTIVO DE SECRECION",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682119",
+  "Descripción": "CULTIVO FARINGEO",
+  "Precio U.": "$ 195.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682120",
+  "Descripción": "CULTIVO NASAL",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682121",
+  "Descripción": "CULTIVO OCULAR",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682122",
+  "Descripción": "CULTIVO OTICO",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682312",
+  "Descripción": "CULTIVO RECTAL",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682123",
+  "Descripción": "CULTIVO URETRAL",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682124",
+  "Descripción": "CULTIVO VAGINAL",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682125",
+  "Descripción": "CULTIVO VULVAR",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6969",
+  "Descripción": "CURVA DE ISULINA 2 HRS",
+  "Precio U.": "$ 600.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "09022021",
+  "Descripción": "Dehidroepiandrosterona (DHEA)",
+  "Precio U.": "$ 390.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "08022022",
+  "Descripción": "Dehidroepiandrosterona Sulfato (DHEA-S)",
+  "Precio U.": "$ 350.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L0060",
+  "Descripción": "DEPURACIÓN DE CREATININA DE 24 HRS",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "160",
+  "Descripción": "DESHIDROGENASA LACTICA (LDH)",
+  "Precio U.": "$ 75.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "10112020",
+  "Descripción": "DIMERO D",
+  "Precio U.": "$ 590.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "CO2",
+  "Descripción": "DIOXIDO DE CARBONO ( CO2 )",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682145",
+  "Descripción": "EGO (EXAMEN GENERAL DE ORINA)",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "999",
+  "Descripción": "ELASTASA-1 PANCREÁTICA",
+  "Precio U.": "$ 4,010.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682137",
+  "Descripción": "ELECTROLITOS EN ORINA DE 24 HRS",
+  "Precio U.": "$ 190.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "031ES4",
+  "Descripción": "ELECTROLITOS SÉRICOS (Na, K, Cl, Ca)",
+  "Precio U.": "$ 200.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "168.2",
+  "Descripción": "Electrolitos Séricos (Na, K, Cl, Ca, P, Mg)",
+  "Precio U.": "$ 230.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682136",
+  "Descripción": "ELECTROLITOS SERICOS (Na,K,Cl)",
+  "Precio U.": "$ 125.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682364",
+  "Descripción": "ELECTROLITOS URINARIOS (NA, K, CL)",
+  "Precio U.": "$ 120.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "047",
+  "Descripción": "ELISA (ANTICUERPOS ANTI-HIV DUO)",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682138",
+  "Descripción": "EOSINOFILOS EN MOCO NASAL",
+  "Precio U.": "$ 65.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682140",
+  "Descripción": "EOSINOFILOS FARINGEOS",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682141",
+  "Descripción": "ESPERMOCULTIVO",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "172",
+  "Descripción": "ESTRADIOL",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682144",
+  "Descripción": "ESTROGENOS TOTALES",
+  "Precio U.": "$ 220.01",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "560",
+  "Descripción": "FACTOR DE CRECIMIENTO (IGFBP3)",
+  "Precio U.": "$ 730.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "175",
+  "Descripción": "FACTOR DE CRECIMIENTO INSULINA (IGF-1)",
+  "Precio U.": "$ 425.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682146",
+  "Descripción": "FACTOR REUMATOIDE",
+  "Precio U.": "$ 65.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "401",
+  "Descripción": "FACTOR X DE COAGULACION",
+  "Precio U.": "$ 420.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "8511121800 -Ferritina",
+  "Descripción": "FERRITINA",
+  "Precio U.": "$ 380.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "LABLAB31857",
+  "Descripción": "FERRITINA",
+  "Precio U.": "$ 380.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "210121",
+  "Descripción": "FIBRINOGENO",
+  "Precio U.": "$ 200.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "0808",
+  "Descripción": "FIT DE EVACUACION ( HEMOGLOBINA FECAL )",
+  "Precio U.": "$ 420.00",
+  "Exis": -2,
+  "Total ": "-$ 840.00"
+ },
+ {
+  "Clave": "181",
+  "Descripción": "FOSFASA ALCALINA",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "9191",
+  "Descripción": "FOSFATASA ACIDA \/ FOSFATASA PROSTATICA",
+  "Precio U.": "$ 190.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "85121800-189",
+  "Descripción": "FOSFORO SERICO",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682156",
+  "Descripción": "FROTIS EN SANGRE PERIFERICA",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "187",
+  "Descripción": "FTA ABS ANTICUERPOS ANTI TREPONEMA",
+  "Precio U.": "$ 750.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682159",
+  "Descripción": "GAMAGLUTAMILTRANSPEPTIDASA GGT",
+  "Precio U.": "$ 70.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682363",
+  "Descripción": "GLOBULINA",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "720",
+  "Descripción": "GLOBULINA HORMONA SEXUAL(SHBG)",
+  "Precio U.": "$ 650.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682162",
+  "Descripción": "GLUCOSA",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682163",
+  "Descripción": "GLUCOSA CARGA 100GR (BASAL, 1 ,2 Y 3 HORAS) 4 TUBOS",
+  "Precio U.": "$ 190.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682164",
+  "Descripción": "GLUCOSA CARGA 50GR. (BASAL Y 1 HORA) 2 TUBOS",
+  "Precio U.": "$ 135.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682165",
+  "Descripción": "GLUCOSA CARGA 75GR. (BASAL HORA Y 2 HORAS) 3 TUBOS",
+  "Precio U.": "$ 185.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682161",
+  "Descripción": "GLUCOSA EN ORINA",
+  "Precio U.": "$ 30.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "181220",
+  "Descripción": "GLUCOSA POSTPRANDIAL",
+  "Precio U.": "$ 65.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682167",
+  "Descripción": "GONADOTROFINA CORIÓNICA CUANTITATIVA (HCG B)",
+  "Precio U.": "$ 285.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "196",
+  "Descripción": "Gonadotrofina coriónica semicuantitativa (B HCG)",
+  "Precio U.": "$ 165.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682168",
+  "Descripción": "GRAM (BACTEROLOGIA)",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682169",
+  "Descripción": "GRUPO RH",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682170",
+  "Descripción": "GUAYACO (SANGRE OCULTA EN HECES)",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "999903",
+  "Descripción": "HEMOCULTIVO",
+  "Precio U.": "$ 650.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682173",
+  "Descripción": "HEMOGLOBINA",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682174",
+  "Descripción": "HEMOGLOBINA GLUCOSILADA (HBA1C)",
+  "Precio U.": "$ 140.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "202",
+  "Descripción": "HIERRO SERICO",
+  "Precio U.": "$ 160.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "99902",
+  "Descripción": "HOMOCISTEINA",
+  "Precio U.": "$ 640.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "204",
+  "Descripción": "HORMONA ADRENOCORTICOTRÓFICA ACTH",
+  "Precio U.": "$ 0.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682182",
+  "Descripción": "HORMONA ESTIMULANTE DE TIROIDES (TSH)",
+  "Precio U.": "$ 140.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682184",
+  "Descripción": "HORMONA FOLICULO ESTIMULANTE (FSH)",
+  "Precio U.": "$ 200.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682185",
+  "Descripción": "HORMONA LUTEINIZANTE (LH)",
+  "Precio U.": "$ 155.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L015",
+  "Descripción": "IAPC AMIBA EN FRESCO",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "99992",
+  "Descripción": "IgG e IgM para coccidioides immitis",
+  "Precio U.": "$ 1,510.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "025",
+  "Descripción": "INDICE DE FILTRACION GLOMERULAR ( IFG-GFR )",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682223",
+  "Descripción": "INDICE DE HOMA",
+  "Precio U.": "$ 200.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682190",
+  "Descripción": "INMUNOGLOBULINA E (IgE)",
+  "Precio U.": "$ 220.01",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682351",
+  "Descripción": "INSULINA SERICA",
+  "Precio U.": "$ 215.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682306",
+  "Descripción": "KOH DIRECTO DE HONGO",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682196",
+  "Descripción": "LIPASA SERICA",
+  "Precio U.": "$ 110.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "223",
+  "Descripción": "LITIO SERICO",
+  "Precio U.": "$ 170.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "224",
+  "Descripción": "MAGNESIO SERICO",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682319",
+  "Descripción": "METANEFRINAS EN PLASMA",
+  "Precio U.": "$ 730.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682318",
+  "Descripción": "METANFETAMINAS",
+  "Precio U.": "$ 69.99",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682203",
+  "Descripción": "MICROALBUMINA EN ORINA",
+  "Precio U.": "$ 200.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682208",
+  "Descripción": "NITROGENO UREICO (BUN)",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "SINSIN52307",
+  "Descripción": "NIVEL SERICO DE VITAMINA B12 EN SANGRE",
+  "Precio U.": "$ 285.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "999904",
+  "Descripción": "NIVELES DE TIAMINA (VITAMINA B1 TIAMINA)",
+  "Precio U.": "$ 1,210.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1563",
+  "Descripción": "OSMOLARIDAD EN ORINA",
+  "Precio U.": "$ 680.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1682",
+  "Descripción": "OSMOLARIDAD EN SUERO",
+  "Precio U.": "$ 680.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "232",
+  "Descripción": "OXALATOS EN ORINA DE 24 HRS",
+  "Precio U.": "$ 510.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PANEL VIRAL 2",
+  "Descripción": "PANEL VIRAL 2 COVID\/INFLUENZA DUAL AMUNET",
+  "Precio U.": "$ 179.80",
+  "Exis": -1,
+  "Total ": "-$ 179.80"
+ },
+ {
+  "Clave": "PANEL VIRAL 3",
+  "Descripción": "PANEL VIRAL 3 COVID\/INFLUENZA\/VSR AMUNET",
+  "Precio U.": "$ 281.42",
+  "Exis": 3,
+  "Total ": "$ 844.26"
+ },
+ {
+  "Clave": "235",
+  "Descripción": "PARATOHORMONA TIROIDEA (PTH, PARATHORMONA)",
+  "Precio U.": "$ 560.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682252",
+  "Descripción": "Paratohormona tiroidea PTH",
+  "Precio U.": "$ 970.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "VPH14",
+  "Descripción": "PCR DETECCIÓN DE VPH 14 GENOTIPOS EN SUERO",
+  "Precio U.": "$ 2,210.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PEPC236",
+  "Descripción": "PEPTIDO C",
+  "Precio U.": "$ 290.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "bnp",
+  "Descripción": "PEPTIDO NATRIURETICO B (BNP)",
+  "Precio U.": "$ 770.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682215",
+  "Descripción": "PERFIL ALERGICO",
+  "Precio U.": "$ 280.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "237",
+  "Descripción": "PERFIL BIOQUIMICO 12",
+  "Precio U.": "$ 165.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "238",
+  "Descripción": "PERFIL BIOQUIMICO 15",
+  "Precio U.": "$ 210.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "239",
+  "Descripción": "PERFIL BIOQUIMICO 17",
+  "Precio U.": "$ 295.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "240",
+  "Descripción": "PERFIL BIOQUIMICO 24",
+  "Precio U.": "$ 435.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "310",
+  "Descripción": "PERFIL BIOQUIMICO 30",
+  "Precio U.": "$ 500.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PB37",
+  "Descripción": "PERFIL BIOQUIMICO 37",
+  "Precio U.": "$ 775.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PB44",
+  "Descripción": "PERFIL BIOQUIMICO 44",
+  "Precio U.": "$ 990.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682216",
+  "Descripción": "PERFIL BIOQUIMICO I (15 DETERMINACIONES)",
+  "Precio U.": "$ 220.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "85121800",
+  "Descripción": "PERFIL CARDIACO",
+  "Precio U.": "$ 330.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682221",
+  "Descripción": "PERFIL CLINICO",
+  "Precio U.": "$ 185.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682230",
+  "Descripción": "PERFIL DE LIPIDOS",
+  "Precio U.": "$ 160.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682232",
+  "Descripción": "PERFIL DIABETICO I",
+  "Precio U.": "$ 550.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PERFETS",
+  "Descripción": "PERFIL ETS",
+  "Precio U.": "$ 1,115.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PFH",
+  "Descripción": "PERFIL HEPATICO I (PFH)",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682236",
+  "Descripción": "PERFIL HEPATICO II",
+  "Precio U.": "$ 140.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682249",
+  "Descripción": "PERFIL HEPATICO III",
+  "Precio U.": "$ 220.01",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "99999",
+  "Descripción": "PERFIL HIERRO",
+  "Precio U.": "$ 855.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "246",
+  "Descripción": "PERFIL HORMONAL FEMENINO 3",
+  "Precio U.": "$ 685.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "247",
+  "Descripción": "PERFIL HORMONAL FEMENINO 4",
+  "Precio U.": "$ 785.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "248",
+  "Descripción": "PERFIL HORMONAL FEMENINO 5",
+  "Precio U.": "$ 840.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "249",
+  "Descripción": "PERFIL HORMONAL FEMENINO 6",
+  "Precio U.": "$ 945.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "59683",
+  "Descripción": "PERFIL HORMONAL MASCULINO",
+  "Precio U.": "$ 785.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682242",
+  "Descripción": "PERFIL PRENATAL I",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682243",
+  "Descripción": "PERFIL PRENATAL II",
+  "Precio U.": "$ 250.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682211",
+  "Descripción": "PERFIL PRENATAL III",
+  "Precio U.": "$ 320.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682335",
+  "Descripción": "PERFIL PREOPERATORIO II",
+  "Precio U.": "$ 290.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682245",
+  "Descripción": "PERFIL RENAL",
+  "Precio U.": "$ 215.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682246",
+  "Descripción": "PERFIL REUMATICO",
+  "Precio U.": "$ 215.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682240",
+  "Descripción": "PERFIL TESTICULAR",
+  "Precio U.": "$ 650.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682250",
+  "Descripción": "PERFIL TIROIDEO I (BASICO)",
+  "Precio U.": "$ 265.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682251",
+  "Descripción": "PERFIL TIROIDEO II (COMPLETO)",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682247",
+  "Descripción": "PERFIL TORCH (IgG)",
+  "Precio U.": "$ 700.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682248",
+  "Descripción": "PERFIL TORCH IgM",
+  "Precio U.": "$ 700.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "PERFIL VIRAL DE HEPATITIS ABC",
+  "Descripción": "PERFIL VIRAL DE HEPATITIS ABC",
+  "Precio U.": "$ 1,900.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "15896",
+  "Descripción": "PERFIL VIRAL Hepatitis B, C, HIV",
+  "Precio U.": "$ 985.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "254",
+  "Descripción": "PLOMO EN PLASMA",
+  "Precio U.": "$ 650.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L256",
+  "Descripción": "POTASIO",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "257",
+  "Descripción": "POTASIO URINARIO",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "18092023",
+  "Descripción": "PREALBUMINA",
+  "Precio U.": "$ 590.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682258",
+  "Descripción": "PRENUPCIALES (1 PERSONA)",
+  "Precio U.": "$ 100.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682259",
+  "Descripción": "PRENUPCIALES (PAREJA)",
+  "Precio U.": "$ 90.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682260",
+  "Descripción": "PROGESTERONA",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682261",
+  "Descripción": "PROLACTINA",
+  "Precio U.": "$ 160.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682262",
+  "Descripción": "PROTEINA C REACTIVA",
+  "Precio U.": "$ 85.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682266",
+  "Descripción": "PROTEINAS TOTALES (ORINA 24 HORAS)",
+  "Precio U.": "$ 60.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682051",
+  "Descripción": "PROTEINAS TOTALES SERICAS",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682269",
+  "Descripción": "PRUEBA DE EMBARAZO EN ORINA",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "458296",
+  "Descripción": "PRUEBA INMUNOLOGICA FECAL",
+  "Precio U.": "$ 0.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "SARS-COV2 AMUNET",
+  "Descripción": "PRUEBA SARS-COV2 AMUNET",
+  "Precio U.": "$ 76.56",
+  "Exis": 8,
+  "Total ": "$ 612.48"
+ },
+ {
+  "Clave": "6682852",
+  "Descripción": "QUIMICA SANGUINEA 3 ELEMENTOS (QS 3)",
+  "Precio U.": "$ 75.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682273",
+  "Descripción": "QUIMICA SANGUINEA 5 ELEMENTOS (QS5)",
+  "Precio U.": "$ 95.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682274",
+  "Descripción": "QUIMICA SANGUINEA 6 ELEMENTOS (QS6)",
+  "Precio U.": "$ 115.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682275",
+  "Descripción": "QUIMICA SANGUINEA 7 ELEMENTOS (QS7)",
+  "Precio U.": "$ 125.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682276",
+  "Descripción": "REACCIONES FEBRILES",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "4481",
+  "Descripción": "RELACION ALBUMINA \/ CREATININA",
+  "Precio U.": "$ 460.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682278",
+  "Descripción": "RETICULOCITOS",
+  "Precio U.": "$ 40.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682280",
+  "Descripción": "ROTAVIRUS",
+  "Precio U.": "$ 140.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682283",
+  "Descripción": "SODIO SERICO",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L211",
+  "Descripción": "SOMATOMEDINA C",
+  "Precio U.": "$ 480.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "2849",
+  "Descripción": "T3 Libre",
+  "Precio U.": "$ 180.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "284",
+  "Descripción": "T3Total",
+  "Precio U.": "$ 180.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "280",
+  "Descripción": "T4 LIBRE",
+  "Precio U.": "$ 150.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "T4Total02",
+  "Descripción": "T4 TOTAL",
+  "Precio U.": "$ 190.00",
+  "Exis": -3,
+  "Total ": "-$ 570.00"
+ },
+ {
+  "Clave": "66822881",
+  "Descripción": "TESTOSTERONA LIBRE",
+  "Precio U.": "$ 255.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682287",
+  "Descripción": "TESTOSTERONA TOTAL",
+  "Precio U.": "$ 255.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682290",
+  "Descripción": "TIEMPO DE SANGRADO",
+  "Precio U.": "$ 20.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "1002",
+  "Descripción": "TIEMPO DE TROMBOPLASTINA PARCIAL ACTIVADA ( TTPa )",
+  "Precio U.": "$ 130.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682291",
+  "Descripción": "TIEMPO PARCIAL DE TROMBOPLASTINA (TTP)",
+  "Precio U.": "$ 75.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682288",
+  "Descripción": "TIEMPOS DE COAGULACION",
+  "Precio U.": "$ 145.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682289",
+  "Descripción": "TIEMPOS DE PROTROMBINA (TP) INR",
+  "Precio U.": "$ 75.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L291",
+  "Descripción": "TIROGLOBULINA",
+  "Precio U.": "$ 260.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682293",
+  "Descripción": "TRANSAMINASA GLUTAMICO OXALACETICA (TGO O AST)",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682294",
+  "Descripción": "TRANSAMINASA GLUTAMICO PIRUVICA (TGP O ALT)",
+  "Precio U.": "$ 50.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682296",
+  "Descripción": "TRIGLICERIDOS",
+  "Precio U.": "$ 55.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "297",
+  "Descripción": "TROPONINA I",
+  "Precio U.": "$ 400.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682297",
+  "Descripción": "UREA",
+  "Precio U.": "$ 35.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682327",
+  "Descripción": "UROBILINOGENO EN HECES",
+  "Precio U.": "$ 30.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682298",
+  "Descripción": "UROCULTIVO",
+  "Precio U.": "$ 300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682299",
+  "Descripción": "V.D.R.L. (LUETICAS)",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L303",
+  "Descripción": "VITAMINA B12 ( COBALAMINA )",
+  "Precio U.": "$ 340.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "304",
+  "Descripción": "VITAMINA D (25 Hidroxicolecalciferol)",
+  "Precio U.": "$ 635.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "9999",
+  "Descripción": "VITAMINA D3",
+  "Precio U.": "$ 1,300.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682300",
+  "Descripción": "VSG (velocidad de sedimentacion globular)",
+  "Precio U.": "$ 45.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "6682303",
+  "Descripción": "WESTER BLOT (CONFIRMATORIO VIH)",
+  "Precio U.": "$ 2,800.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ },
+ {
+  "Clave": "L99999",
+  "Descripción": "ZINC EN SUERO",
+  "Precio U.": "$ 450.00",
+  "Exis": 0,
+  "Total ": "$ 0.00"
+ }
