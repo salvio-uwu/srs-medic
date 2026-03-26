@@ -1,0 +1,10 @@
+services:
+  srs-medic:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: srs-medic:local
+    container_name: srs-medic
+    restart: unless-stopped
+    ports:
+      - "8080:80"

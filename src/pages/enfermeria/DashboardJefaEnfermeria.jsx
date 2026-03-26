@@ -7,22 +7,16 @@ import {
   Printer, Clock, Sparkles, X, Package, ShieldAlert,
   ChevronDown, Activity, Calendar,
   ChevronRight, Clipboard, Shield, MapPin, LayoutDashboard,
-  ClipboardList, Stethoscope, Plus, Zap
+  ClipboardList, Stethoscope, Plus, Zap, Filter
 } from 'lucide-react';
 import { db } from '../../config/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import logoImg from '../../assets/logo_azul.png';
-import RegistrosEnfermeriaModal from '../../components/RegistrosEnfermeriaModal';
-
-const IconCross = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-    <path d="M12 2v20M2 12h20"/>
-  </svg>
-);
+import FiltroBitacorasJefaturaModal from '../../components/FiltroBitacorasJefaturaModal';
 
 const Toast = ({ msg, type, onClose }) => (
-  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border text-sm font-semibold animate-in slide-in-from-top-4 backdrop-blur-md print:hidden ${
+  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-lg border text-sm font-semibold animate-in slide-in-from-top-4 print:hidden ${
     type === 'error'   ? 'bg-red-50/90 border-red-200 text-red-700' :
     type === 'warning' ? 'bg-amber-50/90 border-amber-200 text-amber-700' :
                          'bg-emerald-50/90 border-emerald-200 text-emerald-700'
@@ -56,12 +50,12 @@ const VIEW_META = {
 };
 
 const COLOR_MAP = {
-  blue:   { pill:'bg-blue-50 text-blue-600',     dot:'bg-blue-500',   active:'bg-white text-blue-700 shadow-sm border border-blue-200 ring-2 ring-blue-50'   },
-  cyan:   { pill:'bg-cyan-50 text-cyan-600',     dot:'bg-cyan-500',   active:'bg-white text-cyan-700 shadow-sm border border-cyan-200 ring-2 ring-cyan-50'   },
-  teal:   { pill:'bg-teal-50 text-teal-600',     dot:'bg-teal-500',   active:'bg-white text-teal-700 shadow-sm border border-teal-200 ring-2 ring-teal-50'   },
-  violet: { pill:'bg-violet-50 text-violet-600', dot:'bg-violet-500', active:'bg-white text-violet-700 shadow-sm border border-violet-200 ring-2 ring-violet-50'},
-  indigo: { pill:'bg-indigo-50 text-indigo-600', dot:'bg-indigo-500', active:'bg-white text-indigo-700 shadow-sm border border-indigo-200 ring-2 ring-indigo-50'},
-  rose:   { pill:'bg-rose-50 text-rose-600',     dot:'bg-rose-500',   active:'bg-white text-rose-700 shadow-sm border border-rose-200 ring-2 ring-rose-50'   },
+  blue:   { pill:'bg-blue-50 text-blue-600',     dot:'bg-blue-500',   active:'bg-blue-50 text-blue-700 border border-blue-200 shadow-sm', mobileActive:'text-blue-600 bg-blue-50' },
+  cyan:   { pill:'bg-cyan-50 text-cyan-600',     dot:'bg-cyan-500',   active:'bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-sm', mobileActive:'text-cyan-600 bg-cyan-50' },
+  teal:   { pill:'bg-teal-50 text-teal-600',     dot:'bg-teal-500',   active:'bg-teal-50 text-teal-700 border border-teal-200 shadow-sm', mobileActive:'text-teal-600 bg-teal-50' },
+  violet: { pill:'bg-violet-50 text-violet-600', dot:'bg-violet-500', active:'bg-violet-50 text-violet-700 border border-violet-200 shadow-sm', mobileActive:'text-violet-600 bg-violet-50' },
+  indigo: { pill:'bg-indigo-50 text-indigo-600', dot:'bg-indigo-500', active:'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm', mobileActive:'text-indigo-600 bg-indigo-50' },
+  rose:   { pill:'bg-rose-50 text-rose-600',     dot:'bg-rose-500',   active:'bg-rose-50 text-rose-700 border border-rose-200 shadow-sm', mobileActive:'text-rose-600 bg-rose-50' },
 };
 
 const Badge = ({ children, variant = 'default' }) => {
@@ -104,8 +98,15 @@ const DashboardJefaEnfermeria = () => {
   const [toast,         setToast]         = useState({ show:false, msg:'', type:'info' });
   const [alertasCaducidad, setAlertasCaducidad] = useState([]);
   const [bitacorasMes,     setBitacorasMes]     = useState([]);
-  const [sidebarOpen,      setSidebarOpen]      = useState(true);
-  const [showRegistrosModal, setShowRegistrosModal] = useState(false);
+  const [sidebarOpen,      setSidebarOpen]      = useState(() => {
+    try {
+      const saved = localStorage.getItem('jefa_sidebar_open');
+      return saved === null ? false : saved === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [showFiltroBitacoras, setShowFiltroBitacoras] = useState(false);
 
   const showToast = (msg, type = 'info') => {
     setToast({ show:true, msg, type });
@@ -118,41 +119,61 @@ const DashboardJefaEnfermeria = () => {
   }, []);
 
   useEffect(() => {
-    const unsubInventario = onSnapshot(collection(db, 'inventario'), (snap) => {
-      const hoy   = new Date();
-      const limit = new Date(); limit.setMonth(hoy.getMonth() + 3);
-      const alertas = [];
-      snap.docs.forEach(doc => {
-        const item = doc.data();
-        if (item.caducidad) {
-          const fCad = new Date(item.caducidad);
-          if (fCad <= limit && item.stock > 0) {
-            const dias = Math.ceil((fCad - hoy) / 86400000);
-            alertas.push({ id: doc.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
-          }
-        }
-      });
-      setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
-    });
+    try {
+      localStorage.setItem('jefa_sidebar_open', String(sidebarOpen));
+    } catch {}
+  }, [sidebarOpen]);
 
-    const startOfMonth = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA');
-    const endOfMonth   = new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA');
-    const unsubBitacoras = onSnapshot(
-      query(collection(db, 'bitacoras_operativas'),
-        where('fechaString', '>=', startOfMonth),
-        where('fechaString', '<=', endOfMonth)),
-      (snap) => {
-        const bitacoras = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadData = async () => {
+      try {
+        const [inventarioSnap, bitacorasSnap] = await Promise.all([
+          getDocs(collection(db, 'inventario')),
+          getDocs(
+            query(
+              collection(db, 'bitacoras_operativas'),
+              where('fechaString', '>=', new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA')),
+              where('fechaString', '<=', new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA'))
+            )
+          )
+        ]);
+        if (!isMounted) return;
+
+        const hoy = new Date();
+        const limit = new Date();
+        limit.setMonth(hoy.getMonth() + 3);
+        const alertas = [];
+        inventarioSnap.docs.forEach((docRef) => {
+          const item = docRef.data();
+          if (item.caducidad) {
+            const fCad = new Date(item.caducidad);
+            if (fCad <= limit && item.stock > 0) {
+              const dias = Math.ceil((fCad - hoy) / 86400000);
+              alertas.push({ id: docRef.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
+            }
+          }
+        });
+        setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
+
+        const bitacoras = bitacorasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
         bitacoras.sort((a, b) => {
-            const dateA = new Date(a.fechaString + 'T' + (a.fecha?.toDate?.().toTimeString() || '00:00:00'));
-            const dateB = new Date(b.fechaString + 'T' + (b.fecha?.toDate?.().toTimeString() || '00:00:00'));
-            return dateB - dateA;
+          const dateA = new Date(a.fechaString + 'T' + (a.fecha?.toDate?.().toTimeString() || '00:00:00'));
+          const dateB = new Date(b.fechaString + 'T' + (b.fecha?.toDate?.().toTimeString() || '00:00:00'));
+          return dateB - dateA;
         });
         setBitacorasMes(bitacoras);
-      }
-    );
+      } catch {}
+    };
 
-    return () => { unsubInventario(); unsubBitacoras(); };
+    loadData();
+    const intervalId = setInterval(loadData, 300000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -184,7 +205,7 @@ const DashboardJefaEnfermeria = () => {
   const cloroDone = bitacorasHoy.some(b => b.tipo === 'Cloro y PH');
 
   const TableWrap = ({ children }) => (
-    <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm overflow-hidden animate-in fade-in duration-500 relative z-10 flex-1 flex flex-col min-h-0 print:block">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in duration-500 relative z-10 flex-1 flex flex-col min-h-0 print:block">
       <div className="overflow-auto custom-scrollbar flex-1">
         <table className="w-full text-sm min-w-[800px]">{children}</table>
       </div>
@@ -205,7 +226,7 @@ const DashboardJefaEnfermeria = () => {
 
   const DayCell = ({ children }) => (
     <td className="px-4 py-3.5 border-b border-slate-50 text-center">
-      <span className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-100 text-slate-600 text-xs font-black shadow-sm">
+      <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-slate-100 text-slate-600 text-xs font-black border border-slate-200">
         {children}
       </span>
     </td>
@@ -230,12 +251,7 @@ const DashboardJefaEnfermeria = () => {
             ? 'w-full gap-3 px-4 py-3.5 rounded-2xl' 
             : 'w-12 h-12 mx-auto justify-center rounded-[1rem]'
           }
-          ${active 
-            ? sidebarOpen 
-                ? c.active 
-                : `bg-white border-2 border-${m.color}-300 text-${m.color}-600 shadow-[0_0_15px_rgba(0,0,0,0.05)] ring-4 ring-${m.color}-50/50` 
-            : 'text-slate-400 hover:bg-white/60 hover:text-slate-700 border-2 border-transparent'
-          }
+          ${active ? c.active : 'text-slate-400 hover:bg-white/60 hover:text-slate-700 border border-transparent'}
         `}
       >
         <Icon 
@@ -508,14 +524,23 @@ const DashboardJefaEnfermeria = () => {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
         
-        body { font-family: 'Inter', sans-serif; background: #f0f4f8; overflow: hidden; }
-        .font-jakarta { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+        body { font-family: 'DM Sans', sans-serif; background: #f4f7f9; }
+        .font-jakarta { font-family: 'Sora', system-ui, sans-serif; }
         
         .glass-panel {
-          background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 10px 40px -10px rgba(0,0,0,0.05);
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation: none !important;
+            transition: none !important;
+            scroll-behavior: auto !important;
+          }
         }
 
         .th-group { background: #f8fafc !important; color: #475569 !important; font-size: 10px !important; letter-spacing: 0.1em; }
@@ -524,9 +549,6 @@ const DashboardJefaEnfermeria = () => {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-        .cross-float { animation: float 6s ease-in-out infinite; }
 
         @media print {
           body * { visibility: hidden; }
@@ -542,18 +564,10 @@ const DashboardJefaEnfermeria = () => {
 
       {toast.show && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast({ ...toast, show:false })} />}
 
-      <div className="flex h-[100dvh] w-screen relative overflow-hidden bg-[#f0f4f8] text-slate-700">
-        
-        <div className="print:hidden" style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
-          background: 'radial-gradient(ellipse 70% 60% at 15% 0%, rgba(219,234,254,0.6) 0%, transparent 55%), radial-gradient(ellipse 55% 50% at 90% 100%, rgba(204,251,241,0.4) 0%, transparent 50%)',
-        }}/>
-        <div className="cross-float print:hidden" style={{ position: 'absolute', top: '10%', left: '5%', color: 'rgba(37,99,235,0.1)', pointerEvents: 'none', zIndex: 0 }}>
-          <IconCross />
-        </div>
+      <div className="flex h-[100dvh] w-screen overflow-hidden bg-[#f4f7f9] text-slate-700">
 
         {/* ── SIDEBAR DESKTOP ──────────────────────────────────────────────────── */}
-        <aside className={`print-hidden hidden md:flex flex-shrink-0 ${sidebarOpen ? 'w-64' : 'w-20'} glass-panel my-4 ml-4 rounded-[2rem] flex-col transition-all duration-300 z-20`}>
+        <aside className={`print-hidden hidden md:flex flex-shrink-0 ${sidebarOpen ? 'w-64' : 'w-20'} bg-white border border-slate-200 shadow-sm my-4 ml-4 rounded-xl flex-col overflow-hidden transition-all duration-300 z-20`}>
           <div className={`flex items-center gap-3 px-6 py-6 border-b border-slate-200/50 ${!sidebarOpen && 'justify-center px-0'}`}>
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-blue-500/30">
               <ShieldAlert size={20} className="text-white" />
@@ -608,14 +622,14 @@ const DashboardJefaEnfermeria = () => {
         {/* ── MAIN AREA ──────────────────────────────────────────────────────── */}
         <div className="flex-1 flex flex-col overflow-hidden p-4 md:pl-6 z-10 relative pb-[80px] md:pb-4">
 
-          <header className="print-hidden glass-panel rounded-3xl h-16 md:h-20 mb-4 md:mb-6 px-4 md:px-6 flex items-center justify-between flex-shrink-0 shadow-sm">
+          <header className="print-hidden bg-white border border-slate-200 rounded-xl h-16 md:h-20 mb-4 md:mb-6 px-4 md:px-6 flex items-center justify-between flex-shrink-0 shadow-sm">
             <div className="flex items-center gap-2 md:gap-4">
-              <button onClick={() => setSidebarOpen(o => !o)} className="hidden md:block p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-700 hover:shadow-sm transition-all">
+                <button onClick={() => setSidebarOpen(o => !o)} className="hidden md:block p-2 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-slate-700 hover:shadow-sm transition-all">
                 <ChevronRight size={18} className={`transition-transform duration-300 ${sidebarOpen ? 'rotate-180' : ''}`}/>
               </button>
               
               <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center shadow-sm border border-white ${colors.pill}`}>
+                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg flex items-center justify-center shadow-sm border border-slate-200 ${colors.pill}`}>
                     <ViewIcon size={18} className="md:w-5 md:h-5"/>
                 </div>
                 <div>
@@ -630,22 +644,25 @@ const DashboardJefaEnfermeria = () => {
             </div>
 
             <div className="flex items-center gap-2 md:gap-4">
-              <div className="hidden md:flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm">
+              <div className="hidden md:flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-4 py-2 shadow-sm">
                 <Calendar size={14} className="text-slate-400"/>
                 <span className="text-xs font-bold text-slate-600 capitalize">{mesLabel}</span>
               </div>
               
               <div className="hidden lg:flex items-center gap-2 border-l border-slate-200 pl-4">
-                  <button onClick={() => navigate('/enfermeria/dashboard')} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
+                  <button onClick={() => navigate('/enfermeria/dashboard')} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">
                       <Stethoscope size={16}/> Agenda
                   </button>
-                  <button onClick={() => setShowRegistrosModal(true)} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg shadow-slate-900/20 hover:bg-slate-800 transition-all active:scale-95">
+                  <button onClick={() => setShowFiltroBitacoras(true)} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">
+                    <Filter size={16}/> Filtrar Bitacoras
+                  </button>
+                    <button onClick={() => navigate('/enfermeria/registros')} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-800 transition-all active:scale-95">
                       <Plus size={16}/> Capturar Registros
                   </button>
               </div>
 
               {activeView !== 'dashboard' && activeView !== 'alertas' && (
-                <button onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold shadow-sm hover:bg-slate-50 transition-all active:scale-95">
+                <button onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-all active:scale-95">
                     <Printer size={16}/>
                 </button>
               )}
@@ -661,7 +678,7 @@ const DashboardJefaEnfermeria = () => {
                         <div className="xl:col-span-2 space-y-6">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 {statsData.map((s, i) => (
-                                    <div key={i} className="glass-panel rounded-2xl p-4 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
+                                    <div key={i} className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
                                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shadow-inner mb-2 ${s.bg}`}>
                                             <s.icon size={18} className={s.color}/>
                                         </div>
@@ -671,7 +688,7 @@ const DashboardJefaEnfermeria = () => {
                                 ))}
                             </div>
 
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-6 border-b border-slate-100 pb-3">
                                     <Activity size={18} className="text-blue-500"/> Semáforo Diario <span className="text-slate-400 font-medium">({hoyStr.split('-').reverse().join('/')})</span>
                                 </h3>
@@ -683,7 +700,7 @@ const DashboardJefaEnfermeria = () => {
                                 </div>
                             </div>
                             
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[280px]">
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[280px]">
                                 <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
                                     <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
                                         <ClipboardList size={16} className="text-indigo-500"/> Últimos Registros
@@ -708,20 +725,27 @@ const DashboardJefaEnfermeria = () => {
                         </div>
 
                         <div className="space-y-6">
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
                                     <Zap size={18} className="text-amber-500"/> Accesos Directos
                                 </h3>
                                 <div className="space-y-3">
-                                    <button onClick={() => navigate('/enfermeria/dashboard')} className="w-full bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-100 p-4 rounded-2xl flex items-center gap-4 transition-all group">
-                                        <div className="bg-blue-100 text-blue-600 p-2.5 rounded-xl group-hover:scale-110 transition-transform"><Stethoscope size={20}/></div>
+                                    <button onClick={() => navigate('/enfermeria/dashboard')} className="w-full bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
+                                        <div className="bg-blue-100 text-blue-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Stethoscope size={20}/></div>
                                         <div className="text-left">
                                             <p className="font-bold text-sm text-slate-700 group-hover:text-blue-700">Torre de Control</p>
                                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Agenda y Triage</p>
                                         </div>
                                     </button>
-                                    <button onClick={() => setShowRegistrosModal(true)} className="w-full bg-slate-50 hover:bg-emerald-50 border border-slate-100 hover:border-emerald-100 p-4 rounded-2xl flex items-center gap-4 transition-all group">
-                                        <div className="bg-emerald-100 text-emerald-600 p-2.5 rounded-xl group-hover:scale-110 transition-transform"><Plus size={20}/></div>
+                                        <button onClick={() => setShowFiltroBitacoras(true)} className="w-full bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
+                                          <div className="bg-indigo-100 text-indigo-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Filter size={20}/></div>
+                                          <div className="text-left">
+                                            <p className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">Filtrar Bitacoras</p>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Consulta e impresion</p>
+                                          </div>
+                                        </button>
+                                    <button onClick={() => navigate('/enfermeria/registros')} className="w-full bg-slate-50 hover:bg-emerald-50 border border-slate-100 hover:border-emerald-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
+                                        <div className="bg-emerald-100 text-emerald-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Plus size={20}/></div>
                                         <div className="text-left">
                                             <p className="font-bold text-sm text-slate-700 group-hover:text-emerald-700">Capturar Bitácora</p>
                                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Auditoría Operativa</p>
@@ -730,7 +754,7 @@ const DashboardJefaEnfermeria = () => {
                                 </div>
                             </div>
 
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col h-[320px]">
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[320px]">
                                 <div className="p-5 border-b border-slate-100 bg-rose-50/30 flex justify-between items-center shrink-0">
                                     <h3 className="text-sm font-black text-rose-600 uppercase tracking-widest flex items-center gap-2">
                                         <AlertTriangle size={16}/> Riesgo Inventario
@@ -910,7 +934,7 @@ const DashboardJefaEnfermeria = () => {
 
                   if (registros.length === 0) {
                       return (
-                          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-3xl border border-slate-200 shadow-sm min-h-[400px]">
+                          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px]">
                               <Package size={48} className="text-slate-200 mb-4" />
                               <h3 className="text-lg font-bold text-slate-700">Sin movimientos registrados</h3>
                               <p className="text-sm text-slate-400 mt-1">No hay datos de {activeView === 'recepcion' ? 'recepción' : 'entradas/salidas'} en este periodo.</p>
@@ -921,7 +945,7 @@ const DashboardJefaEnfermeria = () => {
                   return (
                       <div className="flex-1 flex flex-col h-full animate-in fade-in min-h-0">
                         {/* VISTA DESKTOP (Tabla Desglosada - Formato Excel) */}
-                        <div className="hidden md:flex flex-1 flex-col overflow-hidden bg-white rounded-3xl border border-slate-200/60 shadow-sm">
+                        <div className="hidden md:flex flex-1 flex-col overflow-hidden bg-white rounded-xl border border-slate-200 shadow-sm">
                           <div className="overflow-auto custom-scrollbar flex-1">
                             <table className="w-full text-sm min-w-[1200px] border-collapse">
                               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
@@ -1019,7 +1043,7 @@ const DashboardJefaEnfermeria = () => {
                                 const esEntrada = reg.area?.toLowerCase().includes('entrada');
                                 
                                 return (
-                                    <div key={reg.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3">
+                                    <div key={reg.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3">
                                         <div className="flex justify-between items-start border-b border-slate-100 pb-2">
                                             <div className="flex-1 pr-2">
                                                 <p className="font-bold text-sm text-slate-800 leading-tight">{det.compuesto}</p>
@@ -1085,7 +1109,7 @@ const DashboardJefaEnfermeria = () => {
               {activeView === 'alertas' && (() => {
                   if (alertasFiltradas.length === 0) {
                       return (
-                          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-3xl border border-slate-200 shadow-sm min-h-[400px]">
+                          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px]">
                               <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center border-4 border-emerald-100 mb-4">
                                   <CheckCircle2 size={40} className="text-emerald-500"/>
                               </div>
@@ -1100,7 +1124,7 @@ const DashboardJefaEnfermeria = () => {
                           <div className="relative max-w-md shrink-0">
                               <Search size={18} className="absolute left-4 top-3.5 text-slate-400"/>
                               <input type="text" placeholder="Buscar medicamento en riesgo..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                              className="w-full pl-12 pr-4 py-3.5 text-sm bg-white border border-slate-200 rounded-2xl outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition-all shadow-sm font-medium" />
+                              className="w-full pl-12 pr-4 py-3.5 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition-all shadow-sm font-medium" />
                           </div>
 
                           <TableWrap>
@@ -1156,12 +1180,13 @@ const DashboardJefaEnfermeria = () => {
         </div>
 
         {/* ── BOTTOM NAV (MOBILE ONLY) ──────────────────────────────────────────── */}
-        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-200 z-50 flex items-center gap-2 px-2 py-3 overflow-x-auto custom-scrollbar print-hidden">
+        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 z-50 flex items-center gap-2 px-2 py-3 overflow-x-auto custom-scrollbar print-hidden">
             {Object.keys(VIEW_META).map(id => {
                 const m = VIEW_META[id];
                 const active = activeView === id;
+            const cm = COLOR_MAP[m.color];
                 return (
-                    <button key={id} onClick={() => setActiveView(id)} className={`flex flex-col items-center justify-center min-w-[72px] px-2 py-1 rounded-xl transition-all ${active ? `text-${m.color}-600 bg-${m.color}-50` : 'text-slate-400 hover:text-slate-600'}`}>
+              <button key={id} onClick={() => setActiveView(id)} className={`flex flex-col items-center justify-center min-w-[72px] px-2 py-1 rounded-lg transition-all ${active ? cm.mobileActive : 'text-slate-400 hover:text-slate-600'}`}>
                         <m.icon size={22} className={active ? 'animate-pulse' : ''}/>
                         <span className="text-[9px] font-bold mt-1 tracking-tight text-center leading-tight">{m.label.split(' ')[0]}</span>
                     </button>
@@ -1169,13 +1194,11 @@ const DashboardJefaEnfermeria = () => {
             })}
         </nav>
         
-        {/* --- MONTAR EL MODAL DE REGISTROS --- */}
-        {showRegistrosModal && (
-            <RegistrosEnfermeriaModal 
-                onClose={() => setShowRegistrosModal(false)} 
-                enfermeraNombre={user?.nombre || "Jefatura Enfermería"} 
-            />
-        )}
+        <FiltroBitacorasJefaturaModal
+          isOpen={showFiltroBitacoras}
+          onClose={() => setShowFiltroBitacoras(false)}
+          sourceRows={bitacorasMes}
+        />
 
       </div>
     </>

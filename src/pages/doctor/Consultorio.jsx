@@ -5,13 +5,30 @@ import {
   Play, Square, CheckCircle
 } from 'lucide-react';
 import { db } from '../../config/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, runTransaction, setDoc } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
+
+const generateFolio = async (database) => {
+  const counterRef = doc(database, 'contadores', 'folios_recetas');
+  try {
+    const siguiente = await runTransaction(database, async (tx) => {
+      const snap = await tx.get(counterRef);
+      const current = snap.exists() ? (snap.data().siguiente || 1) : 1;
+      tx.set(counterRef, { siguiente: current + 1 }, { merge: true });
+      return current;
+    });
+    return `RX-${String(siguiente).padStart(7, '0')}`;
+  } catch (e) {
+    console.error('Error generando folio:', e);
+    return `RX-${String(Date.now()).slice(-7)}`;
+  }
+};
 
 const Consultorio = () => {
   const { user, cambiarEstadoOperativo } = useAuth(); // <--- CONEXIÓN CON LA TORRE DE CONTROL
 
   // --- ESTADOS ---
+  const [folio, setFolio] = useState('');
   const [paciente, setPaciente] = useState({ nombre: '', edad: '', peso: '', temp: '', alergias: '' });
   const [diagnostico, setDiagnostico] = useState('');
   const [tratamiento, setTratamiento] = useState([]);
@@ -29,6 +46,11 @@ const Consultorio = () => {
   const [timeLeft, setTimeLeft] = useState(900); // 15 minutos por defecto
   const [timerActive, setTimerActive] = useState(false);
   const [consultaTerminada, setConsultaTerminada] = useState(false);
+
+  // --- EFECTO: GENERAR FOLIO ---
+  useEffect(() => {
+    generateFolio(db).then(setFolio);
+  }, []);
 
   // --- EFECTO: CRONÓMETRO ---
   useEffect(() => {
@@ -318,7 +340,7 @@ const Consultorio = () => {
             </div>
             <div className="text-right">
                <h2 className="text-xl font-bold text-slate-800">RECETA MÉDICA</h2>
-               <p className="text-sm text-red-600 font-mono font-bold">FOLIO: #{Date.now().toString().slice(-6)}</p>
+               <p className="text-sm text-red-600 font-mono font-bold">FOLIO: #{folio || '—'}</p>
                <p className="text-sm font-medium mt-1">{new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
             </div>
          </div>

@@ -1,21 +1,32 @@
 // src/pages/doctor/expediente/SeccionResumen.jsx
 import React, { useState, useEffect } from 'react';
+import { httpsCallable } from 'firebase/functions';
 import { 
   History, Activity, Clock, FileText, Calendar, 
   Stethoscope, ChevronRight, X, Pill, TrendingUp, CheckCircle,
   Sparkles, Brain 
 } from 'lucide-react';
 import { db } from '../../../config/firebase'; 
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { functions } from '../../../config/firebase';
+import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
+import { listLegacyLinksByPaciente } from '../../../services/patientLinkService';
+import {
+    calculateHomologationMetrics,
+    listHomologatedSummariesByPaciente,
+    parseLegacyHtmlClinicalData,
+    upsertHomologatedLegacySummary
+} from '../../../services/homologationService';
 
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
   ResponsiveContainer, ScatterChart, Scatter, ReferenceLine 
 } from 'recharts';
 
-// --- CONFIGURACIÓN API ---
-// Recuerda: En producción, usa variables de entorno (.env)
-const API_KEY = "AIzaSyCW6JzQuMgVZDsT4p9EqwtZOYaUl47O4u8"; 
+const legacyHtmlModules = import.meta.glob('../../../../historialmedico/*.html', {
+    query: '?url',
+    import: 'default'
+});
+const AUDIT_COLLECTION = 'auditoria_historial_migrado';
 
 const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
   // --- ESTADOS ---
@@ -28,6 +39,12 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
   const [analizando, setAnalizando] = useState(false);
   const [resumenIA, setResumenIA] = useState(null);
   const [tendenciasIA, setTendenciasIA] = useState(null);
+    const [homologando, setHomologando] = useState(false);
+    const [homologationRows, setHomologationRows] = useState([]);
+    const [homologationMetrics, setHomologationMetrics] = useState(null);
+    const [homologationInsight, setHomologationInsight] = useState('');
+    const [homologationMsg, setHomologationMsg] = useState({ type: '', text: '' });
+    const [patientUniqueId, setPatientUniqueId] = useState('');
 
   // Estados para Gráficas
   const [datosGraficas, setDatosGraficas] = useState({
@@ -58,8 +75,102 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     return parseFloat(diffYears.toFixed(2));
   };
 
+    const parseLegacyDate = (value) => {
+        if (!value) return null;
+
+        const asDate = new Date(value);
+        if (!Number.isNaN(asDate.getTime())) return asDate;
+
+        const match = String(value).match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+        if (!match) return null;
+
+        const day = Number(match[1]);
+        const month = Number(match[2]);
+        const year = Number(match[3]);
+        const hour = Number(match[4] || 0);
+        const minute = Number(match[5] || 0);
+
+        const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const toNumberOrNull = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        const numeric = Number(String(value).replace(',', '.'));
+        return Number.isFinite(numeric) ? numeric : null;
+    };
+
+    const buildLegacyGraphData = (rows = [], fechaNacimiento = '') => {
+        const dataPeso = [];
+        const dataTalla = [];
+        const dataIMC = [];
+        const dataPesoTalla = [];
+        const dataTA = [];
+
+        rows.forEach((row) => {
+            const normalized = row?.normalized || {};
+            const consultas = Array.isArray(normalized.consultas) && normalized.consultas.length
+                ? normalized.consultas
+                : [normalized];
+
+            consultas.forEach((consulta) => {
+                const fechaConsulta = parseLegacyDate(consulta.fechaConsulta || consulta.fechaConsultaRaw || normalized.fechaConsulta);
+                if (!fechaConsulta || !fechaNacimiento) return;
+
+                const edadAlMomento = calcularEdadEnFecha(fechaNacimiento, fechaConsulta);
+                const fechaCorta = fechaConsulta.toLocaleDateString('es-MX');
+                const talla = toNumberOrNull(consulta.talla ?? normalized.talla);
+                const peso = toNumberOrNull(consulta.peso ?? normalized.peso);
+                const imc = toNumberOrNull(consulta.imc ?? normalized.imc);
+
+                if (peso !== null) dataPeso.push({ x: edadAlMomento, y: peso, fecha: fechaCorta, source: 'legacy' });
+                if (talla !== null) dataTalla.push({ x: edadAlMomento, y: talla, fecha: fechaCorta, source: 'legacy' });
+                if (imc !== null) dataIMC.push({ x: edadAlMomento, y: imc, fecha: fechaCorta, source: 'legacy' });
+                if (peso !== null && talla !== null) dataPesoTalla.push({ x: talla, y: peso, fecha: fechaCorta, source: 'legacy' });
+
+                const taRaw = String(consulta.ta || normalized.ta || '').trim();
+                if (taRaw.includes('/')) {
+                    const [sis, dias] = taRaw.split('/');
+                    const sistolica = Number.parseInt(sis, 10);
+                    const diastolica = Number.parseInt(dias, 10);
+                    if (Number.isFinite(sistolica) && Number.isFinite(diastolica)) {
+                        dataTA.push({ fecha: fechaCorta, sistolica, diastolica, source: 'legacy' });
+                    }
+                }
+            });
+        });
+
+        return { dataPeso, dataTalla, dataIMC, dataPesoTalla, dataTA };
+    };
+
+    const abrirDocumentoLegacy = async (modulePath) => {
+        const importer = legacyHtmlModules[modulePath];
+        if (!importer) {
+            setHomologationMsg({ type: 'warn', text: 'No encontré el archivo HTML en el paquete actual.' });
+            return;
+        }
+
+        try {
+            const url = await importer();
+            window.open(url, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            console.error('No se pudo abrir el documento legacy', error);
+            setHomologationMsg({ type: 'error', text: 'No se pudo abrir el documento legacy.' });
+        }
+    };
+
+    const handleTimelineItemClick = async (item) => {
+        if (item.kind === 'legacy') {
+            if (item.modulePath) await abrirDocumentoLegacy(item.modulePath);
+            return;
+        }
+
+        const selected = historial.find((row) => row.id === item.sourceId);
+        if (selected) setConsultaSeleccionada(selected);
+    };
+
   // --- CARGA DE DATOS ---
-  useEffect(() => {
+    useEffect(() => {
     const fetchHistorial = async () => {
         if (!pacienteId) return;
         setLoading(true);
@@ -85,6 +196,8 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                 docsList.push({
                     id: d.id,
                     ...data,
+                    source: 'plataforma',
+                    fechaOrden: fechaObj.getTime(),
                     fechaFormato: fechaObj.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }),
                     horaFormato: fechaObj.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
                 });
@@ -109,13 +222,15 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
             });
 
             setHistorial([...docsList].reverse());
+
+            const legacyGraph = buildLegacyGraphData(homologationRows, expediente?.px_info?.fecha_nacimiento);
             
             setDatosGraficas({
-                pesoEdad: dataPeso,
-                tallaEdad: dataTalla,
-                imcEdad: dataIMC,
-                pesoTalla: dataPesoTalla,
-                tensionArterial: dataTA
+                pesoEdad: [...dataPeso, ...legacyGraph.dataPeso],
+                tallaEdad: [...dataTalla, ...legacyGraph.dataTalla],
+                imcEdad: [...dataIMC, ...legacyGraph.dataIMC],
+                pesoTalla: [...dataPesoTalla, ...legacyGraph.dataPesoTalla],
+                tensionArterial: [...dataTA, ...legacyGraph.dataTA]
             });
 
         } catch (error) {
@@ -125,7 +240,220 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     };
 
     fetchHistorial();
-  }, [pacienteId, expediente?.px_info?.fecha_nacimiento]);
+    }, [pacienteId, expediente?.px_info?.fecha_nacimiento, homologationRows]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadHomologationRows = async () => {
+            if (!pacienteId) {
+                setHomologationRows([]);
+                setHomologationMetrics(calculateHomologationMetrics([]));
+                return;
+            }
+
+            try {
+                const pacienteSnap = await getDoc(doc(db, 'pacientes', pacienteId));
+                const pacienteData = pacienteSnap.exists() ? pacienteSnap.data() || {} : {};
+                const uniqueId = String(pacienteData.idPaciente || pacienteData.idPacienteMigrado || '').trim();
+
+                const rows = await listHomologatedSummariesByPaciente(pacienteId);
+                const filteredRows = uniqueId
+                  ? rows.filter((row) => String(row?.normalized?.idPaciente || '').trim() === uniqueId)
+                  : rows;
+
+                if (!cancelled) {
+                    setPatientUniqueId(uniqueId);
+                    setHomologationRows(filteredRows);
+                    setHomologationMetrics(calculateHomologationMetrics(filteredRows));
+                }
+            } catch (error) {
+                console.error('Error cargando homologacion guardada', error);
+                if (!cancelled) {
+                    setPatientUniqueId('');
+                    setHomologationRows([]);
+                    setHomologationMetrics(calculateHomologationMetrics([]));
+                }
+            }
+        };
+
+        loadHomologationRows();
+        return () => {
+            cancelled = true;
+        };
+    }, [pacienteId]);
+
+    const buildUnifiedTimeline = () => {
+        const platformRows = historial.map((item) => ({
+            id: `platform_${item.id}`,
+            sourceId: item.id,
+            kind: 'platform',
+            fechaOrden: Number(item.fechaOrden || 0),
+            fechaFormato: item.fechaFormato,
+            origen: 'plataforma',
+            titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
+            descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
+            confianza: 'alta'
+        }));
+
+                const legacyRows = homologationRows.flatMap((row) => {
+            const normalized = row.normalized || {};
+                        const consultas = Array.isArray(normalized.consultas) && normalized.consultas.length
+                            ? normalized.consultas
+                            : [normalized];
+
+                        return consultas.map((consulta, idx) => {
+                            const fechaRaw = consulta.fechaConsultaRaw || consulta.fechaConsulta || normalized.fechaConsulta || normalized.fechaNacimiento || '';
+                            const parsedDate = parseLegacyDate(fechaRaw);
+                            const fallbackDate = typeof row.updatedAt?.toDate === 'function' ? row.updatedAt.toDate() : null;
+                            const fechaOrden = parsedDate
+                                ? parsedDate.getTime()
+                                : (fallbackDate ? fallbackDate.getTime() : 0);
+
+                            return {
+                                    id: `legacy_${row.id}_${idx}`,
+                                    kind: 'legacy',
+                                    modulePath: row.modulePath,
+                                    sourceFile: row.fileName,
+                                    fechaOrden,
+                                    fechaFormato: parsedDate
+                                        ? parsedDate.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
+                                        : (fechaRaw || (fallbackDate ? fallbackDate.toLocaleDateString('es-MX') : 'Sin fecha')),
+                                    horaFormato: parsedDate
+                                        ? parsedDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+                                        : '',
+                                    origen: 'legacy',
+                                    titulo: consulta.diagnostico || consulta.padecimiento || normalized.diagnostico || normalized.padecimiento || row.fileName || 'Registro migrado',
+                                    descripcion: consulta.tratamiento || consulta.indicaciones || normalized.tratamiento || normalized.alergias || row.aiSummary || 'Sin detalle clínico',
+                                    confianza: row.aiConfidence || 'media'
+                            };
+                        });
+        });
+
+        return [...platformRows, ...legacyRows].sort((a, b) => b.fechaOrden - a.fechaOrden);
+    };
+
+    const ejecutarHomologacionIA = async () => {
+        if (!pacienteId) return;
+
+        setHomologando(true);
+                setHomologationMsg({ type: '', text: '' });
+        try {
+                                                const uniqueId = String(patientUniqueId || '').trim();
+                                                if (!uniqueId) {
+                                                        setHomologationMsg({ type: 'warn', text: 'Este paciente no tiene ID único migrado (idPaciente). No puedo homologar con seguridad.' });
+                                                        setHomologando(false);
+                                                        return;
+                                                }
+
+                                                let links = await listLegacyLinksByPaciente(pacienteId);
+                                                links = links.filter((row) => {
+                                                    const legacyId = String(row.legacyPatientId || '').trim();
+                                                    return legacyId ? legacyId === uniqueId : true;
+                                                });
+
+                                                if (!links.length) {
+                                                    const auditSnap = await getDocs(
+                                                        query(collection(db, AUDIT_COLLECTION), where('patientId', '==', uniqueId))
+                                                    );
+
+                                                    links = auditSnap.docs
+                                                        .map((docSnap) => {
+                                                            const data = docSnap.data() || {};
+                                                            return {
+                                                                id: `audit_${docSnap.id}`,
+                                                                modulePath: data.modulePath || '',
+                                                                fileName: data.fileName || data.modulePath?.split('/').pop() || 'sin_nombre.html',
+                                                                legacyPatientId: data.patientId || null,
+                                                                confidence: 'alta'
+                                                            };
+                                                        })
+                                                        .filter((row) => !!row.modulePath);
+                                                }
+
+                        if (!links.length) {
+                                setHomologationMsg({
+                                    type: 'warn',
+                                                                        text: `No encontré documentos vinculados con ID único ${uniqueId}.`
+                                });
+                                setHomologando(false);
+                                return;
+                        }
+
+            const extracts = [];
+
+            for (const link of links) {
+                const importer = legacyHtmlModules[link.modulePath];
+                if (!importer) continue;
+
+                try {
+                    const url = await importer();
+                    const response = await fetch(url);
+                    const htmlText = await response.text();
+                    const parsed = parseLegacyHtmlClinicalData(htmlText, link.fileName);
+                    if (!parsed) continue;
+                    if (String(parsed.idPaciente || '').trim() !== uniqueId) continue;
+
+                    extracts.push({ modulePath: link.modulePath, fileName: link.fileName, parsed });
+                } catch (error) {
+                    console.warn('No se pudo procesar html legacy', link.modulePath, error);
+                }
+            }
+
+            if (!extracts.length) {
+                                setHomologationMsg({
+                                    type: 'warn',
+                                    text: 'Se detectaron archivos, pero no pude extraer datos clínicos útiles de esos documentos.'
+                                });
+                setHomologando(false);
+                return;
+            }
+
+            let iaInsight = '';
+            try {
+                const prompt = `
+                    Actúa como auditor clínico y de migración.
+                    Resume riesgos de calidad y patrones clínicos detectados en registros legacy normalizados.
+                    Responde en texto plano, máximo 8 líneas, sin markdown.
+
+                    Datos:
+                    ${JSON.stringify(extracts.map((row) => row.parsed).slice(0, 15))}
+                `;
+
+                const askGemini = httpsCallable(functions, 'askGemini');
+                const response = await askGemini({ prompt });
+                iaInsight = limpiarTextoIA(response?.data?.result || '');
+            } catch (error) {
+                console.error('Error generando insight de homologación IA', error);
+            }
+
+            await Promise.all(
+                extracts.map((row) =>
+                    upsertHomologatedLegacySummary({
+                        pacienteId,
+                        modulePath: row.modulePath,
+                        fileName: row.fileName,
+                        normalized: row.parsed,
+                        aiSummary: iaInsight,
+                        aiConfidence: 'media',
+                        source: 'legacy_html_ia'
+                    })
+                )
+            );
+
+            const updatedRows = await listHomologatedSummariesByPaciente(pacienteId);
+            const strictRows = updatedRows.filter((row) => String(row?.normalized?.idPaciente || '').trim() === uniqueId);
+            setHomologationRows(strictRows);
+            setHomologationMetrics(calculateHomologationMetrics(strictRows));
+            setHomologationInsight(iaInsight);
+            setHomologationMsg({ type: 'ok', text: `Homologación completada con ID ${uniqueId}. Registros procesados: ${strictRows.length}.` });
+        } catch (error) {
+            console.error('Error en homologación IA', error);
+            setHomologationMsg({ type: 'error', text: 'Error ejecutando homologación IA. Revisa consola para más detalle.' });
+        }
+
+        setHomologando(false);
+    };
 
   // ==========================================
   // FUNCIONES INTELIGENCIA ARTIFICIAL (CORREGIDAS)
@@ -160,13 +488,9 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
         Objetivo de la nota: Sintetizar la evolución del paciente, adherencia terapéutica y recurrencia de patologías.
       `;
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`, { 
-          method: "POST", headers: { "Content-Type": "application/json" }, 
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
-      });
-      
-      const data = await response.json();
-      const rawText = data.candidates[0].content.parts[0].text;
+      const askGemini = httpsCallable(functions, 'askGemini');
+      const response = await askGemini({ prompt });
+      const rawText = response?.data?.result || '';
       setResumenIA(limpiarTextoIA(rawText));
 
     } catch (e) { console.error(e); alert("Error al conectar con IA"); }
@@ -199,30 +523,27 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
           5. Si detectas valores biológicamente improbables (ej. peso 22kg y luego 89kg en días), señálalo como "Error de captura probable" o "Dato inconsistente".
         `;
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`, { 
-            method: "POST", headers: { "Content-Type": "application/json" }, 
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
-        });
-        
-        const data = await response.json();
-        const rawText = data.candidates[0].content.parts[0].text;
+        const askGemini = httpsCallable(functions, 'askGemini');
+        const response = await askGemini({ prompt });
+        const rawText = response?.data?.result || '';
         setTendenciasIA(limpiarTextoIA(rawText));
 
     } catch (e) { console.error(e); }
     setAnalizando(false);
   };
 
-  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full w-full flex flex-col overflow-hidden";
+    const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-full w-full flex flex-col overflow-hidden";
+    const unifiedTimeline = buildUnifiedTimeline();
 
   return (
-    <div className="flex-1 flex flex-col h-full w-full overflow-hidden bg-white rounded-3xl shadow-sm border border-slate-200 relative">
+    <div className="flex-1 flex flex-col h-full w-full overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 relative">
       
       {/* TABS SUPERIORES */}
-      <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 shrink-0 gap-8 overflow-x-auto w-full">
-        <button onClick={() => setActiveResumenTab('consulta_previa')} className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+            <div className="flex border-b border-slate-200 bg-white px-6 shrink-0 gap-4 overflow-x-auto w-full">
+                <button onClick={() => setActiveResumenTab('consulta_previa')} className={`py-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-blue-700'}`}>
             <History size={16} /> LÍNEA DE TIEMPO
         </button>
-        <button onClick={() => setActiveResumenTab('graficas')} className={`py-4 px-2 text-xs font-bold border-b-[3px] transition-all flex items-center gap-2 shrink-0 ${activeResumenTab === 'graficas' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                <button onClick={() => setActiveResumenTab('graficas')} className={`py-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeResumenTab === 'graficas' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-blue-700'}`}>
             <TrendingUp size={16} /> GRÁFICAS EVOLUTIVAS
         </button>
       </div>
@@ -232,23 +553,41 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
         
         {/* --- VISTA 1: HISTORIAL --- */}
         {activeResumenTab === 'consulta_previa' && (
-          <div className="flex h-full w-full gap-6 animate-in fade-in">
+          <div className="flex h-full w-full gap-6">
             
             <div className="flex-[3] flex flex-col h-full">
                 {/* --- BLOQUE IA (RESUMEN CLÍNICO) --- */}
                 <div className="mb-4 bg-white border border-slate-200 p-5 rounded-2xl flex flex-col gap-3 shadow-sm">
                     <div className="flex justify-between items-start">
-                        <h5 className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-2">
+                        <h5 className="text-[11px] font-semibold text-slate-500 uppercase flex items-center gap-2">
                             <Brain size={14} className="text-indigo-500"/> Análisis Evolutivo
                         </h5>
-                        <button onClick={generarResumenClinico} disabled={analizando} className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-all flex items-center gap-2">
-                            {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
-                            {analizando ? "Procesando..." : "Generar Nota de Resumen"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button title="Generar resumen clínico con IA" onClick={generarResumenClinico} disabled={analizando} className="bg-blue-50 text-blue-700 border border-blue-100 px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center gap-2">
+                                {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
+                                {analizando ? "Procesando..." : "Generar Nota de Resumen"}
+                            </button>
+                            <button title="Homologar documentos migrados por ID único" onClick={ejecutarHomologacionIA} disabled={homologando} className="bg-white text-slate-700 border border-slate-200 px-4 py-1.5 rounded-lg text-xs font-semibold hover:border-blue-200 hover:text-blue-700 transition-colors flex items-center gap-2">
+                                {homologando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
+                                {homologando ? 'Homologando...' : 'Homologar legacy'}
+                            </button>
+                        </div>
                     </div>
+
+                    {homologationMsg.text && (
+                      <div className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                        homologationMsg.type === 'ok'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : homologationMsg.type === 'error'
+                            ? 'bg-rose-50 border-rose-200 text-rose-700'
+                            : 'bg-amber-50 border-amber-200 text-amber-700'
+                      }`}>
+                        {homologationMsg.text}
+                      </div>
+                    )}
                     
                     {resumenIA ? (
-                        <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-100 animate-in fade-in">
+                        <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">
                             {/* Renderizamos texto limpio */}
                             {resumenIA}
                         </div>
@@ -272,30 +611,49 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                         <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm flex items-center gap-2">
                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total Visitas:</span>
                              <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black shadow-md shadow-blue-200">
-                                {historial.length}
+                                {unifiedTimeline.length}
                              </span>
                         </div>
                     </div>
                     
                     <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 relative">
-                        {historial.length > 0 && <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>}
+                        {unifiedTimeline.length > 0 && <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>}
                         {loading ? (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2"><Clock className="animate-spin" size={24}/><span className="text-xs font-bold">Cargando historia...</span></div>
-                        ) : historial.length === 0 ? (
+                        ) : unifiedTimeline.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200"><p className="text-sm font-medium">No hay registros previos</p></div>
                         ) : (
                             <div className="space-y-6 relative z-10 pl-2 py-2">
-                                {historial.map((item, idx) => (
+                                {unifiedTimeline.map((item, idx) => (
                                     <div key={item.id} className="flex gap-4 group">
                                         <div className={`w-9 h-9 rounded-full border-4 border-white shadow-sm flex items-center justify-center shrink-0 z-10 transition-colors ${idx === 0 ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400'}`}><Calendar size={14} /></div>
-                                        <div onClick={() => setConsultaSeleccionada(item)} className="flex-1 bg-white border border-slate-100 p-4 rounded-xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
+                                                                                <div
+                                                                                    onClick={() => handleTimelineItemClick(item)}
+                                                                                    className={`flex-1 bg-white border border-slate-100 p-4 rounded-xl shadow-sm transition-all ${(item.kind === 'platform' || item.kind === 'legacy') ? 'hover:shadow-md hover:border-blue-300 cursor-pointer' : ''}`}
+                                        >
                                             <div className="flex justify-between items-start mb-2">
-                                                <div><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wide">{item.tipoNota || 'Consulta General'}</span><h4 className="text-sm font-bold text-slate-800 mt-1">{item.fechaFormato} <span className="text-slate-400 font-normal text-xs">• {item.horaFormato}</span></h4></div>
-                                                <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100"><Stethoscope size={12} className="text-slate-400"/><span className="text-[10px] font-bold text-slate-600 uppercase">{item.medicoNombre ? item.medicoNombre.split(' ')[0] : 'Dr.'}</span></div>
+                                                <div>
+                                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wide ${item.origen === 'legacy' ? 'text-amber-700 bg-amber-100' : 'text-blue-600 bg-blue-50'}`}>
+                                                    {item.origen === 'legacy' ? 'Legacy' : (item.tipoNota || 'Consulta General')}
+                                                  </span>
+                                                  <h4 className="text-sm font-bold text-slate-800 mt-1">{item.fechaFormato || 'Sin fecha'} <span className="text-slate-400 font-normal text-xs">{item.horaFormato ? `• ${item.horaFormato}` : ''}</span></h4>
+                                                </div>
+                                                <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100"><Stethoscope size={12} className="text-slate-400"/><span className="text-[10px] font-bold text-slate-600 uppercase">{item.origen === 'legacy' ? 'Migrado' : (item.medicoNombre ? item.medicoNombre.split(' ')[0] : 'Dr.')}</span></div>
                                             </div>
                                             <div className="space-y-2">
-                                                {item.consulta?.diagnostico?.enfermedad_actual && <div className="flex gap-2 items-start"><Activity size={14} className="text-emerald-500 mt-0.5 shrink-0"/><p className="text-xs text-slate-600 font-medium line-clamp-1"><span className="font-bold text-slate-700">Dx:</span> {item.consulta.diagnostico.enfermedad_actual}</p></div>}
-                                                {item.consulta?.padecimiento && <div className="flex gap-2 items-start"><FileText size={14} className="text-slate-400 mt-0.5 shrink-0"/><p className="text-xs text-slate-500 line-clamp-1 italic">"{item.consulta.padecimiento}"</p></div>}
+                                                {item.titulo && <div className="flex gap-2 items-start"><Activity size={14} className="text-emerald-500 mt-0.5 shrink-0"/><p className="text-xs text-slate-600 font-medium line-clamp-1"><span className="font-bold text-slate-700">Dx:</span> {item.titulo}</p></div>}
+                                                {item.descripcion && <div className="flex gap-2 items-start"><FileText size={14} className="text-slate-400 mt-0.5 shrink-0"/><p className="text-xs text-slate-500 line-clamp-1 italic">"{item.descripcion}"</p></div>}
+                                                                                                {item.kind === 'legacy' && item.modulePath && (
+                                                                                                    <button
+                                                                                                        onClick={(event) => {
+                                                                                                            event.stopPropagation();
+                                                                                                            abrirDocumentoLegacy(item.modulePath);
+                                                                                                        }}
+                                                                                                        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-100"
+                                                                                                    >
+                                                                                                        Abrir documento legacy
+                                                                                                    </button>
+                                                                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -327,21 +685,45 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
         {/* --- VISTA 2: GRÁFICAS --- */}
         {activeResumenTab === 'graficas' && (
           <div className="h-full w-full overflow-y-auto custom-scrollbar pr-2">
+
+                        <div className="mb-4 flex flex-wrap items-center gap-2">
+                            {[
+                                { label: 'Legacy detectados', value: homologationMetrics?.totalLegacy || 0 },
+                                { label: 'Homologados', value: homologationMetrics?.homologados || 0 },
+                                { label: 'Completitud', value: `${homologationMetrics?.completitudPromedio || 0}%` },
+                                { label: 'Score calidad', value: homologationMetrics?.scoreCalidad || 0 }
+                            ].map((kpi) => (
+                                <div key={kpi.label} className="bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm inline-flex items-center gap-2">
+                                    <p className="text-[10px] uppercase tracking-wide font-black text-slate-500">{kpi.label}</p>
+                                    <p className="text-sm font-black text-slate-900">{kpi.value}</p>
+                                </div>
+                            ))}
+                            <button onClick={ejecutarHomologacionIA} disabled={homologando} className="bg-white border border-slate-200 px-3 py-1.5 rounded-full text-xs font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 inline-flex items-center gap-1.5">
+                                {homologando ? <Sparkles size={12} className="animate-spin" /> : <Sparkles size={12} />} Homologar legacy
+                            </button>
+                        </div>
+
+                        {homologationInsight && (
+                            <div className="mb-4 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                                <p className="text-[10px] uppercase tracking-wide font-black text-blue-700 mb-1">Insight IA de homologación</p>
+                                <p className="text-xs text-blue-900 font-medium whitespace-pre-line">{homologationInsight}</p>
+                            </div>
+                        )}
             
             {/* --- PANEL DE INSIGHTS IA (HALLAZGOS TÉCNICOS) --- */}
             <div className="mb-6 bg-white border border-slate-200 p-5 rounded-2xl flex flex-col gap-3 shadow-sm">
                 <div className="flex justify-between items-center">
-                    <h5 className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-2">
+                    <h5 className="text-[11px] font-semibold text-slate-500 uppercase flex items-center gap-2">
                         <TrendingUp size={14} className="text-blue-500"/> Análisis de Tendencias
                     </h5>
-                    <button onClick={analizarTendencias} disabled={analizando} className="bg-blue-50 text-blue-700 border border-blue-100 px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-2">
+                    <button title="Detectar hallazgos con IA" onClick={analizarTendencias} disabled={analizando} className="bg-blue-50 text-blue-700 border border-blue-100 px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center gap-2">
                         {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
                         {analizando ? "Analizando datos..." : "Detectar Hallazgos"}
                     </button>
                 </div>
                 
                 {tendenciasIA && (
-                    <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-100 animate-in fade-in">
+                    <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">
                         <div style={{ whiteSpace: 'pre-line' }}>{tendenciasIA}</div>
                     </div>
                 )}
@@ -434,12 +816,14 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
             </div>
           </div>
         )}
+
+
       </div>
 
       {/* --- MODAL DETALLE CONSULTA --- */}
-      {consultaSeleccionada && (
-        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-2xl max-h-[90%] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
+            {consultaSeleccionada && (
+                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-6">
+                        <div className="bg-white w-full max-w-2xl max-h-[90%] rounded-2xl shadow-lg flex flex-col overflow-hidden">
                 <div className="px-8 py-5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
                     <div>
                         <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{consultaSeleccionada.tipoNota}</h2>

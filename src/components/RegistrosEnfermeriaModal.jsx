@@ -1,14 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Save, Loader2, Thermometer, Droplet, 
-  Sparkles, Package, CheckSquare, Building, AlertCircle,
+  Sparkles, Package, CheckSquare, AlertCircle,
   ScanText, Search, CheckCircle2, Activity, MapPin
 } from 'lucide-react';
 import { db, functions } from '../config/firebase'; 
-import { collection, addDoc, serverTimestamp, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
-let cacheMedicamentos = null;
+let cacheMedicamentosIndex = null;
+
+const normalizeText = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 
 const TAREAS_POR_AREA = {
   "Consultorios": ["Estación de lavado (Limpieza y surtido)", "Limpieza de consultorio general", "Piso barrido y trapeado", "Recolección de basura"],
@@ -20,14 +27,43 @@ const TAREAS_POR_AREA = {
   "Rayos X": ["Limpieza y acomodo de mobiliario", "Limpieza de cuarto de control", "Piso barrido y trapeado", "Recolección de basura"]
 };
 
-const IconCross = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-    <path d="M12 2v20M2 12h20"/>
-  </svg>
-);
+const REGISTRO_TABS = [
+  { id: 'farmacia', label: 'Control de Insumos', mobileLabel: 'Insumos', icon: Package, group: 'COFEPRIS e Inventario' },
+  { id: 'temperatura', label: 'Temperaturas', mobileLabel: 'Temp.', icon: Thermometer, group: 'Auditorías Operativas' },
+  { id: 'cloro', label: 'Cloro y PH', mobileLabel: 'Cloro/PH', icon: Droplet, group: 'Auditorías Operativas' },
+  { id: 'limpieza', label: 'Limpieza de Áreas', mobileLabel: 'Limpieza', icon: Sparkles, group: 'Auditorías Operativas' }
+];
+
+const REGISTRO_TABS_COFEPRIS = REGISTRO_TABS.filter((tab) => tab.group === 'COFEPRIS e Inventario');
+const REGISTRO_TABS_AUDITORIAS = REGISTRO_TABS.filter((tab) => tab.group === 'Auditorías Operativas');
+
+const toMedicationSearchRow = (m) => {
+  const nombreComercial = m.nombreComercial || m['*NOMBRE COMERCIAL'] || '';
+  const marca = m.marca || m['*MARCA'] || '';
+  const sustanciaActiva = m.sustanciasActivas || m['*SUSTANCIA(S) ACTIVA(S)'] || '';
+  const presentacion = m.presentacion || m['*PRESENTACIÓN'] || m['*PRESENTACION'] || '';
+  const dosis = m.dosis || m.DOSIS || '';
+  const indicacion = m.indicacion || m.INDICACION || '';
+  const opcion2 = m.opcion2 || m['OPCION 2'] || '';
+  const advertencia = m.advertencia || m['ADVERTENCIA '] || '';
+  const embarazo = m.embarazo || m.EMBARAZO || '';
+
+  return {
+    nombreComercial,
+    marca,
+    sustanciaActiva,
+    presentacion,
+    dosis,
+    indicacion,
+    opcion2,
+    advertencia,
+    embarazo,
+    searchText: normalizeText(`${nombreComercial} ${marca} ${sustanciaActiva} ${presentacion} ${dosis} ${indicacion} ${opcion2} ${advertencia} ${embarazo}`)
+  };
+};
 
 const Toast = ({ msg, type, onClose }) => (
-  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top duration-300 backdrop-blur-md ${
+  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-6 py-3 rounded-xl shadow-sm border ${
     type === 'error' ? 'bg-red-50/95 border-red-200 text-red-700' : 'bg-emerald-50/95 border-emerald-200 text-emerald-700'
   }`}>
     {type === 'error' ? <AlertCircle size={24}/> : <CheckCircle2 size={24}/>}
@@ -36,7 +72,7 @@ const Toast = ({ msg, type, onClose }) => (
   </div>
 );
 
-const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Central' }) => {
+const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Central', standalone = false }) => {
   const [loading, setLoading] = useState(false);
   const [tipoRegistro, setTipoRegistro] = useState('farmacia'); // Por defecto Farmacia para agilizar
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
@@ -65,25 +101,69 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
   const [sugerenciasMeds, setSugerenciasMeds] = useState([]);
   const [mostrarMeds, setMostrarMeds] = useState(false);
+  const [indiceMeds, setIndiceMeds] = useState(-1);
   const [iaLoading, setIaLoading] = useState(false);
   const fileInputRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   const showToast = (msg, type = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ show: true, msg, type });
-    setTimeout(() => setToast({ show: false, msg: '', type: 'success' }), 4000);
+    toastTimerRef.current = setTimeout(() => setToast({ show: false, msg: '', type: 'success' }), 4000);
   };
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const initData = async () => {
-      if (!cacheMedicamentos) {
+      if (!cacheMedicamentosIndex) {
         try {
+          // Primary source: Firestore catalog managed from admin inventory.
+          const snap = await getDocs(collection(db, 'catalogo_medicamentos'));
+          const rows = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((m) => m.activo !== false)
+            .map(toMedicationSearchRow)
+            .filter((m) => m.nombreComercial || m.sustanciaActiva);
+
+          if (rows.length > 0) {
+            cacheMedicamentosIndex = rows;
+            return;
+          }
+
+          // Fallback source: static JSON, if Firestore is empty or unavailable.
           const res = await fetch('/data/medicamentos.json');
-          if (res.ok) cacheMedicamentos = await res.json();
+          if (res.ok) {
+            const raw = await res.json();
+            cacheMedicamentosIndex = raw.map(toMedicationSearchRow);
+          }
         } catch (e) { console.error("Error cargando medicamentos JSON", e); }
       }
     };
     initData();
   }, []);
+
+  useEffect(() => {
+    const queryText = normalizeText(formFarmacia.compuesto);
+
+    if (queryText.length <= 2 || !cacheMedicamentosIndex) {
+      setSugerenciasMeds([]);
+      setMostrarMeds(false);
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      const results = cacheMedicamentosIndex
+        .filter((m) => m.searchText.includes(queryText))
+        .slice(0, 12);
+      setSugerenciasMeds(results);
+      setMostrarMeds(true);
+    }, 140);
+
+    return () => clearTimeout(timer);
+  }, [formFarmacia.compuesto]);
 
   useEffect(() => {
     const hoyStr = new Date().toLocaleDateString('en-CA');
@@ -142,22 +222,17 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
   const handleBuscadorMedicamentos = (e) => {
     const val = e.target.value;
     setFormFarmacia({ ...formFarmacia, compuesto: val });
-    if (val.length > 2 && cacheMedicamentos) {
-        const results = cacheMedicamentos.filter(m => 
-            (m["*NOMBRE COMERCIAL"] && m["*NOMBRE COMERCIAL"].toLowerCase().includes(val.toLowerCase())) || 
-            (m["*SUSTANCIA(S) ACTIVA(S)"] && m["*SUSTANCIA(S) ACTIVA(S)"].toLowerCase().includes(val.toLowerCase()))
-        ).slice(0, 15);
-        setSugerenciasMeds(results);
-        setMostrarMeds(true);
-    } else {
-        setMostrarMeds(false);
+    setIndiceMeds(-1);
+    if (normalizeText(val).length <= 2) {
+      setSugerenciasMeds([]);
+      setMostrarMeds(false);
     }
   };
 
   const seleccionarMedicamento = (med) => {
       let formaInferida = 'Otra';
-      const pres = (med["*PRESENTACIÓN"] || '').toUpperCase();
-      const sust = (med["*SUSTANCIA(S) ACTIVA(S)"] || '').toUpperCase();
+      const pres = (med.presentacion || '').toUpperCase();
+      const sust = (med.sustanciaActiva || '').toUpperCase();
       
       // Motor de inferencia de formas farmacéuticas
       if (pres.includes('TAB') || sust.includes('TAB')) formaInferida = 'Tableta';
@@ -172,13 +247,13 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
       else if (pres.includes('GOTAS') || sust.includes('GOTAS')) formaInferida = 'Gotas';
       else if (pres.includes('POMADA') || sust.includes('POMADA')) formaInferida = 'Pomada';
 
-      const nombreComercial = med["*NOMBRE COMERCIAL"] || '';
-      const sustanciaActiva = med["*SUSTANCIA(S) ACTIVA(S)"] ? `(${med["*SUSTANCIA(S) ACTIVA(S)"]})` : '';
+      const nombreComercial = med.nombreComercial || '';
+      const sustanciaActiva = med.sustanciaActiva ? `(${med.sustanciaActiva})` : '';
 
       setFormFarmacia({
           ...formFarmacia,
           compuesto: `${nombreComercial} ${sustanciaActiva}`.trim(),
-          presentacion: med["*PRESENTACIÓN"] || '',
+            presentacion: med.presentacion || '',
           forma: formaInferida
       });
       setMostrarMeds(false);
@@ -238,62 +313,65 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
     setLoading(false);
   };
 
-  const inputStyle = "w-full p-3.5 bg-white border border-slate-300 shadow-sm rounded-xl outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-sm font-medium text-slate-800 placeholder:text-slate-400";
+  const inputStyle = "w-full p-3 bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm font-medium text-slate-800 placeholder:text-slate-400";
   const labelStyle = "text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2 ml-1 block";
+  const rootClass = standalone
+    ? "min-h-screen bg-slate-100 flex flex-col md:flex-row overflow-hidden text-slate-800"
+    : "fixed inset-0 z-[500] bg-slate-900/35 flex flex-col md:flex-row overflow-hidden text-slate-800";
 
   return (
     <>
-      <style>{`
-        .glass-panel { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 10px 40px -10px rgba(0,0,0,0.08); }
-        .font-jakarta { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-        .cross-float { animation: float 6s ease-in-out infinite; }
-      `}</style>
-
-      <div className="fixed inset-0 z-[500] bg-[#f0f4f8] flex flex-col md:flex-row overflow-hidden animate-in fade-in duration-300 text-slate-800 font-sans">
-        
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, background: 'radial-gradient(ellipse 70% 60% at 15% 0%, rgba(219,234,254,0.6) 0%, transparent 55%), radial-gradient(ellipse 55% 50% at 90% 100%, rgba(204,251,241,0.4) 0%, transparent 50%)' }}/>
-        <div className="cross-float hidden md:block" style={{ position: 'absolute', top: '8%', left: '5%', color: 'rgba(37,99,235,0.1)', pointerEvents: 'none', zIndex: 0 }}><IconCross /></div>
+      <div className={rootClass}>
 
         {toast.show && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast({...toast, show: false})} />}
 
         {/* --- MENU MOBILE HORIZONTAL --- */}
-        <div className="md:hidden flex overflow-x-auto gap-2 p-4 bg-white/80 backdrop-blur-md border-b border-slate-200 shrink-0 z-20 shadow-sm">
-             <MenuMobileBtn id="farmacia" icon={<Package size={18}/>} label="Insumos" active={tipoRegistro} onClick={setTipoRegistro} />
-             <MenuMobileBtn id="temperatura" icon={<Thermometer size={18}/>} label="Temp." active={tipoRegistro} onClick={setTipoRegistro} />
-             <MenuMobileBtn id="cloro" icon={<Droplet size={18}/>} label="Cloro/PH" active={tipoRegistro} onClick={setTipoRegistro} />
-             <MenuMobileBtn id="limpieza" icon={<Sparkles size={18}/>} label="Limpieza" active={tipoRegistro} onClick={setTipoRegistro} />
+        <div className="md:hidden flex overflow-x-auto gap-2 p-4 bg-white border-b border-slate-200 shrink-0 z-20">
+             {REGISTRO_TABS.map((tab) => {
+               const Icon = tab.icon;
+               return (
+                 <MenuMobileBtn key={tab.id} id={tab.id} icon={<Icon size={18}/>} label={tab.mobileLabel} active={tipoRegistro} onClick={setTipoRegistro} />
+               );
+             })}
         </div>
 
         {/* --- SIDEBAR IZQUIERDO DESKTOP --- */}
-        <aside className="hidden md:flex w-80 flex-col z-10 p-6 pr-3">
-            <div className="glass-panel rounded-3xl h-full flex flex-col overflow-hidden">
-                <div className="p-6 border-b border-slate-200/50 bg-white/50">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-blue-500/30 mb-4">
+        <aside className="hidden md:flex w-72 flex-col z-10 p-3 pr-2">
+          <div className="bg-white rounded-xl h-full flex flex-col overflow-hidden border border-slate-200">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/70">
+                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white mb-3">
                         <CheckSquare size={24} />
                     </div>
-                    <h2 className="text-xl font-black font-jakarta leading-tight text-slate-800">Registros y Bitácoras</h2>
+                    <h2 className="text-xl font-black leading-tight text-slate-800">Registros y Bitácoras</h2>
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1.5 flex items-center gap-1">
                         <MapPin size={10}/> Suc. {sucursal}
                     </p>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-white/30">
+                <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-white">
                    <div>
                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-3">COFEPRIS e Inventario</p>
-                       <MenuButton id="farmacia" icon={<Package size={18}/>} label="Control de Insumos" active={tipoRegistro} onClick={setTipoRegistro} />
+                       {REGISTRO_TABS_COFEPRIS.map((tab) => {
+                         const Icon = tab.icon;
+                         return (
+                           <MenuButton key={tab.id} id={tab.id} icon={<Icon size={18}/>} label={tab.label} active={tipoRegistro} onClick={setTipoRegistro} />
+                         );
+                       })}
                    </div>
                    <div>
                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 mb-3">Auditorías Operativas</p>
                        <div className="space-y-2">
-                           <MenuButton id="temperatura" icon={<Thermometer size={18}/>} label="Temperaturas" active={tipoRegistro} onClick={setTipoRegistro} />
-                           <MenuButton id="cloro" icon={<Droplet size={18}/>} label="Cloro y PH" active={tipoRegistro} onClick={setTipoRegistro} />
-                           <MenuButton id="limpieza" icon={<Sparkles size={18}/>} label="Limpieza de Áreas" active={tipoRegistro} onClick={setTipoRegistro} />
+                           {REGISTRO_TABS_AUDITORIAS.map((tab) => {
+                             const Icon = tab.icon;
+                             return (
+                               <MenuButton key={tab.id} id={tab.id} icon={<Icon size={18}/>} label={tab.label} active={tipoRegistro} onClick={setTipoRegistro} />
+                             );
+                           })}
                        </div>
                    </div>
                 </div>
 
-                <div className="p-5 bg-white/70 border-t border-slate-200/50">
+                <div className="p-5 bg-slate-50/70 border-t border-slate-200">
                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><Activity size={12}/> Progreso del Turno</p>
                    <div className="space-y-2 text-xs font-bold text-slate-600">
                        <StatusRow label="Temp. 8:00 AM" done={progresoHoy.temp_8} />
@@ -307,35 +385,35 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
         </aside>
 
         {/* --- PANEL PRINCIPAL DERECHO --- */}
-        <main className="flex-1 p-4 md:p-6 md:pl-3 z-10 flex flex-col h-full overflow-hidden">
-            <header className="glass-panel rounded-2xl md:rounded-3xl h-16 md:h-20 mb-4 md:mb-6 px-4 md:px-8 flex items-center justify-between shrink-0 shadow-sm">
+        <main className="flex-1 p-3 md:p-4 md:pl-2 z-10 flex flex-col h-full overflow-hidden">
+          <header className="bg-white border border-slate-200 rounded-xl h-16 md:h-20 mb-3 md:mb-4 px-4 md:px-8 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="p-2 md:p-2.5 bg-blue-100 text-blue-700 rounded-xl"><Activity size={18} /></div>
                     <span className="font-bold text-slate-800 text-sm md:text-base">Captura de Datos Requerida</span>
                 </div>
-                <button onClick={onClose} className="p-2 md:px-4 md:py-2.5 bg-white border border-slate-300 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all shadow-sm flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
-                    <X size={16}/> <span className="hidden md:inline">Cerrar Ventana</span>
+                 <button onClick={onClose} className="p-2 md:px-4 md:py-2.5 bg-white border border-slate-300 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+              <X size={16}/> <span className="hidden md:inline">{standalone ? 'Volver' : 'Cerrar Ventana'}</span>
                 </button>
             </header>
 
-           <div className="glass-panel flex-1 rounded-2xl md:rounded-3xl overflow-hidden flex flex-col relative bg-white/90">
+               <div className="bg-white border border-slate-200 flex-1 rounded-xl overflow-hidden flex flex-col relative">
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 pb-28 md:pb-28">
                     
                     {/* VISTA TEMPERATURA */}
                     {tipoRegistro === 'temperatura' && (
-                        <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+                        <div className="max-w-2xl mx-auto">
                             <div className="bg-blue-50 p-5 rounded-2xl border border-blue-200 flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 shadow-sm">
                                 <span className="text-sm font-bold text-blue-900">Horario de Medición</span>
                                 <div className="flex flex-wrap gap-2">
                                     {['8:00 a.m.', '4:00 p.m.', '10:00 p.m.'].map(t => (
-                                        <button key={t} onClick={() => setFormTemp({...formTemp, turno: t})} className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${formTemp.turno === t ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'}`}>{t}</button>
+                                <button key={t} onClick={() => setFormTemp({...formTemp, turno: t})} className={`px-5 py-2.5 rounded-lg text-xs font-bold ${formTemp.turno === t ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'}`}>{t}</button>
                                     ))}
                                 </div>
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                                <div><label className={labelStyle}>T° Exterior</label><input type="number" step="0.1" placeholder="Ej. 24.5" className={inputStyle} value={formTemp.t_ext} onChange={e => setFormTemp({...formTemp, t_ext: e.target.value})}/></div>
-                                <div><label className={labelStyle}>Humedad %</label><input type="number" placeholder="Ej. 45" className={inputStyle} value={formTemp.humedad} onChange={e => setFormTemp({...formTemp, humedad: e.target.value})}/></div>
-                                <div><label className={labelStyle}>T° Refrigerador</label><input type="number" step="0.1" placeholder="Ej. 4.2" className={`${inputStyle} ring-2 ring-blue-500/20`} value={formTemp.t_ref} onChange={e => setFormTemp({...formTemp, t_ref: e.target.value})}/></div>
+                                <div><label className={labelStyle}>T° Exterior</label><input type="number" step="0.1" placeholder="Ingresa la temperatura exterior" className={inputStyle} value={formTemp.t_ext} onChange={e => setFormTemp({...formTemp, t_ext: e.target.value})}/></div>
+                                <div><label className={labelStyle}>Humedad %</label><input type="number" placeholder="Ingresa el porcentaje de humedad" className={inputStyle} value={formTemp.humedad} onChange={e => setFormTemp({...formTemp, humedad: e.target.value})}/></div>
+                                <div><label className={labelStyle}>T° Refrigerador</label><input type="number" step="0.1" placeholder="Ingresa la temperatura del refrigerador" className={`${inputStyle} ring-2 ring-blue-500/20`} value={formTemp.t_ref} onChange={e => setFormTemp({...formTemp, t_ref: e.target.value})}/></div>
                             </div>
                             <div className="p-5 bg-amber-50 rounded-2xl border border-amber-200 flex items-start gap-4">
                                 <AlertCircle size={20} className="text-amber-500 shrink-0 mt-0.5"/>
@@ -346,7 +424,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
                     {/* VISTA CLORO */}
                     {tipoRegistro === 'cloro' && (
-                        <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 space-y-6 md:space-y-10">
+                        <div className="max-w-2xl mx-auto space-y-6 md:space-y-10">
                             <div className="bg-white p-6 md:p-8 rounded-3xl border border-slate-200 shadow-sm">
                                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex items-center gap-2"><Droplet size={18} className="text-cyan-600"/> Lavado de Manos 1</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
@@ -366,7 +444,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
                     {/* VISTA LIMPIEZA */}
                     {tipoRegistro === 'limpieza' && (
-                        <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 space-y-6 md:space-y-8">
+                        <div className="max-w-2xl mx-auto space-y-6 md:space-y-8">
                             <div>
                                 <label className={labelStyle}>Área Auditada</label>
                                 <select className={`${inputStyle} appearance-none cursor-pointer`} value={formLimpieza.area} onChange={e => setFormLimpieza({ area: e.target.value, tareas: { col1: false, col2: false, col3: false, col4: false } })}>
@@ -392,26 +470,26 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
                     {/* VISTA FARMACIA (RECONSTRUIDA PARA MÁXIMA COMPATIBILIDAD) */}
                     {tipoRegistro === 'farmacia' && (
-                        <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 space-y-6 md:space-y-8 pb-4">
+                        <div className="max-w-5xl mx-auto space-y-6 md:space-y-8 pb-4">
                             
                             <div className="flex overflow-x-auto gap-2 p-1.5 bg-white rounded-2xl border border-slate-200 shadow-sm w-full md:w-fit custom-scrollbar">
                                 {['Recepción', 'Entrada (Traspaso)', 'Salida (Traspaso)'].map(mov => (
-                                    <button key={mov} onClick={() => setFormFarmacia({...formFarmacia, tipo_movimiento: mov})} className={`whitespace-nowrap px-6 py-2.5 rounded-xl text-xs font-bold transition-all ${formFarmacia.tipo_movimiento === mov ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>{mov}</button>
+                                    <button key={mov} onClick={() => setFormFarmacia({...formFarmacia, tipo_movimiento: mov})} className={`whitespace-nowrap px-6 py-2.5 rounded-lg text-xs font-bold ${formFarmacia.tipo_movimiento === mov ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>{mov}</button>
                                 ))}
                             </div>
 
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                 {/* Bloque de Extracción IA */}
-                                <div className="lg:col-span-3 bg-indigo-50 border border-indigo-200 p-5 md:p-6 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+                                <div className="lg:col-span-3 bg-indigo-50 border border-indigo-200 p-5 md:p-6 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
                                     <div className="flex items-center gap-4">
-                                        <div className="bg-white p-3 rounded-xl shadow-sm text-indigo-600 border border-indigo-100 shrink-0"><Sparkles size={24}/></div>
+                                    <div className="bg-white p-3 rounded-lg text-indigo-600 border border-indigo-100 shrink-0"><Sparkles size={24}/></div>
                                         <div>
-                                            <p className="text-sm md:text-base font-bold text-indigo-900 font-jakarta">Lectura Automática IA</p>
+                                            <p className="text-sm md:text-base font-bold text-indigo-900">Lectura Automática IA</p>
                                             <p className="text-xs text-indigo-700 mt-1">Sube una foto de la factura para rellenar los datos automáticamente.</p>
                                         </div>
                                     </div>
                                     <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={procesarFacturaIA}/>
-                                    <button onClick={() => fileInputRef.current.click()} disabled={iaLoading} className="w-full md:w-auto bg-indigo-600 text-white px-6 py-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 active:scale-95 shrink-0">
+                                    <button onClick={() => fileInputRef.current.click()} disabled={iaLoading} className="w-full md:w-auto bg-indigo-600 text-white px-6 py-3 rounded-lg text-xs font-bold hover:bg-indigo-700 flex items-center justify-center gap-2 shrink-0">
                                         {iaLoading ? <Loader2 size={18} className="animate-spin"/> : <ScanText size={18}/>}
                                         {iaLoading ? 'Analizando...' : 'Escanear Documento'}
                                     </button>
@@ -421,15 +499,23 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
                                 <div className="lg:col-span-3 relative z-20">
                                     <label className={labelStyle}>* Búsqueda Inteligente (Compuesto / Medicamento)</label>
                                     <div className="relative">
-                                        <input className={`${inputStyle} pl-12 text-base font-bold`} placeholder="Buscar en catálogo general (Ej. Paracetamol)..." value={formFarmacia.compuesto} onChange={handleBuscadorMedicamentos} onBlur={() => setTimeout(() => setMostrarMeds(false), 200)} />
+                                        <input className={`${inputStyle} pl-12 text-base font-bold`} placeholder="Ingresa el nombre del medicamento o compuesto" value={formFarmacia.compuesto} onChange={handleBuscadorMedicamentos}
+                                        onKeyDown={(e)=>{
+                                            if(!mostrarMeds || sugerenciasMeds.length===0) return;
+                                            if(e.key==='ArrowDown'){e.preventDefault(); setIndiceMeds(p=> p<sugerenciasMeds.length-1 ? p+1 : 0);}
+                                            else if(e.key==='ArrowUp'){e.preventDefault(); setIndiceMeds(p=> p>0 ? p-1 : sugerenciasMeds.length-1);}
+                                            else if(e.key==='Enter' && indiceMeds>=0){e.preventDefault(); seleccionarMedicamento(sugerenciasMeds[indiceMeds]); setIndiceMeds(-1);}
+                                            else if(e.key==='Escape'){setMostrarMeds(false); setIndiceMeds(-1);}
+                                        }}
+                                        onBlur={() => setTimeout(() => {setMostrarMeds(false);setIndiceMeds(-1)}, 200)} />
                                         <Search className="absolute left-4 top-4 text-slate-400" size={20}/>
                                     </div>
                                     {mostrarMeds && (
-                                        <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-2xl shadow-2xl mt-2 max-h-56 overflow-y-auto z-50 p-2">
+                                        <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-xl mt-2 max-h-56 overflow-y-auto z-50 p-2">
                                             {sugerenciasMeds.map((m, i) => (
-                                                <div key={i} onMouseDown={() => seleccionarMedicamento(m)} className="p-3 hover:bg-slate-50 text-sm cursor-pointer border-b border-slate-100 last:border-0 rounded-xl transition-colors">
-                                                    <p className="font-bold text-slate-800">{m["*NOMBRE COMERCIAL"]}</p>
-                                                    <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">{m["*SUSTANCIA(S) ACTIVA(S)"]} • {m["*PRESENTACIÓN"]}</p>
+                                                <div key={i} ref={el=>{if(i===indiceMeds && el) el.scrollIntoView({block:'nearest'})}} onMouseDown={() => {seleccionarMedicamento(m); setIndiceMeds(-1);}} className={`p-3 text-sm cursor-pointer border-b border-slate-100 last:border-0 rounded-lg ${i===indiceMeds ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                                                    <p className="font-bold text-slate-800">{m.nombreComercial}</p>
+                                                    <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">{m.sustanciaActiva} • {m.presentacion}</p>
                                                 </div>
                                             ))}
                                         </div>
@@ -438,25 +524,25 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
                                 {/* Bloque Identificadores y Tiempos */}
                                 <div><label className={labelStyle}>Número de Factura</label><input className={inputStyle} value={formFarmacia.factura} onChange={e => setFormFarmacia({...formFarmacia, factura: e.target.value})}/></div>
-                                <div><label className={labelStyle}>* Lote de Fabricación</label><input className={inputStyle} placeholder="Requerido" value={formFarmacia.lote} onChange={e => setFormFarmacia({...formFarmacia, lote: e.target.value})}/></div>
+                                <div><label className={labelStyle}>* Lote de Fabricación</label><input className={inputStyle} placeholder="Ingresa el lote de fabricación" value={formFarmacia.lote} onChange={e => setFormFarmacia({...formFarmacia, lote: e.target.value})}/></div>
                                 <div><label className={labelStyle}>* Fecha de Caducidad</label><input type="date" className={inputStyle} value={formFarmacia.caducidad} onChange={e => setFormFarmacia({...formFarmacia, caducidad: e.target.value})}/></div>
 
                                 {/* Bloque Atributos del Medicamento */}
-                                <div><label className={labelStyle}>Presentación</label><input className={inputStyle} placeholder="Ej. Caja con 10 Tabletas" value={formFarmacia.presentacion} onChange={e => setFormFarmacia({...formFarmacia, presentacion: e.target.value})}/></div>
-                                <div><label className={labelStyle}>Forma Farmacéutica</label><input className={inputStyle} placeholder="Ej. Tableta, Suspensión..." value={formFarmacia.forma} onChange={e => setFormFarmacia({...formFarmacia, forma: e.target.value})}/></div>
-                                <div><label className={labelStyle}>* Cantidad (Cajas/Pzas)</label><input type="number" className={`${inputStyle} font-black text-lg text-blue-700 bg-blue-50 focus:bg-white`} placeholder="0" value={formFarmacia.cantidad} onChange={e => setFormFarmacia({...formFarmacia, cantidad: e.target.value})}/></div>
+                                <div><label className={labelStyle}>Presentación</label><input className={inputStyle} placeholder="Ingresa la presentación del medicamento" value={formFarmacia.presentacion} onChange={e => setFormFarmacia({...formFarmacia, presentacion: e.target.value})}/></div>
+                                <div><label className={labelStyle}>Forma Farmacéutica</label><input className={inputStyle} placeholder="Ingresa la forma farmacéutica" value={formFarmacia.forma} onChange={e => setFormFarmacia({...formFarmacia, forma: e.target.value})}/></div>
+                                <div><label className={labelStyle}>* Cantidad (Cajas/Pzas)</label><input type="number" className={`${inputStyle} font-black text-lg text-blue-700 bg-blue-50 focus:bg-white`} placeholder="Ingresa la cantidad" value={formFarmacia.cantidad} onChange={e => setFormFarmacia({...formFarmacia, cantidad: e.target.value})}/></div>
                             </div>
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
                                 {formFarmacia.tipo_movimiento === 'Recepción' && (
-                                    <div className="bg-slate-50 p-5 md:p-6 rounded-3xl border border-slate-200 h-full">
+                                    <div className="bg-slate-50 p-5 md:p-6 rounded-xl border border-slate-200 h-full">
                                         <span className="text-xs font-black text-slate-600 uppercase tracking-widest block mb-4 border-b border-slate-200 pb-2">Criterio de Aceptación (Física)</span>
                                         <div className="flex flex-col gap-4">
-                                            <label className="flex items-center gap-3 cursor-pointer p-3 bg-white border border-slate-100 hover:border-indigo-200 rounded-xl transition-colors shadow-sm">
+                                            <label className="flex items-center gap-3 cursor-pointer p-3 bg-white border border-slate-100 hover:border-indigo-200 rounded-lg">
                                                 <input type="checkbox" className="w-5 h-5 accent-indigo-600 rounded border-slate-400" checked={formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({...formFarmacia, criterio_empaque: e.target.checked})} />
                                                 <span className="text-sm font-bold text-slate-800">Empaque primario sin daños físicos</span>
                                             </label>
-                                            <label className="flex items-center gap-3 cursor-pointer p-3 bg-white border border-slate-100 hover:border-indigo-200 rounded-xl transition-colors shadow-sm">
+                                            <label className="flex items-center gap-3 cursor-pointer p-3 bg-white border border-slate-100 hover:border-indigo-200 rounded-lg">
                                                 <input type="checkbox" className="w-5 h-5 accent-indigo-600 rounded border-slate-400" checked={formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({...formFarmacia, criterio_etiqueta: e.target.checked})} />
                                                 <span className="text-sm font-bold text-slate-800">Etiqueta íntegra y legible</span>
                                             </label>
@@ -465,7 +551,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
                                 )}
                                 <div className={formFarmacia.tipo_movimiento !== 'Recepción' ? 'lg:col-span-2' : ''}>
                                     <label className={labelStyle}>Notas / Observaciones de Mermas</label>
-                                    <textarea className={`${inputStyle} h-full min-h-[140px] resize-none leading-relaxed`} placeholder="Detalle daños en empaque, humedad, inconsistencias con la factura..." value={formFarmacia.observaciones} onChange={e => setFormFarmacia({...formFarmacia, observaciones: e.target.value})}/>
+                                    <textarea className={`${inputStyle} h-full min-h-[140px] resize-none leading-relaxed`} placeholder="Ingresa observaciones de empaque, humedad o inconsistencias" value={formFarmacia.observaciones} onChange={e => setFormFarmacia({...formFarmacia, observaciones: e.target.value})}/>
                                 </div>
                             </div>
                         </div>
@@ -474,7 +560,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 
                {/* --- BOTÓN FLOTANTE (Optimización de Espacio) --- */}
                 <div className="absolute bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-6 w-[90%] md:w-auto z-50">
-                    <button onClick={handleGuardar} disabled={loading} className="w-full md:w-auto bg-slate-900/95 backdrop-blur-md border border-slate-700 hover:bg-black text-white px-8 md:px-10 py-3.5 md:py-4 rounded-2xl md:rounded-full font-black text-sm font-jakarta shadow-2xl shadow-slate-900/40 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 tracking-widest uppercase">
+                  <button onClick={handleGuardar} disabled={loading} className="w-full md:w-auto bg-slate-900 border border-slate-800 hover:bg-black text-white px-8 md:px-10 py-3.5 md:py-4 rounded-xl md:rounded-full font-black text-sm flex items-center justify-center gap-2 disabled:opacity-50 tracking-widest uppercase">
                         {loading ? <Loader2 size={18} className="animate-spin"/> : <Save size={18}/>}
                         {loading ? 'Sincronizando...' : 'Guardar y Nuevo'}
                     </button>
@@ -487,19 +573,19 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = 'Centra
 };
 
 const MenuButton = ({ id, label, icon, active, onClick }) => (
-    <button onClick={() => onClick(id)} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-xs font-bold transition-all ${active === id ? 'bg-white text-blue-700 shadow-md border border-slate-200' : 'text-slate-600 hover:bg-white/60 hover:text-slate-800'}`}>
+  <button onClick={() => onClick(id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-xs font-bold ${active === id ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800 border border-transparent'}`}>
         <span className={active === id ? 'text-blue-600' : 'text-slate-400'}>{icon}</span> {label}
     </button>
 );
 
 const MenuMobileBtn = ({ id, label, icon, active, onClick }) => (
-    <button onClick={() => onClick(id)} className={`flex-shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${active === id ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+  <button onClick={() => onClick(id)} className={`flex-shrink-0 px-4 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 ${active === id ? 'bg-blue-600 text-white' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
         {icon} {label}
     </button>
 );
 
 const StatusRow = ({ label, done }) => (
-  <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-white/70 border border-slate-200 shadow-sm mb-2">
+  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-white border border-slate-200 mb-2">
       <span className={`text-xs font-bold ${done ? "text-emerald-700" : "text-slate-600"}`}>{label}</span>
       {done ? <CheckCircle2 size={16} className="text-emerald-500"/> : <div className="w-4 h-4 rounded-full border-2 border-slate-300"></div>}
   </div>

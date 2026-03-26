@@ -1,9 +1,11 @@
 // src/shared/Pacientes.jsx
 import React, { useState, useEffect } from 'react';
 import { User, Search, Plus, Phone, MapPin, Edit, Trash2, FileText, ArrowLeft } from 'lucide-react';
+import AvatarPaciente from '../components/AvatarPaciente';
 import { db } from '../config/firebase';
-import { collection, getDocs, query, orderBy, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import { goBackOr } from '../utils/navigation';
 
 // Reutilizamos el mismo componente visual
 import ModalPaciente from '../components/ModalPaciente';
@@ -24,9 +26,14 @@ const Pacientes = () => {
   const fetchPacientes = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, "pacientes"), orderBy("nombre"));
-      const snapshot = await getDocs(q);
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const snapshot = await getDocs(collection(db, "pacientes"));
+      const docs = snapshot.docs
+        .map((docRef) => ({ id: docRef.id, ...docRef.data() }))
+        .sort((a, b) => {
+          const na = String(a.nombreCompleto || a.nombre || '').trim();
+          const nb = String(b.nombreCompleto || b.nombre || '').trim();
+          return na.localeCompare(nb, 'es', { sensitivity: 'base' });
+        });
       setPacientes(docs);
     } catch (error) { console.error("Error cargando pacientes:", error); }
     setLoading(false);
@@ -67,7 +74,7 @@ const Pacientes = () => {
          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             
             <div className="flex items-center gap-3 w-full md:w-auto">
-               <button onClick={() => navigate('/agenda')} className="p-2 hover:bg-slate-200 rounded-full transition-colors" title="Volver a Agenda">
+               <button onClick={() => goBackOr(navigate, '/agenda')} className="p-2 hover:bg-slate-200 rounded-full transition-colors" title="Volver">
                  <ArrowLeft size={20} className="text-slate-500"/>
                </button>
                <div className="bg-teal-600 text-white p-2.5 rounded-xl shadow-lg shadow-teal-600/20">
@@ -109,9 +116,7 @@ const Pacientes = () => {
                         {/* Cabecera Tarjeta */}
                         <div className="flex items-start justify-between mb-4">
                             <div className="flex gap-3 items-center">
-                                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center text-white font-bold text-lg shadow-md">
-                                    {(paciente.nombre || "A").charAt(0).toUpperCase()}
-                                </div>
+                                <AvatarPaciente sexo={paciente.sexo} fechaNacimiento={paciente.fechaNacimiento} size="md" />
                                 <div>
                                     <h3 className="font-bold text-slate-800 leading-tight group-hover:text-teal-600 transition-colors">
                                         {paciente.nombre} {paciente.apellidoPaterno}

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { resolveUserHomePath } from '../../services/permissionService';
 
 /* ─────────────────────────────────────────────
    SVG Icons — médicos, sin lucide
@@ -262,7 +263,11 @@ const getRoleConfig = (rol) => {
     }
   };
 
-  const config = getRoleConfig(user.rol);
+  const configByRole = getRoleConfig(user.rol);
+  const config = {
+    ...configByRole,
+    path: resolveUserHomePath(user, configByRole.path)
+  };
   const initial = (user.nombre || user.email || 'U').charAt(0).toUpperCase();
   const firstName = user.nombre?.split(' ')[0] || 'Usuario';
 

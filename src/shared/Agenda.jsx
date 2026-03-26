@@ -1,18 +1,68 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Calendar as CalIcon, Clock, Users, Plus, ChevronLeft, ChevronRight, 
   Search, MapPin, CheckCircle, XCircle, Video, MessageCircle, 
   AlertTriangle, DollarSign, Activity, CalendarDays, LayoutGrid,
-  ShieldCheck, AlertCircle, Zap, FileText, Check, Bell, Info,
-  Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, HeartPulse
+  ShieldCheck, AlertCircle, Zap, FileText, Check, Info,
+  Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, RefreshCw, Newspaper, ExternalLink, Send, BellRing
 } from 'lucide-react';
-import { db } from '../config/firebase'; 
-import { collection, addDoc, query, where, orderBy, updateDoc, doc, onSnapshot, getDocs } from 'firebase/firestore';
+import { db, functions } from '../config/firebase'; 
+import { collection, addDoc, query, where, orderBy, updateDoc, doc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { hasPermission } from '../services/permissionService';
 import ModalPaciente from '../components/ModalPaciente';
 import sonidoCampana from '../assets/notificaciondeconsulta.wav';
-import ChatPanel from '../components/ChatPanel';
+
+const NOTICIAS_FALLBACK = [
+  {
+    titulo: 'Actualización en control de hipertensión 2026',
+    resumen: 'Se refuerza priorizar medición domiciliaria y ajuste temprano en pacientes con riesgo cardiovascular.',
+    categoria: 'Cardiología',
+    impacto: 'alto',
+    fuente: 'Organización Mundial de la Salud',
+    url: 'https://www.who.int'
+  },
+  {
+    titulo: 'Aumento de infecciones respiratorias estacionales',
+    resumen: 'Se recomienda vigilancia de signos de alarma y reforzar vacunación en grupos vulnerables.',
+    categoria: 'Epidemiología',
+    impacto: 'alto',
+    fuente: 'CDC',
+    url: 'https://www.cdc.gov'
+  },
+  {
+    titulo: 'Optimización del uso de antibióticos en consulta externa',
+    resumen: 'Nuevas guías promueven prescripción más precisa para reducir resistencia antimicrobiana.',
+    categoria: 'Infectología',
+    impacto: 'medio',
+    fuente: 'The Lancet',
+    url: 'https://www.thelancet.com'
+  },
+  {
+    titulo: 'Tamizaje metabólico en primer nivel',
+    resumen: 'Mayor énfasis en detección oportuna de prediabetes con seguimiento estructurado.',
+    categoria: 'Medicina interna',
+    impacto: 'medio',
+    fuente: 'Secretaría de Salud México',
+    url: 'https://www.gob.mx/salud'
+  }
+];
+
+const DOMINIOS_FUENTES_CONFIABLES = [
+  'who.int',
+  'cdc.gov',
+  'nih.gov',
+  'gob.mx',
+  'nejm.org',
+  'thelancet.com',
+  'jamanetwork.com',
+  'bmj.com',
+  'scielo.org',
+  'cochranelibrary.com',
+  'medscape.com'
+];
 
 /* ─── ESTILOS GLOBALES ─────────────────────────────────────────── */
 /* ─── ESTILOS GLOBALES (VERSIÓN ALTO RENDIMIENTO) ──────────────── */
@@ -91,76 +141,87 @@ const STYLES = `
   .app-header {
     position: relative;
     z-index: 30;
-    background: #ffffff; /* OPTIMIZACIÓN: Color sólido, sin blur */
+    background: #ffffff;
     border-bottom: 1px solid var(--slate-200);
     box-shadow: var(--shadow-sm);
-    padding: 0 32px;
-    height: 72px;
+    padding: 0 24px;
+    height: 60px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
+    gap: 12px;
   }
 
-  .header-left { display: flex; align-items: center; gap: 16px; }
+  .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
   .user-avatar {
-    width: 44px; height: 44px;
-    border-radius: 12px;
+    width: 36px; height: 36px;
+    border-radius: 10px;
     background: linear-gradient(135deg, var(--blue-500) 0%, var(--blue-700) 100%);
     display: flex; align-items: center; justify-content: center;
-    color: white; font-weight: 700; font-size: 18px;
+    color: white; font-weight: 700; font-size: 15px;
     font-family: 'Sora', sans-serif;
-    box-shadow: 0 4px 12px rgba(0,119,182,.25);
+    box-shadow: 0 2px 8px rgba(0,119,182,.2);
     flex-shrink: 0;
-    border: 2px solid rgba(255,255,255,.9);
   }
 
+  .user-info { min-width: 0; }
   .user-name {
     font-family: 'Sora', sans-serif;
-    font-size: 17px; font-weight: 700;
+    font-size: 14px; font-weight: 700;
     color: var(--slate-900); line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
-  .user-meta { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .user-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 
   .badge-branch {
-    display: inline-flex; align-items: center; gap: 4px;
+    display: inline-flex; align-items: center; gap: 3px;
     background: var(--slate-50); border: 1px solid var(--slate-200);
-    border-radius: 6px; padding: 2px 8px;
-    font-size: 10px; font-weight: 700; color: var(--slate-500);
+    border-radius: 5px; padding: 1px 6px;
+    font-size: 9px; font-weight: 700; color: var(--slate-500);
     text-transform: uppercase; letter-spacing: .06em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 180px;
   }
 
   .status-online {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 11px; font-weight: 600; color: var(--emerald-500);
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 600; color: var(--emerald-500);
+    white-space: nowrap;
   }
 
   .dot-pulse {
-    width: 7px; height: 7px; border-radius: 50%;
+    width: 6px; height: 6px; border-radius: 50%;
     background: var(--emerald-500);
     box-shadow: 0 0 0 0 rgba(5,150,105,.5);
     animation: pulse-ring 1.8s ease infinite;
   }
   @keyframes pulse-ring {
     0%   { box-shadow: 0 0 0 0 rgba(5,150,105,.5); }
-    70%  { box-shadow: 0 0 0 6px rgba(5,150,105,0); }
+    70%  { box-shadow: 0 0 0 5px rgba(5,150,105,0); }
     100% { box-shadow: 0 0 0 0 rgba(5,150,105,0); }
   }
 
-  .header-right { display: flex; align-items: center; gap: 10px; }
+  /* ── HEADER CENTER ── */
+  .header-center {
+    display: flex; align-items: center; gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
   /* ── VIEW SWITCHER ── */
   .view-switcher {
     display: flex; background: var(--slate-100);
     border: 1px solid var(--slate-200); border-radius: 8px;
-    padding: 3px; gap: 2px;
+    padding: 2px; gap: 2px;
   }
   .view-btn {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 14px; border-radius: 6px;
-    font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
     border: none; cursor: pointer;
     transition: all .18s ease;
     color: var(--slate-500); background: transparent;
@@ -171,43 +232,49 @@ const STYLES = `
   }
   .view-btn:not(.active):hover { color: var(--slate-700); }
 
-  .divider-v { width: 1px; height: 32px; background: var(--slate-200); }
+  .divider-v { width: 1px; height: 28px; background: var(--slate-200); }
 
   /* ── ICON BUTTON ── */
   .icon-btn {
     position: relative;
-    width: 40px; height: 40px; border-radius: 10px;
+    width: 36px; height: 36px; border-radius: 9px;
     border: 1px solid var(--slate-200); background: white;
     display: flex; align-items: center; justify-content: center;
     color: var(--slate-500); cursor: pointer;
     transition: all .18s ease;
     box-shadow: var(--shadow-sm);
+    flex-shrink: 0;
   }
   .icon-btn:hover { color: var(--blue-600); border-color: var(--blue-200); background: var(--blue-50); }
+  .icon-btn.icon-btn-green:hover { color: #16a34a; border-color: #bbf7d0; background: #f0fdf4; }
+  .icon-btn.icon-btn-purple:hover { color: #7c3aed; border-color: #e9d5ff; background: #faf5ff; }
+  .icon-btn.icon-btn-amber:hover { color: #d97706; border-color: #fde68a; background: #fffbeb; }
 
   .notif-badge {
-    position: absolute; top: -5px; right: -5px;
-    width: 18px; height: 18px; border-radius: 50%;
+    position: absolute; top: -4px; right: -4px;
+    min-width: 16px; height: 16px; border-radius: 50%;
     background: var(--rose-500); color: white;
-    font-size: 9px; font-weight: 700;
+    font-size: 8px; font-weight: 800;
     display: flex; align-items: center; justify-content: center;
     border: 2px solid white;
+    padding: 0 3px;
   }
 
   /* ── TEXT BUTTONS ── */
   .text-btn {
-    display: flex; align-items: center; gap: 7px;
-    padding: 8px 14px; border-radius: 8px;
-    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 8px;
+    font-size: 12px; font-weight: 600;
     border: none; cursor: pointer; background: transparent;
     color: var(--slate-600); transition: all .18s ease;
+    white-space: nowrap;
   }
   .text-btn:hover { color: var(--blue-600); background: var(--blue-50); }
 
   .chat-btn {
-    display: flex; align-items: center; gap: 7px;
-    padding: 8px 14px; border-radius: 8px;
-    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 8px;
+    font-size: 12px; font-weight: 600;
     border: 1px solid #e9d5ff; background: #faf5ff;
     color: #7c3aed; cursor: pointer; transition: all .18s ease;
   }
@@ -215,16 +282,48 @@ const STYLES = `
 
   /* ── PRIMARY BUTTON ── */
   .btn-primary {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 20px; border-radius: 10px;
-    font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: 9px;
+    font-size: 12px; font-weight: 700;
     font-family: 'Sora', sans-serif;
     background: var(--blue-600); color: white; border: none;
     cursor: pointer; box-shadow: var(--shadow-blue);
     transition: all .18s ease;
+    white-space: nowrap;
   }
   .btn-primary:hover { background: var(--blue-700); transform: translateY(-1px); }
   .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+
+  .btn-notify {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: 9px;
+    font-size: 12px; font-weight: 700;
+    font-family: 'Sora', sans-serif;
+    background: linear-gradient(135deg, #22c55e, #16a34a); color: white; border: none;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(22,163,74,.25);
+    transition: all .18s ease;
+    white-space: nowrap;
+  }
+  .btn-notify:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(22,163,74,.3); }
+  .btn-notify:active { transform: translateY(0); }
+  .btn-notify:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+
+  /* ── HEADER CONSULTORIO SELECT ── */
+  .header-select {
+    height: 34px; padding: 0 28px 0 10px;
+    font-size: 11px; font-weight: 600;
+    border: 1px solid var(--slate-200); border-radius: 8px;
+    background: white; color: var(--slate-700);
+    cursor: pointer; min-width: 160px;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: all .18s ease;
+  }
+  .header-select:hover { border-color: var(--blue-300); }
+  .header-select:focus { outline: none; border-color: var(--blue-400); box-shadow: 0 0 0 3px rgba(59,130,246,.1); }
 
   /* ── MAIN CONTENT ── */
 .main-content {
@@ -248,12 +347,14 @@ const STYLES = `
     width: 260px; flex-shrink: 0;
     display: flex; flex-direction: column;
     gap: 16px;
+    min-height: 0;
   }
 
   /* ── CALENDAR WIDGET ── */
   .cal-widget {
     padding: 24px; text-align: center;
     position: relative; overflow: hidden;
+    flex-shrink: 0;
   }
 
   .cal-nav {
@@ -289,6 +390,8 @@ const STYLES = `
     padding: 20px;
     flex: 1;
     display: flex; flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
   }
   .widget-label {
     font-size: 10px; font-weight: 700;
@@ -330,6 +433,68 @@ const STYLES = `
     font-family: 'Sora', sans-serif;
     font-size: 15px; font-weight: 700; color: var(--slate-800);
   }
+  .finance-stack {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .finance-kpi {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--slate-200);
+    background: white;
+    min-width: 0;
+  }
+  .finance-kpi-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--slate-500);
+    min-width: 0;
+    flex: 1;
+  }
+  .finance-kpi-value {
+    font-family: 'Sora', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--slate-900);
+    flex-shrink: 0;
+  }
+  .finance-insights {
+    margin-top: 10px;
+    border-radius: 10px;
+    border: 1px dashed var(--slate-300);
+    background: var(--slate-50);
+    padding: 10px 12px;
+  }
+  .finance-insights-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--slate-500);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .finance-insight-item {
+    font-size: 11px;
+    color: var(--slate-700);
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 4px;
+  }
+  .finance-insight-item:last-child { margin-bottom: 0; }
 
   /* ── CENTER: TIMELINE ── */
   .timeline-panel {
@@ -354,12 +519,71 @@ const STYLES = `
     color: var(--blue-700); font-size: 12px; font-weight: 700;
     padding: 4px 12px; border-radius: 6px;
   }
+  .timeline-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .timeline-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    border: 1px solid;
+  }
+  .timeline-action-btn {
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+  }
+  .timeline-chip-btn {
+    background: transparent;
+    font-family: inherit;
+  }
+  .timeline-action-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(0.98);
+  }
+  .timeline-action-btn.active {
+    box-shadow: 0 0 0 2px rgba(15,23,42,.08);
+  }
+  .timeline-action-btn:focus-visible {
+    outline: 2px solid var(--blue-300);
+    outline-offset: 2px;
+  }
+  .timeline-chip.now {
+    background: var(--blue-50);
+    color: var(--blue-700);
+    border-color: var(--blue-200);
+  }
+  .timeline-chip.current {
+    background: #ecfeff;
+    color: #0f766e;
+    border-color: #99f6e4;
+  }
+  .timeline-chip.warn {
+    background: #fffbeb;
+    color: #b45309;
+    border-color: #fcd34d;
+  }
+  .timeline-chip.next {
+    background: white;
+    color: var(--slate-600);
+    border-color: var(--slate-200);
+  }
 
   .timeline-body {
     flex: 1; overflow-y: auto;
     padding: 24px 28px 80px;
     background: white;
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    scroll-behavior: smooth;
   }
 
   /* ── EMPTY STATE ── */
@@ -388,6 +612,18 @@ const STYLES = `
     position: relative;
     transition: opacity .3s ease;
   }
+  .cita-row.current-slot::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 22px;
+    width: 4px;
+    background: var(--blue-500);
+    border-radius: 0 6px 6px 0;
+    animation: pulse-ring 1.8s ease infinite;
+  }
+  .cita-row.past-slot .cita-time-main { color: var(--slate-400); }
   .cita-row.completed { opacity: .5; }
   .cita-row.completed:hover { opacity: 1; }
 
@@ -415,6 +651,29 @@ const STYLES = `
   .cita-time-ampm {
     font-size: 9px; font-weight: 700; color: var(--slate-400);
     text-transform: uppercase; letter-spacing: .08em;
+  }
+  .cita-time-range {
+    display: block;
+    margin-top: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--slate-400);
+  }
+  .slot-empty {
+    min-height: 56px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+    border: 1px dashed var(--slate-200);
+    background: var(--slate-50);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--slate-400);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
   }
 
   .cita-node-col {
@@ -457,6 +716,14 @@ const STYLES = `
   }
   .cita-card.waiting:hover { border-color: var(--blue-300); }
   .cita-card.done { background: var(--slate-50); border-style: solid; border-color: var(--slate-200); }
+  .cita-card.overdue {
+    background: #fff7ed;
+    border-color: #fdba74;
+  }
+  .cita-card.overdue:hover {
+    border-color: #fb923c;
+    box-shadow: 0 8px 18px rgba(251, 146, 60, 0.18);
+  }
 
   /* ── SIGUIENTE PACIENTE ── */
   .cita-card.siguiente {
@@ -493,6 +760,7 @@ const STYLES = `
   .tag-motivo { color: var(--slate-600); background: var(--slate-100); border: 1px solid var(--slate-200); }
   .tag-waiting { background: white; color: var(--blue-700); border: 1px solid var(--blue-200); }
   .tag-pending { background: white; color: var(--amber-500); border: 1px solid #fde68a; }
+  .tag-overdue { background: #fff7ed; color: #c2410c; border: 1px solid #fdba74; }
   .tag-done    { background: transparent; color: var(--emerald-500); border: 1px solid #a7f3d0; }
   .tag-tele    { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
 
@@ -613,6 +881,10 @@ const STYLES = `
     display: flex; gap: 10px; cursor: pointer; transition: background .12s;
   }
   .notif-item:hover { background: var(--blue-50); }
+  .notif-list {
+    max-height: 460px;
+    overflow-y: auto;
+  }
   .notif-avatar {
     width: 34px; height: 34px; border-radius: 8px;
     background: var(--blue-100); color: var(--blue-600);
@@ -621,6 +893,24 @@ const STYLES = `
   }
   .notif-name { font-size: 13px; font-weight: 700; color: var(--slate-900); margin-bottom: 2px; }
   .notif-desc { font-size: 11px; color: var(--slate-500); }
+  .notif-source {
+    margin-top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .notif-source-ok { color: var(--emerald-500); }
+  .notif-source-warn { color: var(--amber-500); }
+  .notif-link {
+    color: var(--blue-600);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .notif-link:hover { text-decoration: underline; }
   .notif-empty {
     padding: 28px; text-align: center; color: var(--slate-500);
     display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -934,6 +1224,270 @@ const STYLES = `
   .toast-warning { background: #fffbeb; color: #92400e; border-color: #fde68a; }
   .toast-close { background: none; border: none; cursor: pointer; opacity: .6; color: inherit; display: flex; align-items: center; margin-left: 6px; }
   .toast-close:hover { opacity: 1; }
+
+  /* ── SPIN ICON ── */
+  .spin-icon { animation: spin-anim .8s linear infinite; }
+  @keyframes spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 1200px) {
+    .app-header {
+      height: auto;
+      min-height: 60px;
+      padding: 8px 16px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .header-center {
+      order: 3;
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .header-right {
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .header-select { min-width: 140px; }
+    .main-content {
+      overflow-y: auto;
+      overflow-x: hidden;
+      flex-direction: column;
+      padding: 10px 14px 16px 14px;
+      gap: 12px;
+    }
+    .sidebar-left,
+    .timeline-panel,
+    .sidebar-right {
+      width: 100%;
+      min-width: 0;
+    }
+    .timeline-panel { order: 1; }
+    .sidebar-left { order: 2; }
+    .sidebar-right { order: 3; }
+    .finance-grid { grid-template-columns: 1fr 1fr; }
+    .timeline-header {
+      padding: 14px 16px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .timeline-meta {
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .timeline-body {
+      padding: 14px 16px 64px;
+    }
+    .cita-actions {
+      opacity: 1;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .notif-dropdown {
+      right: 0;
+      width: min(420px, calc(100vw - 24px));
+    }
+  }
+
+  @media (max-width: 960px) {
+    .user-meta {
+      display: none;
+    }
+    .user-name {
+      font-size: 13px;
+    }
+    .header-center {
+      order: 3;
+      width: 100%;
+    }
+    .divider-v {
+      display: none;
+    }
+    .btn-primary,
+    .btn-notify {
+      padding: 7px 10px;
+      font-size: 11px;
+    }
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+    }
+    .header-select {
+      min-width: 120px;
+      font-size: 10px;
+    }
+    .timeline-title {
+      font-size: 16px;
+    }
+    .timeline-chip,
+    .count-badge {
+      font-size: 9px;
+      padding: 4px 8px;
+    }
+    .cita-row {
+      flex-direction: column;
+      gap: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--slate-100);
+      margin-bottom: 10px;
+    }
+    .cita-row.current-slot::after {
+      left: -8px;
+      top: 0;
+      bottom: 0;
+    }
+    .cita-time {
+      width: 100%;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      padding-right: 0;
+    }
+    .cita-time-range {
+      margin-top: 0;
+    }
+    .cita-node-col {
+      display: none;
+    }
+    .cita-card {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .cita-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .detail-drawer {
+      width: min(520px, 100vw);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .agenda-root {
+      height: 100dvh;
+    }
+    .app-header {
+      padding: 8px 10px;
+      gap: 6px;
+    }
+    .header-left {
+      gap: 8px;
+      min-width: 0;
+    }
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+    .header-right {
+      gap: 4px;
+    }
+    .view-btn {
+      padding: 5px 8px;
+      font-size: 10px;
+    }
+    .btn-primary,
+    .btn-notify {
+      padding: 6px 8px;
+      font-size: 10px;
+      gap: 4px;
+    }
+    .btn-primary span,
+    .btn-notify span {
+      display: none;
+    }
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+    }
+    .header-select {
+      min-width: 100px;
+      height: 30px;
+      font-size: 10px;
+    }
+    .main-content {
+      padding: 8px 8px 12px;
+      gap: 10px;
+    }
+    .cal-widget,
+    .finance-widget,
+    .inv-header,
+    .inv-list {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+    .cal-day-number {
+      font-size: 52px;
+      letter-spacing: -2px;
+    }
+    .finance-main {
+      padding: 14px;
+    }
+    .finance-main-value {
+      font-size: 26px;
+    }
+    .finance-grid {
+      grid-template-columns: 1fr;
+    }
+    .timeline-header,
+    .timeline-body {
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+    .timeline-meta {
+      gap: 6px;
+    }
+    .timeline-chip,
+    .count-badge {
+      font-size: 8px;
+      letter-spacing: .03em;
+    }
+    .notif-dropdown {
+      position: fixed;
+      top: 76px;
+      right: 8px;
+      left: 8px;
+      width: auto;
+      max-height: calc(100dvh - 90px);
+      display: flex;
+      flex-direction: column;
+    }
+    .notif-list {
+      max-height: calc(100dvh - 180px);
+    }
+    .weekly-header-cell {
+      padding: 10px 4px;
+    }
+    .weekly-row {
+      min-height: 76px;
+    }
+    .modal-overlay {
+      padding: 8px;
+    }
+    .modal-hdr,
+    .modal-body {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+    .form-grid,
+    .action-grid,
+    .vitals-grid {
+      grid-template-columns: 1fr;
+    }
+    .drawer-hdr,
+    .drawer-body,
+    .drawer-footer,
+    .vitals-grid {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+  }
 `;
 /* ─── TOAST ───────────────────────────────────────────────────── */
 const Toast = ({ msg, type, onClose }) => (
@@ -948,97 +1502,312 @@ const Toast = ({ msg, type, onClose }) => (
 const Agenda = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  
-  const START_HOUR = 8;
-  const END_HOUR   = 20;
-  const hours      = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+  const normalizedRole = String(user?.rol || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  const isAdminRole = ['admin', 'admin_maestro', 'administrador'].includes(normalizedRole)
+    || hasPermission(user, 'admin.dashboard', ['admin', 'admin_maestro', 'administrador']);
+  const isDoctorRole = ['medico', 'doctor'].includes(normalizedRole);
+  const canRotateConsultorio = isDoctorRole || isAdminRole;
 
-  const MOTIVOS_CONSULTA = [
-    "Consulta","Valoración","Estudios","Vacunas","Valoracion sin costo",
-    "Aplicacion de medicamento","Nota de urgencia","Nota de evolución",
-    "Nota de traslado","Nota de interconsulta","Rehabilitación","Post-cirugía"
+  const CATALOGO_MOTIVOS_FALLBACK = [
+    { id: 'consulta-general', nombre: 'Consulta', precio: 500, precioMin: 500, precioMax: 500, area: 'Medicina General', categoria: 'Medicina General', duracionMin: 20, teleconsultaPermitida: true, prioridadTriage: 'media', versionPrecio: 1 },
+    { id: 'valoracion', nombre: 'Valoración', precio: 600, precioMin: 600, precioMax: 600, area: 'Medicina General', categoria: 'Medicina General', duracionMin: 30, teleconsultaPermitida: true, prioridadTriage: 'media', versionPrecio: 1 },
+    { id: 'vacunas', nombre: 'Vacunas', precio: 450, precioMin: 450, precioMax: 450, area: 'Prevención', categoria: 'Prevención', duracionMin: 20, teleconsultaPermitida: false, prioridadTriage: 'baja', versionPrecio: 1 },
+    { id: 'urgencia', nombre: 'Nota de urgencia', precio: 900, precioMin: 900, precioMax: 900, area: 'Urgencias', categoria: 'Urgencias', duracionMin: 30, teleconsultaPermitida: false, prioridadTriage: 'alta', versionPrecio: 1 }
   ];
+  const CATALOGO_CONSULTORIOS_FALLBACK = [
+    {
+      id: 'consultorio-1',
+      nombre: 'Consultorio 1',
+      ubicacion: 'Planta baja',
+      especialidad: 'Medicina General',
+      horaInicio: '08:00',
+      horaFin: '18:00',
+      intervaloMin: 10,
+      capacidadSimultanea: 1,
+      diasAtencion: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'],
+      sucursalId: 'sucursal-central',
+      sucursal: user?.sucursalActual || user?.sucursal || 'Central',
+      activo: true
+    }
+  ];
+  const CATALOGO_SUCURSALES_FALLBACK = [
+    {
+      id: 'sucursal-central',
+      nombre: user?.sucursalActual || user?.sucursal || 'Central',
+      ubicacion: 'Sin especificar',
+      telefono: '',
+      responsable: '',
+      horaApertura: '08:00',
+      horaCierre: '20:00',
+      timezone: 'America/Mexico_City',
+      diasOperacion: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
+      activo: true
+    }
+  ];
+  const DIAS_SEMANA_INDEX = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  
+  const INTERVALO_MINUTOS = 10;
+  const START_HOUR = 0;
+  const END_HOUR   = 23;
+  const hours      = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
 
   /* ── STATES ── */
   const [citas, setCitas]                   = useState([]);
   const [loading, setLoading]               = useState(true);
   const [currentDate, setCurrentDate]       = useState(new Date());
+  const [currentTime, setCurrentTime]       = useState(new Date());
   const [audio]                             = useState(new Audio(sonidoCampana));
   const prevCitasLength                     = useRef(0);
+  const timelineBodyRef                     = useRef(null);
+  const timelineSlotRefs                    = useRef({});
   const [toast, setToast]                   = useState(null);
   const [vista, setVista]                   = useState('dashboard');
-  const [isChatOpen, setIsChatOpen]         = useState(false);
+  const [timelineFiltro, setTimelineFiltro] = useState('all');
   const [showNotifications, setShowNotifications] = useState(false);
+  const [noticiasMedicas, setNoticiasMedicas] = useState([]);
+  const [noticiasLoading, setNoticiasLoading] = useState(false);
+  const [noticiasNoLeidas, setNoticiasNoLeidas] = useState(0);
+  const [noticiasActualizadasAt, setNoticiasActualizadasAt] = useState(null);
   const [showCitaModal, setShowCitaModal]   = useState(false);
   const [showPacienteModal, setShowPacienteModal] = useState(false);
   const [selectedCita, setSelectedCita]     = useState(null);
   const [citaUrgencia, setCitaUrgencia]     = useState(null);
+  const [notificandoPaciente, setNotificandoPaciente] = useState(false);
+  const [notificandoCitaId, setNotificandoCitaId] = useState(null);
   const [todosLosPacientes, setTodosLosPacientes] = useState([]);
   const [sugerencias, setSugerencias]       = useState([]);
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [alertasCaducidad, setAlertasCaducidad]     = useState([]);
+  const [historialClinico, setHistorialClinico]     = useState([]);
+  const [catalogoMotivos, setCatalogoMotivos]       = useState(CATALOGO_MOTIVOS_FALLBACK);
+  const [catalogoConsultorios, setCatalogoConsultorios] = useState(CATALOGO_CONSULTORIOS_FALLBACK);
+  const [catalogoSucursales, setCatalogoSucursales] = useState(CATALOGO_SUCURSALES_FALLBACK);
+  const [consultorioActivoId, setConsultorioActivoId] = useState('');
+  const [guardandoConsultorio, setGuardandoConsultorio] = useState(false);
   const [nuevaCita, setNuevaCita]           = useState({
     paciente: '', pacienteId: '', pacienteTelefono: '',
-    fecha: new Date().toISOString().split('T')[0], hora: '',
-    motivo: 'Consulta', esTeleconsulta: false,
-    doctorAsignado: user?.rol === 'medico' ? user.nombre : ''
+    fecha: new Date().toISOString().split('T')[0], hora: '', horaFin: '',
+    tipoConsulta: 'primera_vez',
+    motivo: CATALOGO_MOTIVOS_FALLBACK[0]?.nombre || 'Consulta',
+    motivoId: CATALOGO_MOTIVOS_FALLBACK[0]?.id || '',
+    consultorioId: '',
+    sucursalId: '',
+    esTeleconsulta: false,
+    doctorAsignado: isDoctorRole ? user.nombre : ''
   });
-  const COMISIONES = { dia: 1200, semana: 8500, mes: 34200 };
+
+  const consultorioActivo = useMemo(
+    () => catalogoConsultorios.find((item) => item.id === consultorioActivoId) || null,
+    [catalogoConsultorios, consultorioActivoId]
+  );
+
+  const sucursalActivaLabel = consultorioActivo?.sucursal || user?.sucursalActual || user?.sucursal || 'Central';
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  /* ── CITAS SNAPSHOT ── */
+  const extraerDominio = (url = '') => {
+    try {
+      const parsed = new URL(url);
+      return parsed.hostname.replace('www.', '').toLowerCase();
+    } catch {
+      return '';
+    }
+  };
+
+  const validarFuenteNoticia = (item) => {
+    const dominio = extraerDominio(item.url || '');
+    const fuenteValidada = DOMINIOS_FUENTES_CONFIABLES.some(d => dominio.includes(d));
+    return {
+      ...item,
+      fuente: item.fuente || 'Fuente no especificada',
+      url: item.url || '',
+      fuenteValidada
+    };
+  };
+
+  const cargarNoticiasMedicas = async ({ forzar = false } = {}) => {
+    if (!user?.uid) return;
+    const cacheKey = `noticias_medicas_${user.uid}`;
+    const seenKey = `noticias_medicas_seen_${user.uid}`;
+
+    try {
+      if (!forzar) {
+        const cacheRaw = localStorage.getItem(cacheKey);
+        if (cacheRaw) {
+          const cache = JSON.parse(cacheRaw);
+          const cacheDate = new Date(cache.timestamp || 0);
+          const ageMs = Date.now() - cacheDate.getTime();
+          if (Array.isArray(cache.items) && ageMs < 6 * 60 * 60 * 1000) {
+            setNoticiasMedicas(cache.items);
+            setNoticiasActualizadasAt(cache.timestamp);
+            const seenAt = new Date(localStorage.getItem(seenKey) || 0).getTime();
+            const unread = cache.items.filter(item => new Date(item.fechaGeneracion || cache.timestamp).getTime() > seenAt).length;
+            setNoticiasNoLeidas(unread);
+            return;
+          }
+        }
+      }
+    } catch {}
+
+    setNoticiasLoading(true);
+    try {
+      const generarBoletinMedicoSeguro = httpsCallable(functions, 'generarBoletinMedicoSeguro');
+      const response = await generarBoletinMedicoSeguro({ limite: 5 });
+      const timestamp = new Date().toISOString();
+      const itemsSeguros = Array.isArray(response?.data?.items) ? response.data.items : [];
+      const items = itemsSeguros
+        .map((item, idx) => ({
+          id: item.id || `safe-${idx}-${Date.now()}`,
+          titulo: item.titulo,
+          resumen: item.resumen,
+          categoria: item.categoria,
+          impacto: item.impacto,
+          fuente: item.fuente,
+          url: item.url,
+          fechaGeneracion: item.fechaGeneracion || timestamp,
+          fuenteValidada: item.fuenteValidada === true
+        }))
+        .map(validarFuenteNoticia)
+        .filter(item => item.fuenteValidada);
+
+      if (items.length === 0) {
+        throw new Error('Boletín sin fuentes válidas');
+      }
+
+      setNoticiasMedicas(items);
+      setNoticiasActualizadasAt(timestamp);
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp, items }));
+
+      const seenAt = new Date(localStorage.getItem(seenKey) || 0).getTime();
+      const unread = items.filter(item => new Date(item.fechaGeneracion || timestamp).getTime() > seenAt).length;
+      setNoticiasNoLeidas(unread);
+    } catch {
+      const timestamp = new Date().toISOString();
+      const fallbackItems = NOTICIAS_FALLBACK.map((item, idx) => ({
+        id: `fallback-${idx}`,
+        ...item,
+        fechaGeneracion: timestamp
+      })).map(validarFuenteNoticia);
+      setNoticiasMedicas(fallbackItems);
+      setNoticiasActualizadasAt(timestamp);
+      showToast('Boletín seguro no disponible. Mostrando fuentes de respaldo.', 'warning');
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp, items: fallbackItems }));
+      } catch {}
+      const seenKey = `noticias_medicas_seen_${user.uid}`;
+      const seenAt = new Date(localStorage.getItem(seenKey) || 0).getTime();
+      const unread = fallbackItems.filter(item => new Date(item.fechaGeneracion).getTime() > seenAt).length;
+      setNoticiasNoLeidas(unread);
+    } finally {
+      setNoticiasLoading(false);
+    }
+  };
+
+  /* ── CITAS (POLLING CONTROLADO) ── */
   useEffect(() => {
     if (!user) return;
     setLoading(true);
     const citasRef = collection(db, "citas");
-    const q = user?.rol === 'medico'
-      ? query(citasRef, where("doctorUid","==",user.uid), orderBy("fechaHora","asc"))
-      : query(citasRef, orderBy("fechaHora","asc"));
+    const now = new Date();
+    const desde = `${now.toISOString().slice(0, 10)}T00:00`;
+    const futuro = new Date(now);
+    futuro.setDate(futuro.getDate() + 60);
+    const hasta = `${futuro.toISOString().slice(0, 10)}T23:59`;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const nuevasCitas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (prevCitasLength.current > 0) {
-        snapshot.docChanges().forEach((change) => {
-          const data = change.doc.data();
-          if (change.type === "added") { audio.volume = 0.4; audio.play().catch(() => {}); }
-          if (change.type === "modified" && data.estado === 'en_espera') {
-            audio.volume = 1.0; audio.play().catch(() => {});
-            if (Notification.permission === "granted")
-              new Notification("Paciente Listo", { body: `${data.paciente} está listo para consulta.` });
-            showToast(`${data.paciente} está listo para pasar`, 'success');
-          }
-        });
-      }
-      prevCitasLength.current = nuevasCitas.length;
-      setCitas(nuevasCitas);
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    const q = user?.rol === 'medico'
+      ? query(
+          citasRef,
+          where("doctorUid", "==", user.uid),
+          where("fechaHora", ">=", desde),
+          where("fechaHora", "<=", hasta),
+          orderBy("fechaHora", "asc")
+        )
+      : query(citasRef, where("fechaHora", ">=", desde), where("fechaHora", "<=", hasta), orderBy("fechaHora", "asc"));
+
+    let isMounted = true;
+    const fetchCitas = async () => {
+      try {
+        const snapshot = await getDocs(q);
+        if (!isMounted) return;
+        const nuevasCitas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        prevCitasLength.current = nuevasCitas.length;
+        setCitas(nuevasCitas);
+      } catch {}
+      if (isMounted) setLoading(false);
+    };
+
+    fetchCitas();
+    const intervalId = setInterval(fetchCitas, 120000);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, [user, audio]);
 
-  /* ── INVENTARIO ── */
+  /* ── HISTORIAL CLÍNICO (POLLING CONTROLADO) ── */
   useEffect(() => {
-    const unsubInventario = onSnapshot(collection(db, 'inventario'), (snap) => {
-      const hoy = new Date();
-      const limit = new Date(); limit.setMonth(hoy.getMonth() + 3);
-      const alertas = [];
-      snap.docs.forEach(doc => {
-        const item = doc.data();
-        if (item.caducidad) {
-          const fCad = new Date(item.caducidad);
-          if (fCad <= limit && item.stock > 0) {
-            const dias = Math.ceil((fCad - hoy) / 86400000);
-            alertas.push({ id: doc.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
+    if (!user?.uid) return;
+
+    const historialRef = collection(db, "historial_clinico");
+    const qHistorial = query(historialRef, where("medicoId", "==", user.uid));
+
+    let isMounted = true;
+    const fetchHistorial = async () => {
+      try {
+        const snapshot = await getDocs(qHistorial);
+        if (!isMounted) return;
+        const docs = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+        setHistorialClinico(docs);
+      } catch {}
+    };
+
+    fetchHistorial();
+    const intervalId = setInterval(fetchHistorial, 300000);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [user?.uid]);
+
+  /* ── INVENTARIO (POLLING CONTROLADO) ── */
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchInventario = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'inventario'));
+        if (!isMounted) return;
+        const hoy = new Date();
+        const limit = new Date();
+        limit.setMonth(hoy.getMonth() + 3);
+        const alertas = [];
+        snap.docs.forEach((docRef) => {
+          const item = docRef.data();
+          if (item.caducidad) {
+            const fCad = new Date(item.caducidad);
+            if (fCad <= limit && item.stock > 0) {
+              const dias = Math.ceil((fCad - hoy) / 86400000);
+              alertas.push({ id: docRef.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
+            }
           }
-        }
-      });
-      setAlertasCaducidad(alertas.sort((a,b) => a.diasRestantes - b.diasRestantes));
-    });
-    return () => unsubInventario();
+        });
+        setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
+      } catch {}
+    };
+
+    fetchInventario();
+    const intervalId = setInterval(fetchInventario, 600000);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
   /* ── NOTIFICATIONS ── */
@@ -1047,19 +1816,184 @@ const Agenda = () => {
       Notification.requestPermission();
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (user?.uid) cargarNoticiasMedicas();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (showNotifications && user?.uid) {
+      const seenKey = `noticias_medicas_seen_${user.uid}`;
+      localStorage.setItem(seenKey, new Date().toISOString());
+      setNoticiasNoLeidas(0);
+    }
+  }, [showNotifications, user?.uid]);
+
   /* ── PACIENTES ── */
   const fetchPacientes = async () => {
     try {
-      const q = query(collection(db, "pacientes"), orderBy("nombre"));
-      const snapshot = await getDocs(q);
-      setTodosLosPacientes(snapshot.docs.map(d => ({
-        id: d.id,
-        nombre: d.data().nombreCompleto || d.data().nombre,
-        telefono: d.data().telefonoMovil || ''
-      })));
+      const snapshot = await getDocs(collection(db, "pacientes"));
+      const pacientes = snapshot.docs
+        .map((d) => {
+          const row = d.data() || {};
+          return {
+            id: d.id,
+            nombre: row.nombreCompleto || row.nombre || '',
+            telefono: row.telefonoMovil || row.telefono || '',
+            idPaciente: row.idPaciente || row.idPacienteMigrado || ''
+          };
+        })
+        .filter((p) => Boolean(p.nombre))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+      setTodosLosPacientes(pacientes);
     } catch {}
   };
   useEffect(() => { if (user) fetchPacientes(); }, [user]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+    const cacheKey = 'agenda_catalogos_v1';
+
+    const parseMotivos = (docs) => docs
+      .map((item) => ({
+        id: item.id,
+        nombre: item.nombre,
+        precio: Number(item.precio || 0),
+        precioMin: Number(item.precioMin ?? item.precio ?? 0),
+        precioMax: Number(item.precioMax ?? item.precio ?? 0),
+        area: item.area || item.categoria || 'General',
+        categoria: item.categoria || item.area || 'General',
+        duracionMin: Number(item.duracionMin || 20),
+        teleconsultaPermitida: item.teleconsultaPermitida !== false,
+        prioridadTriage: item.prioridadTriage || 'media',
+        versionPrecio: Number(item.versionPrecio || 1)
+      }));
+
+    const parseConsultorios = (docs) => docs
+      .map((item) => ({
+        id: item.id,
+        nombre: item.nombre,
+        ubicacion: item.ubicacion || 'Sin ubicación',
+        especialidad: item.especialidad || 'General',
+        horaInicio: normalizeTimeValue(item.horaInicio) || '08:00',
+        horaFin: normalizeTimeValue(item.horaFin) || '18:00',
+        intervaloMin: Number(item.intervaloMin || 10),
+        capacidadSimultanea: Number(item.capacidadSimultanea || 1),
+        diasAtencion: Array.isArray(item.diasAtencion) && item.diasAtencion.length > 0
+          ? item.diasAtencion
+          : ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'],
+        sucursalId: item.sucursalId || '',
+        sucursal: item.sucursal || user?.sucursal || 'Central',
+        activo: item.activo !== false
+      }));
+
+    const parseSucursales = (docs) => docs
+      .map((item) => ({
+        id: item.id,
+        nombre: item.nombre,
+        ubicacion: item.ubicacion || 'Sin ubicación',
+        telefono: item.telefono || '',
+        responsable: item.responsable || '',
+        horaApertura: normalizeTimeValue(item.horaApertura) || '08:00',
+        horaCierre: normalizeTimeValue(item.horaCierre) || '20:00',
+        timezone: item.timezone || 'America/Mexico_City',
+        diasOperacion: Array.isArray(item.diasOperacion) && item.diasOperacion.length > 0
+          ? item.diasOperacion
+          : ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
+        activo: item.activo !== false
+      }));
+
+    const hydrateFromRows = (payload) => {
+      if (Array.isArray(payload?.motivos) && payload.motivos.length > 0) setCatalogoMotivos(parseMotivos(payload.motivos));
+      if (Array.isArray(payload?.consultorios) && payload.consultorios.length > 0) setCatalogoConsultorios(parseConsultorios(payload.consultorios));
+      if (Array.isArray(payload?.sucursales) && payload.sucursales.length > 0) setCatalogoSucursales(parseSucursales(payload.sucursales));
+    };
+
+    const fetchCatalogos = async () => {
+      try {
+        const rawCache = sessionStorage.getItem(cacheKey);
+        if (rawCache) {
+          const cached = JSON.parse(rawCache);
+          if (Date.now() - Number(cached?.savedAt || 0) < CACHE_TTL_MS) {
+            hydrateFromRows(cached);
+            return;
+          }
+        }
+      } catch {}
+
+      try {
+        const [motivosSnap, consultoriosSnap, sucursalesSnap] = await Promise.all([
+          getDocs(query(collection(db, 'catalogo_motivos_consulta'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc')))
+        ]);
+        if (!isMounted) return;
+
+        const payload = {
+          savedAt: Date.now(),
+          motivos: motivosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre),
+          consultorios: consultoriosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre),
+          sucursales: sucursalesSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre)
+        };
+
+        hydrateFromRows(payload);
+        sessionStorage.setItem(cacheKey, JSON.stringify(payload));
+      } catch {}
+    };
+
+    fetchCatalogos();
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.sucursal]);
+
+  useEffect(() => {
+    if (!nuevaCita.motivoId && catalogoMotivos.length > 0) {
+      const motivo = catalogoMotivos[0];
+      setNuevaCita((prev) => ({ ...prev, motivoId: motivo.id, motivo: motivo.nombre }));
+    }
+  }, [catalogoMotivos, nuevaCita.motivoId]);
+
+  useEffect(() => {
+    if (!nuevaCita.consultorioId && catalogoConsultorios.length > 0) {
+      setNuevaCita((prev) => ({ ...prev, consultorioId: catalogoConsultorios[0].id }));
+    }
+  }, [catalogoConsultorios, nuevaCita.consultorioId]);
+
+  useEffect(() => {
+    if (!nuevaCita.sucursalId && catalogoSucursales.length > 0) {
+      setNuevaCita((prev) => ({ ...prev, sucursalId: catalogoSucursales[0].id }));
+    }
+  }, [catalogoSucursales, nuevaCita.sucursalId]);
+
+  useEffect(() => {
+    if (!canRotateConsultorio || catalogoConsultorios.length === 0) return;
+    if (consultorioActivoId) return;
+
+    const byId = String(user?.consultorioActualId || '').trim();
+    const byName = String(user?.consultorioActual || user?.consultorioRecurrente || user?.consultorio || '').trim().toLowerCase();
+
+    const found = catalogoConsultorios.find((item) => item.id === byId)
+      || catalogoConsultorios.find((item) => String(item.nombre || '').trim().toLowerCase() === byName)
+      || catalogoConsultorios[0];
+
+    if (found?.id) setConsultorioActivoId(found.id);
+  }, [canRotateConsultorio, catalogoConsultorios, consultorioActivoId, user?.consultorioActualId, user?.consultorioActual, user?.consultorioRecurrente, user?.consultorio]);
+
+  useEffect(() => {
+    if (!isDoctorRole || !consultorioActivo) return;
+    setNuevaCita((prev) => ({
+      ...prev,
+      consultorioId: consultorioActivo.id,
+      sucursalId: consultorioActivo.sucursalId || prev.sucursalId
+    }));
+  }, [isDoctorRole, consultorioActivo]);
 
   /* ── DATE UTILS ── */
   const getStartOfWeek = (date) => {
@@ -1087,7 +2021,80 @@ const Agenda = () => {
     setMostrarSugerencias(false);
   };
 
-  const generarLinkMeet = () => `https://meet.google.com/abc-defg-hij`;
+  const getMotivoSeleccionado = (motivoId) => {
+    return catalogoMotivos.find((m) => m.id === motivoId) || null;
+  };
+
+  const getDuracionMotivo = (motivoId) => {
+    const motivo = getMotivoSeleccionado(motivoId);
+    return Number(motivo?.duracionMin || INTERVALO_MINUTOS);
+  };
+
+  const getDayKeyFromISODate = (isoDate = '') => {
+    const parsed = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return DIAS_SEMANA_INDEX[parsed.getDay()] || '';
+  };
+
+  const normalizeTimeValue = (value = '') => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+
+    const compact = raw.replace(/\s+/g, '').replace(/\./g, '');
+    let meridiem = '';
+    let body = compact;
+
+    if (body.endsWith('am') || body.endsWith('pm')) {
+      meridiem = body.slice(-2);
+      body = body.slice(0, -2);
+    }
+
+    const match = body.match(/^(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!match) return '';
+
+    let hour = Number.parseInt(match[1], 10);
+    const minute = Number.parseInt(match[2] || '0', 10);
+
+    if (!Number.isFinite(hour) || !Number.isFinite(minute) || minute < 0 || minute > 59) return '';
+
+    if (meridiem) {
+      if (hour < 1 || hour > 12) return '';
+      if (meridiem === 'am') {
+        hour = hour === 12 ? 0 : hour;
+      } else {
+        hour = hour === 12 ? 12 : hour + 12;
+      }
+    }
+
+    if (!meridiem && (hour < 0 || hour > 23)) return '';
+
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  };
+
+  const timeToMinutes = (value = '') => {
+    const normalized = normalizeTimeValue(value);
+    if (!normalized) return null;
+    const [h = '00', m = '00'] = normalized.split(':');
+    return (Number.parseInt(h, 10) * 60) + Number.parseInt(m, 10);
+  };
+
+  const isWithinTimeRange = (hora = '', inicio = '00:00', fin = '23:59') => {
+    const horaMin = timeToMinutes(hora);
+    if (horaMin === null) return false;
+
+    const inicioMin = timeToMinutes(inicio);
+    const finMin = timeToMinutes(fin);
+
+    // Si no hay un rango válido, evitamos bloquear por configuración incompleta.
+    if (inicioMin === null || finMin === null) return true;
+
+    if (inicioMin <= finMin) {
+      return horaMin >= inicioMin && horaMin <= finMin;
+    }
+
+    // Rango que cruza medianoche: por ejemplo 22:00-06:00.
+    return horaMin >= inicioMin || horaMin <= finMin;
+  };
 
   const enviarWhatsApp = (telefono, mensaje) => {
     if (!telefono) return showToast("El paciente no tiene teléfono registrado","error");
@@ -1096,25 +2103,232 @@ const Agenda = () => {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
+  const notificarPaciente = async (cita) => {
+    if (notificandoPaciente) return;
+    if (!cita) return showToast('No hay cita seleccionada', 'error');
+    if (!cita.pacienteTelefono) return showToast('El paciente no tiene teléfono registrado', 'error');
+    if (cita.notificadoWhatsApp) return showToast('Este paciente ya fue notificado', 'error');
+    setNotificandoPaciente(true);
+    setNotificandoCitaId(cita.id);
+    try {
+      const enviarWA = httpsCallable(functions, 'enviarWhatsAppNotificacion');
+      await enviarWA({
+        telefono: cita.pacienteTelefono,
+        nombrePaciente: cita.paciente,
+        consultorio: cita.consultorioNombre || 'Consultorio',
+        nombreDoctor: user?.nombre || '',
+        nombreClinica: cita.sucursal || catalogoSucursales.find(s => s.id === cita.sucursalId)?.nombre || '',
+        motivo: cita.motivo || 'Consulta'
+      });
+      await updateDoc(doc(db, 'citas', cita.id), {
+        notificadoWhatsApp: true,
+        notificadoWhatsAppAt: serverTimestamp(),
+        notificadoPor: user?.uid || '',
+        notificadoPorNombre: user?.nombre || ''
+      });
+      showToast(`Notificación enviada a ${cita.paciente}`, 'success');
+    } catch (error) {
+      console.error('Error al notificar:', error);
+      showToast(error?.message || 'Error al enviar notificación por WhatsApp', 'error');
+    } finally {
+      setNotificandoPaciente(false);
+      setNotificandoCitaId(null);
+    }
+  };
+
+  const notificarSiguientePaciente = async () => {
+    const siguientes = citasDelDia.filter(c =>
+      c.estado === 'pendiente' && !c.notificadoWhatsApp && c.pacienteTelefono
+    );
+    if (siguientes.length === 0) {
+      return showToast('No hay pacientes pendientes por notificar', 'error');
+    }
+    await notificarPaciente(siguientes[0]);
+  };
+
+  const handleCambiarConsultorioActivo = async (nextConsultorioId) => {
+    if (!canRotateConsultorio || !user?.uid) return;
+    if (!nextConsultorioId || nextConsultorioId === consultorioActivoId) return;
+
+    const previo = catalogoConsultorios.find((item) => item.id === consultorioActivoId) || null;
+    const siguiente = catalogoConsultorios.find((item) => item.id === nextConsultorioId) || null;
+    if (!siguiente) return;
+
+    const prevId = consultorioActivoId;
+    setConsultorioActivoId(nextConsultorioId);
+    setGuardandoConsultorio(true);
+
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        consultorioActualId: siguiente.id,
+        consultorioActual: siguiente.nombre || '',
+        sucursalActual: siguiente.sucursal || '',
+        sucursalActualId: siguiente.sucursalId || '',
+        consultorioUbicacion: siguiente.ubicacion || '',
+        consultorioUltimoCambioAt: serverTimestamp()
+      });
+
+      await addDoc(collection(db, 'auditoria_movimientos_consultorio'), {
+        doctorUid: user.uid,
+        doctorNombre: user.nombre || '',
+        doctorRol: user.rol || '',
+        actorUid: user.uid,
+        actorNombre: user.nombre || '',
+        actorRol: user.rol || '',
+        consultorioAnteriorId: previo?.id || '',
+        consultorioAnterior: previo?.nombre || user?.consultorioActual || user?.consultorioRecurrente || '',
+        sucursalAnterior: previo?.sucursal || user?.sucursalActual || user?.sucursal || '',
+        consultorioNuevoId: siguiente.id,
+        consultorioNuevo: siguiente.nombre || '',
+        sucursalNueva: siguiente.sucursal || '',
+        esMovimientoAdmin: isAdminRole,
+        fecha: serverTimestamp(),
+        fechaString: new Date().toLocaleDateString('en-CA'),
+        origen: isAdminRole ? 'agenda_admin_rotacion' : 'agenda_medico_rotacion'
+      });
+
+      showToast(`Consultorio activo actualizado a ${siguiente.nombre}.`, 'success');
+    } catch (error) {
+      console.error('Error cambiando consultorio activo:', error);
+      setConsultorioActivoId(prevId);
+      showToast('No se pudo actualizar el consultorio activo.', 'error');
+    } finally {
+      setGuardandoConsultorio(false);
+    }
+  };
+
   const handleGuardarCita = async (e) => {
     e.preventDefault();
     try {
-      let meetLink = '';
-      if (nuevaCita.esTeleconsulta) meetLink = generarLinkMeet();
-      await addDoc(collection(db, "citas"), {
-        ...nuevaCita, meetLink,
-        fechaHora: `${nuevaCita.fecha}T${nuevaCita.hora}`,
-        doctorUid: user.rol === 'medico' ? user.uid : "uid_generico",
-        sucursal: user.sucursal || "Central",
-        estado: 'pendiente'
-      });
-      if (nuevaCita.esTeleconsulta && nuevaCita.pacienteTelefono) {
-        const mensaje = `Hola ${nuevaCita.paciente}, su teleconsulta de "${nuevaCita.motivo}" es el ${nuevaCita.fecha} a las ${nuevaCita.hora}. Link: ${meetLink}`;
-        if (window.confirm("¿Enviar enlace por WhatsApp?")) enviarWhatsApp(nuevaCita.pacienteTelefono, mensaje);
+      const motivoSeleccionado = getMotivoSeleccionado(nuevaCita.motivoId);
+      const consultorioSeleccionado = catalogoConsultorios.find((c) => c.id === nuevaCita.consultorioId) || null;
+      const sucursalDesdeConsultorio = consultorioSeleccionado?.sucursalId
+        ? catalogoSucursales.find((s) => s.id === consultorioSeleccionado.sucursalId) || null
+        : null;
+      const sucursalSeleccionada = sucursalDesdeConsultorio
+        || catalogoSucursales.find((s) => s.id === nuevaCita.sucursalId)
+        || null;
+      const duracionMotivo = Number(motivoSeleccionado?.duracionMin || INTERVALO_MINUTOS);
+      const horaInicioCita = normalizeTimeValue(nuevaCita.hora);
+      const horaFin = normalizeTimeValue(nuevaCita.horaFin || calcularHoraFin(nuevaCita.hora, duracionMotivo));
+      const diaCita = getDayKeyFromISODate(nuevaCita.fecha);
+
+      if (!horaInicioCita || !horaFin) {
+        showToast('Hora de cita inválida. Verifica el horario seleccionado.', 'warning');
+        return;
       }
+
+      if (nuevaCita.esTeleconsulta && motivoSeleccionado?.teleconsultaPermitida === false) {
+        showToast('Este motivo no permite teleconsulta. Cambia a presencial o elige otro motivo.', 'warning');
+        return;
+      }
+
+      if (consultorioSeleccionado) {
+        const diasAtencion = consultorioSeleccionado.diasAtencion || [];
+        if (diaCita && diasAtencion.length > 0 && !diasAtencion.includes(diaCita)) {
+          showToast(`El consultorio no opera en ${diaCita}.`, 'warning');
+          return;
+        }
+        if (!isWithinTimeRange(horaInicioCita, consultorioSeleccionado.horaInicio || '00:00', consultorioSeleccionado.horaFin || '23:59')) {
+          showToast(`Horario fuera del rango del consultorio (${consultorioSeleccionado.horaInicio || '00:00'}-${consultorioSeleccionado.horaFin || '23:59'}).`, 'warning');
+          return;
+        }
+      }
+
+      if (sucursalSeleccionada) {
+        const diasOperacion = sucursalSeleccionada.diasOperacion || [];
+        if (diaCita && diasOperacion.length > 0 && !diasOperacion.includes(diaCita)) {
+          showToast(`La sucursal no opera en ${diaCita}.`, 'warning');
+          return;
+        }
+        if (!isWithinTimeRange(horaInicioCita, sucursalSeleccionada.horaApertura || '00:00', sucursalSeleccionada.horaCierre || '23:59')) {
+          showToast(`Horario fuera del rango de sucursal (${sucursalSeleccionada.horaApertura || '00:00'}-${sucursalSeleccionada.horaCierre || '23:59'}).`, 'warning');
+          return;
+        }
+      }
+
+      let meetLink = '';
+      if (nuevaCita.esTeleconsulta) {
+        const roomId = `srs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        meetLink = `https://meet.jit.si/${roomId}`;
+      }
+      const citaRef = await addDoc(collection(db, "citas"), {
+        ...nuevaCita, meetLink,
+        motivo: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
+        motivoNombreSnapshot: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
+        motivoId: motivoSeleccionado?.id || nuevaCita.motivoId || '',
+        motivoPrecio: Number(motivoSeleccionado?.precio || 0),
+        motivoPrecioSnapshot: Number(motivoSeleccionado?.precio || 0),
+        motivoPrecioMin: Number(motivoSeleccionado?.precioMin ?? motivoSeleccionado?.precio ?? 0),
+        motivoPrecioMax: Number(motivoSeleccionado?.precioMax ?? motivoSeleccionado?.precio ?? 0),
+        motivoVersionPrecio: Number(motivoSeleccionado?.versionPrecio || 1),
+        motivoCategoria: motivoSeleccionado?.categoria || motivoSeleccionado?.area || 'General',
+        motivoDuracionMin: duracionMotivo,
+        motivoTeleconsultaPermitida: motivoSeleccionado?.teleconsultaPermitida !== false,
+        areaConsulta: motivoSeleccionado?.area || 'General',
+        consultorioId: consultorioSeleccionado?.id || nuevaCita.consultorioId || '',
+        consultorioNombre: consultorioSeleccionado?.nombre || 'Sin asignar',
+        consultorioUbicacion: consultorioSeleccionado?.ubicacion || '',
+        consultorioEspecialidad: consultorioSeleccionado?.especialidad || '',
+        consultorioHoraInicio: consultorioSeleccionado?.horaInicio || '08:00',
+        consultorioHoraFin: consultorioSeleccionado?.horaFin || '18:00',
+        consultorioDiasAtencion: consultorioSeleccionado?.diasAtencion || [],
+        consultorioCapacidadSimultanea: Number(consultorioSeleccionado?.capacidadSimultanea || 1),
+        sucursalId: sucursalSeleccionada?.id || nuevaCita.sucursalId || '',
+        sucursal: sucursalSeleccionada?.nombre || user.sucursal || "Central",
+        sucursalUbicacion: sucursalSeleccionada?.ubicacion || '',
+        sucursalHoraApertura: sucursalSeleccionada?.horaApertura || '08:00',
+        sucursalHoraCierre: sucursalSeleccionada?.horaCierre || '20:00',
+        sucursalDiasOperacion: sucursalSeleccionada?.diasOperacion || [],
+        fechaHora: `${nuevaCita.fecha}T${horaInicioCita}`,
+        fechaHoraFin: `${nuevaCita.fecha}T${horaFin}`,
+        horaFin,
+        doctorUid: isDoctorRole ? user.uid : "uid_generico",
+        estado: 'pendiente',
+        creadoPor: user?.uid || 'anonimo',
+        creadoPorRol: user?.rol || 'desconocido'
+      });
+
+      // Cerrar modal y resetear formulario inmediatamente
       setShowCitaModal(false);
-      setNuevaCita({ paciente:'',pacienteId:'',pacienteTelefono:'',fecha:'',hora:'',motivo:'Consulta',esTeleconsulta:false,doctorAsignado:'' });
-      showToast("Cita agendada correctamente");
+      setNuevaCita({
+        paciente:'', pacienteId:'', pacienteTelefono:'',
+        fecha:'', hora:'', horaFin:'',
+        tipoConsulta:'primera_vez',
+        motivo: catalogoMotivos[0]?.nombre || 'Consulta',
+        motivoId: catalogoMotivos[0]?.id || '',
+        consultorioId: catalogoConsultorios[0]?.id || '',
+        sucursalId: catalogoSucursales[0]?.id || '',
+        esTeleconsulta:false,
+        doctorAsignado:''
+      });
+
+      if (nuevaCita.esTeleconsulta && nuevaCita.pacienteTelefono) {
+        try {
+          const enviarWA = httpsCallable(functions, 'enviarWhatsAppNotificacion');
+          await enviarWA({
+            telefono: nuevaCita.pacienteTelefono,
+            nombrePaciente: nuevaCita.paciente,
+            consultorio: consultorioSeleccionado?.nombre || nuevaCita.consultorio || 'Consultorio',
+            nombreDoctor: user?.nombre || '',
+            nombreClinica: sucursalSeleccionada?.nombre || user?.sucursal || 'Clínica',
+            motivo: `${motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta'} | Link Meet: ${meetLink}`,
+            templateName: 'teleconsulta_turno'
+          });
+          await updateDoc(doc(db, 'citas', citaRef.id), {
+            notificadoWhatsApp: true,
+            notificadoWhatsAppAt: serverTimestamp(),
+            notificadoPor: user?.uid || '',
+            notificadoPorNombre: user?.nombre || ''
+          });
+          showToast('Cita agendada y enlace enviado por WhatsApp', 'success');
+        } catch (waError) {
+          console.error('Error al enviar WhatsApp automático de teleconsulta:', waError);
+          showToast('Cita agendada, pero no se pudo enviar el enlace por WhatsApp', 'warning');
+        }
+      } else {
+        showToast("Cita agendada correctamente");
+      }
     } catch (error) { showToast(error.message,"error"); }
   };
 
@@ -1122,6 +2336,22 @@ const Agenda = () => {
     await updateDoc(doc(db,"citas",id), { estado });
     if (estado === 'cancelada') setSelectedCita(null);
     if (estado === 'completada') showToast("Consulta finalizada","success");
+  };
+
+  const reabrirConsulta = async (cita) => {
+    if (!cita?.id) return;
+    try {
+      await updateDoc(doc(db, 'citas', cita.id), {
+        estado: 'en_consulta',
+        consultaReabiertaAt: serverTimestamp(),
+        consultaFinalizadaAt: null
+      });
+      showToast('Consulta reabierta correctamente', 'success');
+      setSelectedCita((prev) => (prev?.id === cita.id ? { ...prev, estado: 'en_consulta' } : prev));
+    } catch (error) {
+      console.error('Error al reabrir consulta', error);
+      showToast('No se pudo reabrir la consulta', 'error');
+    }
   };
 
   const getCitasPorHora = (date, hour) => {
@@ -1138,6 +2368,44 @@ const Agenda = () => {
                 .sort((a,b) => a.fechaHora.localeCompare(b.fechaHora));
   };
 
+  const parseFechaHora = (fechaHora = '') => {
+    const [fecha, hora = '00:00'] = fechaHora.split('T');
+    return new Date(`${fecha}T${hora}`);
+  };
+  const toMinutes = (fechaHora = '') => {
+    const [hora = '00', minuto = '00'] = (fechaHora.split('T')[1] || '00:00').split(':');
+    return (Number.parseInt(hora, 10) * 60) + Number.parseInt(minuto, 10);
+  };
+  const formatMinutes = (totalMinutes = 0) => {
+    const h = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+    const m = String(totalMinutes % 60).padStart(2, '0');
+    return `${h}:${m}`;
+  };
+  const toDateSafe = (fecha) => {
+    if (!fecha) return null;
+    if (fecha?.toDate) return fecha.toDate();
+    const parsed = new Date(fecha);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const toNumberSafe = (value) => {
+    const num = Number.parseFloat(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const calcularHoraFin = (horaInicio = '', duracionMin = INTERVALO_MINUTOS) => {
+    if (!horaInicio) return '';
+    const [h = '00', m = '00'] = horaInicio.split(':');
+    const total = (Number.parseInt(h, 10) * 60) + Number.parseInt(m, 10) + Number(duracionMin || INTERVALO_MINUTOS);
+    const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
+    const mm = String(total % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
+  const rangoNuevaCita = nuevaCita.hora
+    ? `${nuevaCita.hora} - ${nuevaCita.horaFin || calcularHoraFin(nuevaCita.hora)}`
+    : '--';
+
   const cambiarDia = (dias) => {
     const f = new Date(currentDate);
     f.setDate(f.getDate() + dias);
@@ -1145,12 +2413,222 @@ const Agenda = () => {
   };
 
   const isCurrentHour = (h) => new Date().getHours() === h;
-  const pacientesEnEspera   = getCitasDelDia().filter(c => c.estado === 'en_espera');
-  const totalNotificaciones = pacientesEnEspera.length;
-
-  // --- Calcular el siguiente paciente a atender ---
   const citasDelDia = getCitasDelDia();
-  const siguienteCitaId = citasDelDia.find(c => c.estado !== 'completada')?.id;
+  const totalNotificaciones = noticiasNoLeidas;
+  const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+
+  const isCurrentDateToday = currentDate.toDateString() === currentTime.toDateString();
+  const timeSlots = useMemo(() => {
+    const slots = [];
+    for (let total = START_HOUR * 60; total <= END_HOUR * 60; total += INTERVALO_MINUTOS) {
+      const startMinutes = total;
+      const endMinutes = total + INTERVALO_MINUTOS;
+      const startTime = formatMinutes(startMinutes);
+      const endTime = formatMinutes(endMinutes);
+      const isCurrent = isCurrentDateToday && nowMinutes >= startMinutes && nowMinutes < endMinutes;
+      const isPast = isCurrentDateToday && endMinutes <= nowMinutes;
+      slots.push({
+        key: `${startTime}-${endTime}`,
+        startMinutes,
+        endMinutes,
+        startTime,
+        endTime,
+        value: `${startTime} - ${endTime}`,
+        isCurrent,
+        isPast
+      });
+    }
+    return slots;
+  }, [START_HOUR, END_HOUR, INTERVALO_MINUTOS, isCurrentDateToday, nowMinutes]);
+
+  const citasPorSlot = useMemo(() => {
+    const mapa = new Map(timeSlots.map(slot => [slot.key, []]));
+    citasDelDia.forEach((cita) => {
+      const citaMinutes = toMinutes(cita.fechaHora);
+      const slot = timeSlots.find(s => citaMinutes >= s.startMinutes && citaMinutes < s.endMinutes);
+      if (slot) mapa.get(slot.key).push(cita);
+    });
+    return mapa;
+  }, [citasDelDia, timeSlots]);
+
+  const slotActual = timeSlots.find(slot => slot.isCurrent) || null;
+  const siguienteCita = citasDelDia.find(c => c.estado !== 'completada') || null;
+  const citasVencidasSet = useMemo(() => {
+    if (!isCurrentDateToday) return new Set();
+    return new Set(
+      citasDelDia
+        .filter(c => c.estado !== 'completada' && (toMinutes(c.fechaHora) + INTERVALO_MINUTOS) <= nowMinutes)
+        .map(c => c.id)
+    );
+  }, [citasDelDia, isCurrentDateToday, nowMinutes, INTERVALO_MINUTOS]);
+  const atrasadasTimeline = citasVencidasSet.size;
+  const siguienteCitaId = siguienteCita?.id;
+
+  const primerSlotConCitasKey = useMemo(
+    () => timeSlots.find(slot => (citasPorSlot.get(slot.key) || []).length > 0)?.key || null,
+    [timeSlots, citasPorSlot]
+  );
+
+  const primerSlotVencidasKey = useMemo(
+    () => timeSlots.find(slot => (citasPorSlot.get(slot.key) || []).some(cita => citasVencidasSet.has(cita.id)))?.key || null,
+    [timeSlots, citasPorSlot, citasVencidasSet]
+  );
+
+  const slotObjetivoActualKey = useMemo(() => {
+    if (slotActual) return slotActual.key;
+    const slotConSiguiente = timeSlots.find(slot => (citasPorSlot.get(slot.key) || []).some(cita => cita.id === siguienteCitaId));
+    return slotConSiguiente?.key || primerSlotConCitasKey;
+  }, [slotActual, timeSlots, citasPorSlot, siguienteCitaId, primerSlotConCitasKey]);
+
+  const rangoActual = slotActual
+    ? `${slotActual.startTime} - ${slotActual.endTime}`
+    : null;
+
+  const scrollToSlotKey = (slotKey, behavior = 'smooth') => {
+    const container = timelineBodyRef.current;
+    const targetNode = timelineSlotRefs.current?.[slotKey];
+    if (!container || !targetNode) return false;
+    const top = targetNode.offsetTop - (container.clientHeight / 2) + (targetNode.clientHeight / 2);
+    container.scrollTo({ top: Math.max(0, top), behavior });
+    return true;
+  };
+
+  const enfocarTimeline = (slotKey) => {
+    if (!slotKey) return;
+
+    const runScroll = (behavior = 'smooth') => {
+      scrollToSlotKey(slotKey, behavior);
+    };
+
+    runScroll('auto');
+    const frameId = requestAnimationFrame(() => runScroll('smooth'));
+    const timeoutId = setTimeout(() => runScroll('smooth'), 160);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      clearTimeout(timeoutId);
+    };
+  };
+
+  useEffect(() => {
+    if (vista !== 'dashboard') return;
+
+    const targetKey = timelineFiltro === 'vencidas'
+      ? primerSlotVencidasKey
+      : timelineFiltro === 'curso'
+        ? (slotActual?.key || slotObjetivoActualKey)
+        : slotObjetivoActualKey;
+
+    if (!targetKey) return;
+    return enfocarTimeline(targetKey);
+  }, [timeSlots, vista, currentDate, timelineFiltro, slotActual, primerSlotVencidasKey, slotObjetivoActualKey]);
+
+  const onClickPacientes = () => {
+    setTimelineFiltro('pacientes');
+    if (primerSlotConCitasKey) {
+      enfocarTimeline(primerSlotConCitasKey);
+    }
+    const nombres = citasDelDia.map(c => c.paciente).filter(Boolean);
+    if (nombres.length === 0) {
+      showToast('No hay pacientes agendados hoy', 'warning');
+      return;
+    }
+    const preview = nombres.slice(0, 4).join(', ');
+    const extra = nombres.length > 4 ? ` +${nombres.length - 4}` : '';
+    showToast(`Pacientes hoy: ${preview}${extra}`, 'success');
+  };
+
+  const onClickAhora = () => {
+    setTimelineFiltro('all');
+    if (slotObjetivoActualKey) {
+      enfocarTimeline(slotObjetivoActualKey);
+    }
+  };
+
+  const onClickEnCurso = () => {
+    if (!slotActual && !siguienteCitaId) {
+      showToast('No hay consulta en curso en este momento', 'warning');
+      return;
+    }
+    setTimelineFiltro('curso');
+    enfocarTimeline(slotActual?.key || slotObjetivoActualKey);
+  };
+
+  const onClickVencidas = () => {
+    if (atrasadasTimeline === 0) {
+      showToast('No hay consultas vencidas por ahora', 'success');
+      return;
+    }
+    setTimelineFiltro('vencidas');
+    enfocarTimeline(primerSlotVencidasKey);
+  };
+
+  const citasAsignadasRecepcionDia = citasDelDia.filter(c => ['enfermeria', 'recepcion'].includes(c.creadoPorRol));
+  const citasCompletadasDia = citasDelDia.filter(c => c.estado === 'completada');
+  const pacientesRecepcionHoy = new Set(citasAsignadasRecepcionDia.map(c => c.pacienteId || c.paciente)).size;
+
+  const efectividadDia = citasAsignadasRecepcionDia.length > 0
+    ? Math.round((citasCompletadasDia.length / citasAsignadasRecepcionDia.length) * 100)
+    : 0;
+
+  const duraciones = citasCompletadasDia
+    .map((cita) => Number.parseInt(cita.duracionRealMin, 10))
+    .filter((valor) => Number.isFinite(valor) && valor > 0);
+  const duracionMedia = duraciones.length > 0
+    ? Math.round(duraciones.reduce((a, b) => a + b, 0) / duraciones.length)
+    : 0;
+
+  const retrasosAtencion = citasCompletadasDia.filter((cita) => {
+    const programada = parseFechaHora(cita.fechaHora);
+    const inicioReal = toDateSafe(cita.consultaIniciadaAt);
+    if (!programada || !inicioReal) return false;
+    const diferenciaMin = Math.round((inicioReal - programada) / 60000);
+    return diferenciaMin > 10;
+  });
+  const atrasadasHoy = retrasosAtencion.length;
+
+  const hoyInicio = new Date(currentDate);
+  hoyInicio.setHours(0, 0, 0, 0);
+  const hoyFin = new Date(currentDate);
+  hoyFin.setHours(23, 59, 59, 999);
+
+  const inicioSemana = getStartOfWeek(currentDate);
+  inicioSemana.setHours(0, 0, 0, 0);
+  const finSemana = new Date(inicioSemana);
+  finSemana.setDate(finSemana.getDate() + 6);
+  finSemana.setHours(23, 59, 59, 999);
+
+  const inicioMes = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1, 0, 0, 0, 0);
+  const finMes = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const historialConCosto = historialClinico
+    .map((item) => {
+      const costo = toNumberSafe(item.costo ?? item.meta?.costo);
+      const fecha = toDateSafe(item.fecha);
+      return { ...item, costo, fechaReal: fecha };
+    })
+    .filter((item) => item.fechaReal && item.costo > 0);
+
+  const historialDia = historialConCosto.filter(item => item.fechaReal >= hoyInicio && item.fechaReal <= hoyFin);
+  const historialSemana = historialConCosto.filter(item => item.fechaReal >= inicioSemana && item.fechaReal <= finSemana);
+  const historialMes = historialConCosto.filter(item => item.fechaReal >= inicioMes && item.fechaReal <= finMes);
+
+  const ingresoDia = Math.round(historialDia.reduce((acc, item) => acc + item.costo, 0));
+  const ingresoSemana = Math.round(historialSemana.reduce((acc, item) => acc + item.costo, 0));
+  const ingresoMes = Math.round(historialMes.reduce((acc, item) => acc + item.costo, 0));
+  const ticketPromedioDia = historialDia.length > 0 ? Math.round(ingresoDia / historialDia.length) : 0;
+
+  const sugerenciasFinanzas = [
+    atrasadasHoy > 0
+      ? `Se atendieron ${atrasadasHoy} pacientes fuera de tiempo. Prioriza bloque de contención de 15 min en los picos.`
+      : 'No hay atenciones tardías hoy. Mantén el flujo actual de agenda.',
+    efectividadDia < 75
+      ? 'La efectividad de agenda está por debajo de meta (75%). Revisa confirmaciones y tiempos muertos post-triage.'
+      : 'Efectividad estable sobre meta operativa. Buen cumplimiento de citas asignadas.',
+    ticketPromedioDia > 0 && ticketPromedioDia < 450
+      ? 'El ticket promedio está bajo frente al estándar; valida capturas de costo al finalizar expediente.'
+      : 'La captura de ingresos se mantiene consistente con el volumen de consultas.'
+  ];
 
   /* ─────────────────────────────────────────────────────────────── */
   return (
@@ -1166,16 +2644,16 @@ const Agenda = () => {
             <div className="user-avatar">
               {user?.nombre?.[0]?.toUpperCase() || 'D'}
             </div>
-            <div>
+            <div className="user-info">
               <div className="user-name">Hola, {user?.nombre?.split(' ')[0] || 'Doctor'}</div>
               <div className="user-meta">
-                <span className="badge-branch"><MapPin size={9}/> {user?.sucursal || 'Central'}</span>
+                <span className="badge-branch"><MapPin size={8}/> {sucursalActivaLabel}</span>
                 <span className="status-online"><span className="dot-pulse"></span>En línea</span>
               </div>
             </div>
           </div>
 
-          <div className="header-right">
+          <div className="header-center">
             <div className="view-switcher">
               <button
                 className={`view-btn ${vista === 'dashboard' ? 'active' : ''}`}
@@ -1187,46 +2665,109 @@ const Agenda = () => {
               ><CalendarDays size={13}/> Semana</button>
             </div>
 
-            <div className="divider-v"></div>
+            {canRotateConsultorio && catalogoConsultorios.length > 0 && (
+              <>
+                <div className="divider-v"></div>
+                <select
+                  value={consultorioActivoId}
+                  onChange={(e) => handleCambiarConsultorioActivo(e.target.value)}
+                  disabled={guardandoConsultorio}
+                  className="header-select"
+                  title="Cambiar consultorio activo"
+                >
+                  {catalogoConsultorios.map((item) => (
+                    <option key={item.id} value={item.id}>{item.nombre}</option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
 
-            {/* Notificaciones */}
+          <div className="header-right">
+            {isAdminRole && (
+              <button className="icon-btn icon-btn-amber" onClick={() => navigate('/admin/dashboard')} title="Volver a Admin">
+                <ShieldCheck size={16}/>
+              </button>
+            )}
+
             <div style={{ position:'relative' }}>
-              <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)}>
-                <Bell size={17}/>
+              <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} title="Noticias médicas">
+                <Newspaper size={16}/>
                 {totalNotificaciones > 0 && <span className="notif-badge">{totalNotificaciones}</span>}
               </button>
               {showNotifications && (
                 <div className="notif-dropdown">
                   <div className="notif-hdr">
-                    <span className="notif-hdr-title">Notificaciones</span>
-                    <span className="notif-hdr-badge">{totalNotificaciones} nuevas</span>
-                  </div>
-                  {pacientesEnEspera.length > 0 ? pacientesEnEspera.map(p => (
-                    <div key={p.id} className="notif-item" onClick={() => { setSelectedCita(p); setShowNotifications(false); }}>
-                      <div className="notif-avatar"><Users size={15}/></div>
-                      <div>
-                        <div className="notif-name">{p.paciente}</div>
-                        <div className="notif-desc">Listo en sala • Triage completado</div>
-                      </div>
+                    <span className="notif-hdr-title">Noticias médicas</span>
+                    <div style={{ display:'flex', alignItems:'center', gap: 8 }}>
+                      <button
+                        className="icon-btn"
+                        style={{ width: 28, height: 28, borderRadius: 8 }}
+                        onClick={() => cargarNoticiasMedicas({ forzar: true })}
+                        title="Actualizar noticias"
+                      >
+                        <RefreshCw size={13} className={noticiasLoading ? 'animate-spin' : ''}/>
+                      </button>
+                      <span className="notif-hdr-badge">{noticiasNoLeidas} nuevas</span>
                     </div>
-                  )) : (
-                    <div className="notif-empty">
-                      <ShieldCheck size={28} strokeWidth={1.5}/>
-                      <p>Todo al día</p>
+                  </div>
+                  <div className="notif-list scroll">
+                    {noticiasMedicas.length > 0 ? noticiasMedicas.map((noticia) => (
+                      <div key={noticia.id} className="notif-item">
+                        <div className="notif-avatar"><FileText size={15}/></div>
+                        <div>
+                          <div className="notif-name">{noticia.titulo}</div>
+                          <div className="notif-desc">{noticia.resumen}</div>
+                          <div className="notif-desc" style={{ marginTop: 4, fontWeight: 700 }}>
+                            {noticia.categoria} • {noticia.impacto?.toUpperCase() || 'MEDIO'}
+                          </div>
+                          <div className={`notif-source ${noticia.fuenteValidada ? 'notif-source-ok' : 'notif-source-warn'}`}>
+                            <span>{noticia.fuenteValidada ? 'Fuente validada' : 'Fuente en verificación'}: {noticia.fuente}</span>
+                            {noticia.url && (
+                              <a href={noticia.url} target="_blank" rel="noreferrer" className="notif-link">
+                                Ver <ExternalLink size={11}/>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="notif-empty">
+                        <Info size={28} strokeWidth={1.5}/>
+                        <p>{noticiasLoading ? 'Actualizando boletín...' : 'Sin noticias por ahora'}</p>
+                      </div>
+                    )}
+                  </div>
+                  {noticiasActualizadasAt && (
+                    <div style={{ padding: '10px 14px', fontSize: 10, color: 'var(--slate-400)', fontWeight: 700, borderTop: '1px solid var(--slate-100)' }}>
+                      Actualizado: {new Date(noticiasActualizadasAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   )}
                 </div>
               )}
             </div>
 
-            <button className="text-btn" onClick={() => navigate('/pacientes')}>
-              <Users size={15}/> Directorio
+            <button className="icon-btn" onClick={() => navigate('/pacientes')} title="Directorio de pacientes">
+              <Users size={16}/>
             </button>
-            <button className="chat-btn" onClick={() => setIsChatOpen(true)}>
-              <MessageCircle size={15}/> Chat
+            <button className="icon-btn icon-btn-purple" onClick={() => window.dispatchEvent(new Event('open-global-chat'))} title="Chat">
+              <MessageCircle size={16}/>
+            </button>
+
+            <div className="divider-v"></div>
+
+            <button
+              className="btn-notify"
+              onClick={notificarSiguientePaciente}
+              disabled={notificandoPaciente}
+              title="Enviar WhatsApp automático al siguiente paciente"
+            >
+              {notificandoPaciente
+                ? <><RefreshCw size={14} className="spin-icon"/> Enviando...</>
+                : <><BellRing size={14}/> Notificar</>}
             </button>
             <button className="btn-primary" onClick={() => setShowCitaModal(true)}>
-              <Plus size={15}/> Nueva Cita
+              <Plus size={14}/> Nueva Cita
             </button>
           </div>
         </header>
@@ -1256,20 +2797,50 @@ const Agenda = () => {
 
                 {/* Finance widget */}
                 <div className="panel finance-widget">
-                  <div className="widget-label"><TrendingUp size={13}/> Finanzas</div>
+                  <div className="widget-label"><TrendingUp size={13}/> Comportamiento</div>
                   <div className="finance-main">
                     <div className="finance-main-label">Generado hoy</div>
-                    <div className="finance-main-value sora">${COMISIONES.dia.toLocaleString()}</div>
+                    <div className="finance-main-value sora">${ingresoDia.toLocaleString()}</div>
                   </div>
                   <div className="finance-grid">
                     <div className="finance-cell">
                       <div className="finance-cell-label">Semana</div>
-                      <div className="finance-cell-value sora">${COMISIONES.semana.toLocaleString()}</div>
+                      <div className="finance-cell-value sora">${ingresoSemana.toLocaleString()}</div>
                     </div>
                     <div className="finance-cell">
                       <div className="finance-cell-label">Mes</div>
-                      <div className="finance-cell-value sora">${COMISIONES.mes.toLocaleString()}</div>
+                      <div className="finance-cell-value sora">${ingresoMes.toLocaleString()}</div>
                     </div>
+                  </div>
+
+                  <div className="finance-stack">
+                    <div className="finance-kpi">
+                      <span className="finance-kpi-label"><Users size={12}/> Pacientes hoy</span>
+                      <span className="finance-kpi-value sora">{pacientesRecepcionHoy}</span>
+                    </div>
+                    <div className="finance-kpi">
+                      <span className="finance-kpi-label"><Clock size={12}/> Duración media</span>
+                      <span className="finance-kpi-value sora">{duracionMedia > 0 ? `${duracionMedia} min` : 'N/D'}</span>
+                    </div>
+                    <div className="finance-kpi">
+                      <span className="finance-kpi-label"><Activity size={12}/> Efectividad</span>
+                      <span className="finance-kpi-value sora">{efectividadDia}%</span>
+                    </div>
+                    <div className="finance-kpi">
+                      <span className="finance-kpi-label"><DollarSign size={12}/> Ticket promedio</span>
+                      <span className="finance-kpi-value sora">{ticketPromedioDia > 0 ? `$${ticketPromedioDia.toLocaleString()}` : 'N/D'}</span>
+                    </div>
+                    <div className="finance-kpi">
+                      <span className="finance-kpi-label"><AlertTriangle size={12}/> Retraso hoy</span>
+                      <span className="finance-kpi-value sora">{atrasadasHoy}</span>
+                    </div>
+                  </div>
+
+                  <div className="finance-insights">
+                    <div className="finance-insights-title"><Info size={12}/> Sugerencias</div>
+                    {sugerenciasFinanzas.map((sugerencia, idx) => (
+                      <div key={idx} className="finance-insight-item">• {sugerencia}</div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1278,10 +2849,33 @@ const Agenda = () => {
               <div className="timeline-panel panel">
                 <div className="timeline-header">
                   <h2 className="timeline-title sora">Consultas del día</h2>
-                  <span className="count-badge">{citasDelDia.length} pacientes</span>
+                  <div className="timeline-meta">
+                    <button className={`count-badge timeline-action-btn ${timelineFiltro === 'pacientes' ? 'active' : ''}`} onClick={onClickPacientes}>
+                      {citasDelDia.length} pacientes
+                    </button>
+                    <button className={`timeline-chip timeline-chip-btn timeline-action-btn now ${timelineFiltro === 'all' ? 'active' : ''}`} onClick={onClickAhora}>
+                      <Clock size={11}/> Ahora {currentTime.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                    </button>
+                    {rangoActual
+                      ? (
+                        <button className={`timeline-chip timeline-chip-btn timeline-action-btn current ${timelineFiltro === 'curso' ? 'active' : ''}`} onClick={onClickEnCurso}>
+                          <Activity size={11}/> En curso {rangoActual}
+                        </button>
+                      )
+                      : (
+                        <button className="timeline-chip timeline-chip-btn timeline-action-btn next" onClick={onClickEnCurso}>
+                          <Stethoscope size={11}/> Sin consulta en curso
+                        </button>
+                      )}
+                    {atrasadasTimeline > 0 && (
+                      <button className={`timeline-chip timeline-chip-btn timeline-action-btn warn ${timelineFiltro === 'vencidas' ? 'active' : ''}`} onClick={onClickVencidas}>
+                        <AlertTriangle size={11}/> {atrasadasTimeline} vencida{atrasadasTimeline > 1 ? 's' : ''}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="timeline-body scroll">
+                <div ref={timelineBodyRef} className="timeline-body scroll">
                   {citasDelDia.length === 0 ? (
                     <div className="empty-state">
                       <div className="empty-icon"><CalIcon size={22} strokeWidth={1.5}/></div>
@@ -1290,75 +2884,172 @@ const Agenda = () => {
                         + Agendar paciente
                       </button>
                     </div>
-                  ) : citasDelDia.map((cita) => {
-                    const isDone      = cita.estado === 'completada';
-                    const isWaiting   = cita.estado === 'en_espera';
-                    const isSiguiente = cita.id === siguienteCitaId; 
-                    const hora        = cita.fechaHora.split('T')[1]?.substring(0,5);
-                    const ampm        = parseInt(hora) < 12 ? 'AM' : 'PM';
+                  ) : (() => {
+                    const slotsVisibles = timeSlots.filter((slot) => {
+                      const citasEnSlot = citasPorSlot.get(slot.key) || [];
+                      if (timelineFiltro === 'pacientes') return citasEnSlot.length > 0;
+                      if (timelineFiltro === 'curso') {
+                        if (slotActual) return slot.key === slotActual.key;
+                        return citasEnSlot.some(c => c.id === siguienteCitaId);
+                      }
+                      if (timelineFiltro === 'vencidas') return citasEnSlot.some(c => citasVencidasSet.has(c.id));
+                      return true;
+                    });
+
+                    if (slotsVisibles.length === 0) {
+                      return (
+                        <div className="empty-state">
+                          <div className="empty-icon"><Info size={22} strokeWidth={1.5}/></div>
+                          <span className="empty-title">
+                            {timelineFiltro === 'vencidas'
+                              ? 'No hay consultas vencidas en el horario'
+                              : timelineFiltro === 'curso'
+                                ? 'No hay consulta activa en este momento'
+                                : 'No hay pacientes en estos bloques'}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return slotsVisibles.map((slot) => {
+                    const citasEnSlot = citasPorSlot.get(slot.key) || [];
+                    const citasFiltradas = citasEnSlot.filter((cita) => {
+                      if (timelineFiltro === 'vencidas') return citasVencidasSet.has(cita.id);
+                      if (timelineFiltro === 'curso') {
+                        if (slotActual) return slot.key === slotActual.key;
+                        return cita.id === siguienteCitaId;
+                      }
+                      return true;
+                    });
+                    const nodeClass = slot.isCurrent
+                      ? 'node-waiting'
+                      : (citasFiltradas.length > 0 && citasFiltradas.every(c => c.estado === 'completada'))
+                        ? 'node-done'
+                        : 'node-pending';
 
                     return (
-                      <div key={cita.id} className={`cita-row ${isDone ? 'completed' : ''}`}>
+                      <div
+                        key={slot.key}
+                        ref={(node) => {
+                          if (node) timelineSlotRefs.current[slot.key] = node;
+                          else delete timelineSlotRefs.current[slot.key];
+                        }}
+                        className={`cita-row ${slot.isCurrent ? 'current-slot' : slot.isPast ? 'past-slot' : ''}`}
+                      >
                         <div className="cita-time">
-                          <span className="cita-time-main sora">{hora}</span>
-                          <span className="cita-time-ampm">{ampm}</span>
+                          <span className="cita-time-main sora">{slot.startTime}</span>
+                          <span className="cita-time-range">{slot.value}</span>
                         </div>
 
                         <div className="cita-node-col">
-                          <div className={`cita-node ${isDone ? 'node-done' : isWaiting ? 'node-waiting' : 'node-pending'}`}></div>
+                          <div className={`cita-node ${nodeClass}`}></div>
                         </div>
 
-                        <div className={`cita-card ${isWaiting ? 'waiting' : isDone ? 'done' : ''} ${isSiguiente ? 'siguiente' : ''}`}>
-                          
-                          {/* Gafete flotante de "Turno Actual" */}
-                          {isSiguiente && (
-                             <div className="badge-siguiente">
-                                <Stethoscope size={12}/> Turno Actual
-                             </div>
-                          )}
-
-                          <div>
-                            <div className={`cita-name ${isDone ? 'done-name' : ''}`}>{cita.paciente}</div>
-                            <div className="cita-tags">
-                              <span className="tag tag-motivo">{cita.motivo}</span>
-                              {isWaiting && <span className="tag tag-waiting"><ShieldCheck size={10}/> En sala</span>}
-                              {cita.estado === 'pendiente' && !isDone && <span className="tag tag-pending">Por llegar</span>}
-                              {isDone && <span className="tag tag-done"><Check size={10}/> Terminado</span>}
-                              {cita.esTeleconsulta && <span className="tag tag-tele"><Video size={10}/> Teleconsulta</span>}
+                        <div style={{ flex: 1 }}>
+                          {citasFiltradas.length === 0 ? (
+                            <div
+                              className="slot-empty"
+                              style={{ cursor: 'pointer', transition: 'all .15s' }}
+                              onClick={() => {
+                                const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
+                                setNuevaCita(prev => ({
+                                  ...prev,
+                                  fecha: currentDate.toLocaleDateString('en-CA'),
+                                  hora: slot.startTime,
+                                  horaFin: calcularHoraFin(slot.startTime, duracionMotivo)
+                                }));
+                                setShowCitaModal(true);
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue-300)'; e.currentTarget.style.background = 'var(--blue-50, #eff6ff)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.background = ''; }}
+                            >
+                              <Plus size={14} style={{ marginRight: 6, opacity: .5 }}/>
+                              Agendar en este horario
                             </div>
-                          </div>
+                          ) : citasFiltradas.map((cita) => {
+                            const isDone = cita.estado === 'completada';
+                            const isWaiting = cita.estado === 'en_espera';
+                            const isSiguiente = cita.id === siguienteCitaId;
+                            const isVencida = citasVencidasSet.has(cita.id);
 
-                          <div className="cita-actions">
-                            {cita.pacienteTelefono && !isDone && (
-                              <button className="act-btn green" onClick={() => enviarWhatsApp(cita.pacienteTelefono, "Confirmar cita")} title="WhatsApp">
-                                <MessageCircle size={15}/>
-                              </button>
-                            )}
-                            {!isDone && cita.estado !== 'pendiente' && (
-                              <button className="act-btn green" onClick={() => cambiarEstado(cita.id, 'completada')} title="Marcar finalizada">
-                                <ShieldCheck size={15}/>
-                              </button>
-                            )}
-                            {cita.estado === 'pendiente' && (
-                              <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
-                                <AlertTriangle size={12}/> Urgencia
-                              </button>
-                            )}
-                            {!isDone && cita.estado !== 'pendiente' && (
-                              <button className="act-pill act-pill-blue" onClick={() => setSelectedCita(cita)}>
-                                Expediente
-                              </button>
-                            )}
-                            {cita.estado === 'pendiente' && !isDone && (
-                              <button className="act-pill" style={{background:'white',color:'var(--blue-700)',border:'1px solid var(--blue-200)'}} onClick={() => setSelectedCita(cita)}>
-                                Ver
-                              </button>
-                            )}
-                          </div>
+                            return (
+                              <div key={cita.id} className={`cita-card ${isWaiting ? 'waiting' : isDone ? 'done' : ''} ${isSiguiente ? 'siguiente' : ''} ${isVencida && !isDone ? 'overdue' : ''}`}>
+                                {isSiguiente && (
+                                  <div className="badge-siguiente">
+                                    <Stethoscope size={12}/> Turno Actual
+                                  </div>
+                                )}
+
+                                <div>
+                                  <div className={`cita-name ${isDone ? 'done-name' : ''}`}>{cita.paciente}</div>
+                                  <div className="cita-tags">
+                                    <span className="tag tag-motivo">{cita.motivo}</span>
+                                    {slot.isCurrent && <span className="tag tag-waiting"><Clock size={10}/> En horario</span>}
+                                    {slot.isPast && !isDone && <span className="tag tag-pending"><AlertTriangle size={10}/> Reprogramar</span>}
+                                    {isVencida && !isDone && <span className="tag tag-overdue"><AlertTriangle size={10}/> Vencida</span>}
+                                    {isWaiting && <span className="tag tag-waiting"><ShieldCheck size={10}/> En sala</span>}
+                                    {cita.estado === 'pendiente' && !isDone && <span className="tag tag-pending">Por llegar</span>}
+                                    {cita.notificadoWhatsApp && <span className="tag tag-done"><Send size={10}/> Notificado</span>}
+                                    {isDone && <span className="tag tag-done"><Check size={10}/> Terminado</span>}
+                                    {cita.esTeleconsulta && <span className="tag tag-tele"><Video size={10}/> Teleconsulta</span>}
+                                  </div>
+                                </div>
+
+                                <div className="cita-actions">
+                                  {cita.pacienteTelefono && !isDone && !cita.notificadoWhatsApp && (
+                                    <button
+                                      className="act-btn green"
+                                      onClick={() => notificarPaciente(cita)}
+                                      disabled={notificandoCitaId === cita.id}
+                                      title="Notificar por WhatsApp"
+                                    >
+                                      {notificandoCitaId === cita.id ? <RefreshCw size={15} className="spin-icon"/> : <Send size={15}/>}
+                                    </button>
+                                  )}
+                                  {cita.pacienteTelefono && !isDone && cita.notificadoWhatsApp && (
+                                    <button className="act-btn" style={{color:'var(--green-600)',cursor:'default'}} title="Ya notificado">
+                                      <Check size={15}/>
+                                    </button>
+                                  )}
+                                  {!isDone && cita.estado !== 'pendiente' && (
+                                    <button className="act-btn green" onClick={() => cambiarEstado(cita.id, 'completada')} title="Marcar finalizada">
+                                      <ShieldCheck size={15}/>
+                                    </button>
+                                  )}
+                                  {cita.estado === 'pendiente' && (
+                                    <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
+                                      <AlertTriangle size={12}/> Urgencia
+                                    </button>
+                                  )}
+                                  {cita.estado !== 'pendiente' && (
+                                    <button
+                                      className="act-pill act-pill-blue"
+                                      onClick={() => navigate('/doctor/expediente', { state: { pacienteId: cita.pacienteId, citaId: cita.id } })}
+                                    >
+                                      {isDone ? 'Ver expediente' : 'Iniciar consulta'}
+                                    </button>
+                                  )}
+                                  {isDone && (
+                                    <button
+                                      className="act-pill"
+                                      style={{background:'white',color:'var(--amber-700)',border:'1px solid var(--amber-200)'}}
+                                      onClick={() => reabrirConsulta(cita)}
+                                    >
+                                      <RefreshCw size={12}/> Reabrir
+                                    </button>
+                                  )}
+                                  <button className="act-pill" style={{background:'white',color:'var(--blue-700)',border:'1px solid var(--blue-200)'}} onClick={() => setSelectedCita(cita)}>
+                                    {isDone ? 'Ver' : cita.estado === 'pendiente' ? 'Ver' : 'Detalles'}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
-                  })}
+                  });
+                })()}
                 </div>
               </div>
 
@@ -1424,7 +3115,9 @@ const Agenda = () => {
                       return (
                         <div key={di} className="weekly-day-cell"
                           onClick={() => {
-                            setNuevaCita({ ...nuevaCita, fecha: day.toLocaleDateString('en-CA'), hora: `${hour}:00` });
+                            const hora = `${String(hour).padStart(2,'0')}:00`;
+                            const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
+                            setNuevaCita({ ...nuevaCita, fecha: day.toLocaleDateString('en-CA'), hora, horaFin: calcularHoraFin(hora, duracionMotivo) });
                             setShowCitaModal(true);
                           }}>
                           <div className="weekly-add-hint">
@@ -1497,15 +3190,12 @@ const Agenda = () => {
                     </div>
                   ) : (
                     <div className="action-grid">
-                      <button className="action-card ac-neutral"
-                        onClick={() => navigate('/doctor/expediente', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id } })}>
+                      <button
+                        className="action-card ac-neutral"
+                        onClick={() => navigate('/doctor/expediente', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id } })}
+                      >
                         <div className="action-card-icon"><ClipboardList size={22}/></div>
-                        Expediente completo
-                      </button>
-                      <button className="action-card ac-blue"
-                        onClick={() => navigate('/doctor/consulta', { state: { pacienteId: selectedCita.pacienteId, citaId: selectedCita.id } })}>
-                        <div className="action-card-icon"><HeartPulse size={22}/></div>
-                        Consulta rápida
+                        {selectedCita.estado === 'completada' ? 'Ver expediente clínico' : 'Abrir expediente clínico'}
                       </button>
                     </div>
                   )}
@@ -1517,10 +3207,32 @@ const Agenda = () => {
                       Finalizar consulta
                     </button>
                   )}
+                  {selectedCita.estado === 'completada' && (
+                    <button className="btn-finish" onClick={() => reabrirConsulta(selectedCita)}>
+                      Reabrir consulta
+                    </button>
+                  )}
                   {selectedCita.estado === 'pendiente' && (
                     <button className="btn-cancel-cita" onClick={() => cambiarEstado(selectedCita.id,'cancelada')}>
                       Cancelar cita
                     </button>
+                  )}
+                  {selectedCita.pacienteTelefono && !selectedCita.notificadoWhatsApp && selectedCita.estado !== 'completada' && (
+                    <button
+                      className="btn-finish"
+                      style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)' }}
+                      onClick={() => notificarPaciente(selectedCita)}
+                      disabled={notificandoCitaId === selectedCita.id}
+                    >
+                      {notificandoCitaId === selectedCita.id
+                        ? <><RefreshCw size={15} className="spin-icon"/> Enviando...</>
+                        : <><Send size={15}/> Notificar por WhatsApp</>}
+                    </button>
+                  )}
+                  {selectedCita.notificadoWhatsApp && (
+                    <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--green-600)', fontWeight: 600, textAlign: 'center' }}>
+                      <Check size={14} style={{verticalAlign:'middle',marginRight:4}}/> Notificado por WhatsApp
+                    </div>
                   )}
                 </div>
               </>
@@ -1572,9 +3284,16 @@ const Agenda = () => {
                           value={nuevaCita.paciente}
                           onChange={e => {
                             setNuevaCita({ ...nuevaCita, paciente: e.target.value });
-                            const txt = e.target.value.toLowerCase();
+                            const txt = e.target.value.toLowerCase().trim();
                             if (txt.length > 1) {
-                              setSugerencias(todosLosPacientes.filter(p => p.nombre.toLowerCase().includes(txt)));
+                              const filtered = todosLosPacientes
+                                .filter((p) => {
+                                  const nombre = (p.nombre || '').toLowerCase();
+                                  const idPaciente = String(p.idPaciente || '').toLowerCase();
+                                  return nombre.includes(txt) || idPaciente.includes(txt);
+                                })
+                                .slice(0, 20);
+                              setSugerencias(filtered);
                               setMostrarSugerencias(true);
                             } else setMostrarSugerencias(false);
                           }}
@@ -1584,7 +3303,7 @@ const Agenda = () => {
                         <div className="suggest-list scroll">
                           {sugerencias.map(p => (
                             <div key={p.id} className="suggest-item" onClick={() => seleccionarPaciente(p)}>
-                              {p.nombre}
+                              {p.nombre}{p.idPaciente ? ` (${p.idPaciente})` : ''}
                             </div>
                           ))}
                         </div>
@@ -1610,19 +3329,86 @@ const Agenda = () => {
                       <label className="form-label">Hora</label>
                       <input required type="time" className="form-input"
                         value={nuevaCita.hora}
-                        onChange={e => setNuevaCita({ ...nuevaCita, hora: e.target.value })}/>
+                        onChange={e => {
+                          const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
+                          setNuevaCita({ ...nuevaCita, hora: e.target.value, horaFin: calcularHoraFin(e.target.value, duracionMotivo) });
+                        }}/>
                     </div>
                   </div>
+                  <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--blue-700)' }}>
+                    Horario seleccionado: {rangoNuevaCita}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Tipo de consulta</label>
+                  <select className="form-input" style={{ cursor:'pointer' }}
+                    value={nuevaCita.tipoConsulta}
+                    onChange={e => setNuevaCita({ ...nuevaCita, tipoConsulta: e.target.value })}>
+                    <option value="primera_vez">Primera vez</option>
+                    <option value="subsecuente">Subsecuente</option>
+                  </select>
                 </div>
 
                 {/* Motivo */}
                 <div className="form-group">
                   <label className="form-label">Motivo de consulta</label>
                   <select className="form-input" style={{ cursor:'pointer' }}
-                    value={nuevaCita.motivo}
-                    onChange={e => setNuevaCita({ ...nuevaCita, motivo: e.target.value })}>
-                    {MOTIVOS_CONSULTA.map(m => <option key={m} value={m}>{m}</option>)}
+                    value={nuevaCita.motivoId}
+                    onChange={e => {
+                      const selected = catalogoMotivos.find(m => m.id === e.target.value);
+                      const duracionMotivo = Number(selected?.duracionMin || INTERVALO_MINUTOS);
+                      const horaFin = nuevaCita.hora ? calcularHoraFin(nuevaCita.hora, duracionMotivo) : nuevaCita.horaFin;
+                      setNuevaCita({
+                        ...nuevaCita,
+                        motivoId: e.target.value,
+                        motivo: selected?.nombre || 'Consulta',
+                        horaFin,
+                        esTeleconsulta: selected?.teleconsultaPermitida === false ? false : nuevaCita.esTeleconsulta
+                      });
+                    }}>
+                    {catalogoMotivos.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {isAdminRole
+                          ? `${m.nombre} • $${Number(m.precio || 0).toFixed(2)} • ${m.area} • ${Number(m.duracionMin || INTERVALO_MINUTOS)} min`
+                          : m.nombre}
+                      </option>
+                    ))}
                   </select>
+                </div>
+
+                <div className="form-group">
+                  <div className="form-grid">
+                    <div>
+                      <label className="form-label">Consultorio</label>
+                      <select className="form-input" style={{ cursor:'pointer' }}
+                        value={nuevaCita.consultorioId}
+                        onChange={e => {
+                          const consultorio = catalogoConsultorios.find((c) => c.id === e.target.value);
+                          setNuevaCita({
+                            ...nuevaCita,
+                            consultorioId: e.target.value,
+                            sucursalId: consultorio?.sucursalId || nuevaCita.sucursalId
+                          });
+                        }}>
+                        {catalogoConsultorios.map(item => (
+                          <option key={item.id} value={item.id}>
+                            {isAdminRole ? `${item.nombre} • ${item.especialidad} • ${item.horaInicio || '08:00'}-${item.horaFin || '18:00'}` : item.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label">Sucursal</label>
+                      <select className="form-input" style={{ cursor:'pointer' }}
+                        value={nuevaCita.sucursalId}
+                        onChange={e => setNuevaCita({ ...nuevaCita, sucursalId: e.target.value })}>
+                        {catalogoSucursales.map(item => (
+                          <option key={item.id} value={item.id}>{item.nombre} • {item.ubicacion}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Teleconsulta */}
@@ -1644,7 +3430,6 @@ const Agenda = () => {
         {showPacienteModal && (
           <ModalPaciente onClose={() => setShowPacienteModal(false)} onPacienteCreado={handlePacienteCreado}/>
         )}
-        <ChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)}/>
       </div>
     </>
   );

@@ -1,8 +1,46 @@
 import React from 'react';
 
-const RecetaIndividual = ({ expediente, doctor }) => {
+const MEDICAMENTOS_POR_RECETA = 4;
+
+const splitIntoChunks = (items = [], chunkSize = MEDICAMENTOS_POR_RECETA) => {
+   if (!Array.isArray(items) || items.length === 0) return [];
+   const chunks = [];
+   for (let i = 0; i < items.length; i += chunkSize) {
+      chunks.push(items.slice(i, i + chunkSize));
+   }
+   return chunks;
+};
+
+const RecetaIndividual = ({ expediente, doctor, sucursalInfo, medicamentos = [], startIndex = 0 }) => {
   const { px_info } = expediente;
   const { exploracion, diagnostico } = expediente.consulta;
+  const suc = sucursalInfo || {};
+  const folio = px_info?.folio_receta || expediente?.folio || '';
+
+  const signos = exploracion?.signos || {};
+  const antropometria = exploracion?.antropometria || {};
+
+  const hasValue = (value) => value !== null && value !== undefined && String(value).trim() !== '';
+
+  const formatWithUnit = (value, unit = '') => {
+    if (!hasValue(value)) return '--';
+    const raw = String(value).trim();
+    if (!unit) return raw;
+    const lower = raw.toLowerCase();
+    if (lower.includes(unit.toLowerCase())) return raw;
+    return `${raw} ${unit}`;
+  };
+
+  const vitals = [
+    { l: 'Peso:', v: antropometria.peso || signos.peso, u: 'kg' },
+    { l: 'Talla:', v: antropometria.talla || signos.talla, u: 'm' },
+    { l: 'Temp:', v: signos.temp, u: '°C' },
+    { l: 'T.A.:', v: signos.ta, u: '' },
+    { l: 'F.C.:', v: signos.fc, u: 'lpm' },
+    { l: 'F.R.:', v: signos.fr, u: 'rpm' },
+    { l: 'Grupo:', v: px_info.grupo_sanguineo, u: '' },
+    { l: 'SpO2:', v: signos.spo2, u: '%' },
+  ];
   
   // Fecha actual formateada
   const fechaActual = new Date().toLocaleDateString('es-MX', {
@@ -49,7 +87,7 @@ const RecetaIndividual = ({ expediente, doctor }) => {
            <p className="font-bold text-slate-500 uppercase text-[9px]">MEDICINA GENERAL</p>
            <p className="text-[9px] uppercase font-medium">Ced. Prof. <span className="font-bold text-slate-800">{doctor.cedulaProfesional}</span></p>
            <p className="text-[8px] font-bold text-blue-700 uppercase mt-0.5">{doctor.universidadEgreso}</p>
-           <p className="text-[10px] font-black text-red-600 mt-1">Folio: {Date.now().toString().slice(-6)}</p>
+           <p className="text-[10px] font-black text-red-600 mt-1">Folio: {folio || '—'}</p>
         </div>
       </div>
 
@@ -90,33 +128,22 @@ const RecetaIndividual = ({ expediente, doctor }) => {
       <div className="relative z-10 flex flex-1 gap-4 overflow-hidden">
          {/* Columna Izquierda: Vitales + GRUPO SANGUÍNEO AGREGADO */}
          <div className="w-20 shrink-0 space-y-2 pt-1 border-r border-slate-200 pr-2">
-            {[
-                { l: 'Peso:', v: exploracion.antropometria.peso, u: 'kg' },
-                { l: 'Talla:', v: exploracion.antropometria.talla, u: 'm' },
-                { l: 'Temp:', v: exploracion.signos.temp, u: '°C' },
-                { l: 'T.A.:', v: exploracion.signos.ta, u: '' },
-                { l: 'F.C.:', v: exploracion.signos.fc, u: '' },
-                { l: 'F.R.:', v: exploracion.signos.fr, u: '' },
-                { l: 'Grupo:', v: px_info.grupo_sanguineo, u: '' }, // <--- AQUÍ ESTÁ EL GRUPO
-                { l: 'SpO2:', v: exploracion.signos.spo2, u: '%' },
-            ].map((s, i) => (
+          {vitals.map((s, i) => (
                 <div key={i} className="text-left">
                     <p className="text-[9px] font-bold text-slate-500 mb-0.5">{s.l}</p>
-                    <p className="font-bold text-slate-800 text-[11px] leading-none">
-                        {s.v || '--'} <span className="text-[9px] font-normal text-slate-500">{s.u}</span>
-                    </p>
+              <p className="font-bold text-slate-800 text-[11px] leading-none">{formatWithUnit(s.v, s.u)}</p>
                 </div>
             ))}
          </div>
 
          {/* Columna Derecha: Medicamentos */}
          <div className="flex-1 pt-1">
-            {diagnostico.tratamiento_lista?.length > 0 ? (
+            {medicamentos.length > 0 ? (
                 <div className="space-y-3">
-                    {diagnostico.tratamiento_lista.map((med, idx) => (
+                  {medicamentos.map((med, idx) => (
                         <div key={idx} className="mb-2">
                             <div className="flex justify-between items-baseline">
-                                <span className="font-black text-slate-900 text-[11px] uppercase">{idx + 1}. {med.nombre}</span>
+                           <span className="font-black text-slate-900 text-[11px] uppercase">{startIndex + idx + 1}. {med.nombre}</span>
                             </div>
                             <p className="text-slate-600 italic ml-3 uppercase text-[10px] mt-0.5 font-medium">
                                 {med.dosis || '1 CADA 8 HRS X 3 DÍAS.'}
@@ -124,11 +151,7 @@ const RecetaIndividual = ({ expediente, doctor }) => {
                         </div>
                     ))}
                 </div>
-            ) : (
-                <div className="h-full flex flex-col justify-center items-center text-slate-300">
-                   <p className="italic">Sin medicamentos prescritos</p>
-                </div>
-            )}
+            ) : null}
             
             {/* Diagnóstico (Parte Inferior Derecha) */}
             {diagnostico.enfermedad_actual && (
@@ -144,10 +167,10 @@ const RecetaIndividual = ({ expediente, doctor }) => {
       <div className="relative z-10 mt-auto pt-2 flex items-end justify-between">
          {/* Datos Sucursal */}
          <div className="text-[8px] text-slate-500 w-1/2 leading-tight">
-            <p className="font-black text-slate-800 uppercase mb-0.5">Suc. {doctor.sucursal || 'Central'}</p>
-            <p>Lunes a Sábado Abierto 24Hrs. Domingo Cierre a las 11:00 p.m.</p>
-            <p className="font-bold">Quejas o Sugerencias: 8182046067</p>
-            <p className="mt-0.5 uppercase">CUAJUCO 120 A Col. INFONAVIT la Huasteca, Santa Catarina, N.L.</p>
+            <p className="font-black text-slate-800 uppercase mb-0.5">Suc. {suc.nombre || doctor.sucursal || 'Central'}</p>
+            {(suc.horario) && <p>{suc.horario}</p>}
+            {(suc.quejas || suc.telefono) && <p className="font-bold">Quejas o Sugerencias: {suc.quejas || suc.telefono}</p>}
+            {(suc.direccion) && <p className="mt-0.5 uppercase">{suc.direccion}</p>}
          </div>
 
          {/* Firma */}
@@ -165,21 +188,58 @@ const RecetaIndividual = ({ expediente, doctor }) => {
 };
 
 // COMPONENTE PRINCIPAL (Layout de impresión doble)
-const FormatoReceta = ({ expediente, doctor }) => {
+const FormatoReceta = ({ expediente, doctor, sucursalInfo }) => {
   if (!expediente || !doctor) return null;
 
+   const tratamientoLista = expediente?.consulta?.diagnostico?.tratamiento_lista || [];
+   const medicamentosChunks = splitIntoChunks(tratamientoLista, MEDICAMENTOS_POR_RECETA);
+
+   // Si no hay medicamentos no se imprime la receta para evitar formatos vacios.
+   if (medicamentosChunks.length === 0) return null;
+
+   const paginas = splitIntoChunks(medicamentosChunks, 2);
+
   return (
-    <div className="hidden print:flex flex-col h-screen w-full bg-white m-0 p-0 overflow-hidden">
-        {/* Receta Superior */}
-        <div className="h-[50vh] w-full border-b border-dashed border-slate-300 relative box-border">
-            <RecetaIndividual expediente={expediente} doctor={doctor} />
-            <div className="absolute -bottom-2.5 left-4 bg-white px-1 text-slate-300 print:hidden text-[10px]">✄ Corte aquí</div>
-        </div>
-        {/* Receta Inferior */}
-        <div className="h-[50vh] w-full relative box-border">
-            <RecetaIndividual expediente={expediente} doctor={doctor} />
-        </div>
-    </div>
+      <div className="hidden print:block w-full bg-white m-0 p-0">
+         {paginas.map((pagina, paginaIdx) => {
+            const recetaSuperior = pagina[0];
+            const recetaInferior = pagina[1];
+            const baseSuperior = paginaIdx * 2 * MEDICAMENTOS_POR_RECETA;
+            const baseInferior = baseSuperior + MEDICAMENTOS_POR_RECETA;
+
+            return (
+               <div
+                  key={`pagina-receta-${paginaIdx}`}
+                  className={`flex flex-col h-screen w-full overflow-hidden ${paginaIdx > 0 ? 'print:break-before-page' : ''}`}
+               >
+                  {recetaSuperior ? (
+                     <div className="h-[50vh] w-full border-b border-dashed border-slate-300 relative box-border">
+                        <RecetaIndividual
+                           expediente={expediente}
+                           doctor={doctor}
+                           sucursalInfo={sucursalInfo}
+                           medicamentos={recetaSuperior}
+                           startIndex={baseSuperior}
+                        />
+                        <div className="absolute -bottom-2.5 left-4 bg-white px-1 text-slate-300 print:hidden text-[10px]">✄ Corte aquí</div>
+                     </div>
+                  ) : null}
+
+                  {recetaInferior ? (
+                     <div className="h-[50vh] w-full relative box-border">
+                        <RecetaIndividual
+                           expediente={expediente}
+                           doctor={doctor}
+                           sucursalInfo={sucursalInfo}
+                           medicamentos={recetaInferior}
+                           startIndex={baseInferior}
+                        />
+                     </div>
+                  ) : null}
+               </div>
+            );
+         })}
+      </div>
   );
 };
 

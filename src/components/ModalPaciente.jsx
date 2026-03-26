@@ -1,8 +1,10 @@
 // src/components/ModalPaciente.jsx
 import React, { useState, useEffect } from 'react';
 import { X, Save, User, MapPin, Activity, Layers, Calendar, Phone, Mail, FileText, Briefcase, Shield } from 'lucide-react';
+import AvatarPaciente from './AvatarPaciente';
 import { db } from '../config/firebase';
 import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { buildPatientHumanId } from '../utils/patientId';
 
 const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
   const [activeTab, setActiveTab] = useState('ficha'); // 'ficha' | 'interes'
@@ -43,9 +45,12 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
     setLoading(true);
     try {
       const nombreCompleto = `${formData.nombre} ${formData.apellidoPaterno} ${formData.apellidoMaterno || ''}`.trim();
+            const fechaReferencia = formData.fechaNacimiento || pacienteAEditar?.fechaNacimiento || null;
+            const idPaciente = buildPatientHumanId(nombreCompleto, fechaReferencia);
       const datosFinales = { 
         ...formData, 
         nombreCompleto,
+                idPaciente,
         fechaActualizacion: new Date().toISOString()
       };
 
@@ -58,7 +63,7 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
         docId = pacienteAEditar.id;
       } else {
         // MODO CREACIÓN
-        datosFinales.fechaRegistro = new Date().toISOString();
+                datosFinales.fechaRegistro = new Date().toISOString();
         const docRef = await addDoc(collection(db, "pacientes"), datosFinales);
         docId = docRef.id;
       }
@@ -125,10 +130,12 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                             <h3 className="section-title">Datos Generales</h3>
                             
                             <div className="flex gap-4 items-start mb-4">
-                                <div className="w-24 h-24 bg-slate-200 rounded-2xl flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:bg-slate-300 transition-colors shrink-0">
-                                    <User size={24} />
-                                    <span className="text-[9px] font-bold mt-1 uppercase">Foto</span>
-                                </div>
+                                <AvatarPaciente
+                                    sexo={formData.sexo}
+                                    fechaNacimiento={formData.fechaNacimiento}
+                                    size="xl"
+                                    showLabel
+                                />
                                 <div className="w-full space-y-3">
                                     <div><label className="label-style">Nombre(s) *</label><input required type="text" className="input-style" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} /></div>
                                     <div><label className="label-style">Apellido Paterno *</label><input required type="text" className="input-style" value={formData.apellidoPaterno} onChange={e => setFormData({...formData, apellidoPaterno: e.target.value})} /></div>

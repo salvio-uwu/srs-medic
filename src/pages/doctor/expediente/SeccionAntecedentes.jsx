@@ -37,11 +37,11 @@ const SeccionAntecedentes = ({
 
   // --- AQUÍ EMPIEZAN LOS RENDERS...
   // --- ESTILOS ---
-  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm animate-in fade-in h-full w-full flex flex-col overflow-hidden";
-  const labelClass = "text-[11px] font-bold text-slate-400 uppercase mb-1.5 ml-1 block tracking-wider";
-  const inputClass = "w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm font-medium text-slate-700 placeholder:text-slate-400";
-  const headerClass = "text-[13px] font-black text-blue-900 uppercase tracking-widest mb-6 border-b border-slate-100 pb-2 flex items-center gap-2";
-  const tableHeaderClass = "bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200";
+  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-full w-full flex flex-col overflow-hidden";
+  const labelClass = "text-[11px] font-semibold text-slate-500 uppercase mb-1.5 ml-1 block tracking-wider";
+  const inputClass = "w-full p-3 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-400 transition-colors text-sm font-medium text-slate-700 placeholder:text-slate-400";
+  const headerClass = "text-[13px] font-semibold text-blue-800 uppercase tracking-widest mb-6 border-b border-slate-200 pb-2 flex items-center gap-2";
+  const tableHeaderClass = "bg-slate-50 py-3 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-widest border-b border-slate-200";
   const tableRowClass = "py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors items-center";
 
   // --- RENDERS DE SECCIONES NUEVAS ---
@@ -82,7 +82,7 @@ const SeccionAntecedentes = ({
                   }} 
                   className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-0 text-sm flex gap-3 items-center rounded-xl"
                 >
-                  <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] font-black">{item.code}</span>
+                  <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] font-semibold">{item.code}</span>
                   <span className="text-slate-700 font-bold">{item.description}</span>
                 </div>
               ))}
@@ -160,7 +160,7 @@ const renderPerinatales = () => (
       <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-4">
         
         {/* GRUPO 1: SOBRE EL NACIMIENTO */}
-        <h5 className="text-xs font-black text-cyan-600 uppercase tracking-widest mb-4 border-b border-cyan-100 pb-1">
+        <h5 className="text-xs font-black text-blue-600 uppercase tracking-widest mb-4 border-b border-blue-100 pb-1">
           Sobre el nacimiento
         </h5>
         
@@ -190,7 +190,7 @@ const renderPerinatales = () => (
                 <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer hover:text-blue-600">
                   <input 
                     type="radio" 
-                    className="w-4 h-4 accent-cyan-500" 
+                    className="w-4 h-4 accent-blue-600" 
                     checked={expediente.antecedentes.perinatales?.curso_normal === true} 
                     onChange={() => updateCampo('antecedentes.perinatales.curso_normal', true)} 
                   /> Sí
@@ -198,7 +198,7 @@ const renderPerinatales = () => (
                 <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer hover:text-blue-600">
                   <input 
                     type="radio" 
-                    className="w-4 h-4 accent-cyan-500" 
+                    className="w-4 h-4 accent-blue-600" 
                     checked={expediente.antecedentes.perinatales?.curso_normal === false} 
                     onChange={() => updateCampo('antecedentes.perinatales.curso_normal', false)} 
                   /> No
@@ -235,7 +235,7 @@ const renderPerinatales = () => (
         </div>
 
         {/* GRUPO 2: SOBRE EL BEBÉ */}
-        <h5 className="text-xs font-black text-cyan-600 uppercase tracking-widest mb-4 border-b border-cyan-100 pb-1">
+        <h5 className="text-xs font-black text-blue-600 uppercase tracking-widest mb-4 border-b border-blue-100 pb-1">
           Sobre el bebé
         </h5>
 
@@ -789,7 +789,7 @@ const renderPsicomotor = () => {
                 <input className={`${inputClass} bg-white`} placeholder="Nombre de sustancia..." value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })} />
               )}
             </div>
-            <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-cyan-500 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:bg-cyan-600 transition-all active:scale-95">AGREGAR</button>
+            <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">AGREGAR</button>
           </div>
         </div>
         <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col mb-4">
@@ -818,7 +818,7 @@ const renderPsicomotor = () => {
         </div>
         <div className="flex gap-4 items-end">
           <div className="flex-1"><label className={labelClass}>Notas</label><input className={inputClass} value={tempVacuna.nota} onChange={e => setTempVacuna({...tempVacuna, nota: e.target.value})} /></div>
-          <button onClick={() => { if(tempVacuna.nombre) { updateCampo('antecedentes.vacunas.lista', [...(expediente.antecedentes.vacunas?.lista || []), tempVacuna]); setTempVacuna({ nombre: '', fecha: '', nota: '', seAplicoAqui: false }); } }} className="bg-cyan-500 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:bg-cyan-600 transition-all active:scale-95">REGISTRAR</button>
+          <button onClick={() => { if(tempVacuna.nombre) { updateCampo('antecedentes.vacunas.lista', [...(expediente.antecedentes.vacunas?.lista || []), tempVacuna]); setTempVacuna({ nombre: '', fecha: '', nota: '', seAplicoAqui: false }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">REGISTRAR</button>
         </div>
       </div>
       <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
@@ -950,7 +950,7 @@ const renderCirugias = () => {
                   updateCampo('antecedentes.cirugias.lista', [...lista, nueva]);
                   setTempCirugia({ procedimiento: '', operacion: '', nota: '', unidad: '', tipoFecha: 'fecha', ano: '2026', fechaHora: '', diagnostico: '' });
                 }}
-                className="bg-cyan-500 text-white px-10 h-[46px] rounded-xl font-bold shadow-lg shadow-cyan-500/20 hover:bg-cyan-600 transition-all active:scale-95"
+                className="bg-blue-600 text-white px-10 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95"
               >
                 Agregar
               </button>

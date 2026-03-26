@@ -1,241 +1,344 @@
-import React, { useState, useMemo } from 'react';
-import { 
-  X, Printer, Search, FileText, User, Activity, 
-  ClipboardList, ChevronRight, CheckCircle, AlignJustify, 
-  Columns, Droplet, MapPin, Hash, Download, Eye, Loader2
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  X,
+  Search,
+  ClipboardList,
+  ChevronRight,
+  User,
+  Droplet,
+  MapPin,
+  Download,
+  Eye,
+  FileText,
+  Loader2
 } from 'lucide-react';
-import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer'; 
-import DocumentoHistoriaPDF from './pdf/DocumentoHistoriaPDF'; 
+import { pdf } from '@react-pdf/renderer';
+import DocumentoHistoriaPDF from './pdf/DocumentoHistoriaPDF';
 
-const HistoriaClinicaModal = ({ onClose, paciente, historial, doctor, expedienteActual }) => {
+const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doctor, expedienteActual }) => {
   const [activeTab, setActiveTab] = useState('antecedentes');
   const [busqueda, setBusqueda] = useState('');
-  const [showPrintOptions, setShowPrintOptions] = useState(false);
-  const [modoPrevisualizacion, setModoPrevisualizacion] = useState(false);
+  const [activePanel, setActivePanel] = useState('historia');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSignature, setPreviewSignature] = useState('');
+  const previewUrlRef = useRef('');
 
-  // Filtros de búsqueda seguros
   const historialFiltrado = useMemo(() => {
     if (!Array.isArray(historial)) return [];
-    return historial.filter(h => 
-      (h.fecha && h.fecha.includes(busqueda)) || 
-      (h.motivo && h.motivo.toLowerCase().includes(busqueda.toLowerCase()))
-    );
+
+    return historial.filter((row) => {
+      const fecha = String(row?.fecha || '');
+      const motivo = String(row?.motivo || '').toLowerCase();
+      const q = busqueda.toLowerCase();
+      return fecha.includes(busqueda) || motivo.includes(q);
+    });
   }, [historial, busqueda]);
 
   const consultaActiva = useMemo(() => {
     if (!Array.isArray(historial)) return null;
-    return historial.find(h => h.id === activeTab);
+    return historial.find((row) => row.id === activeTab) || null;
   }, [historial, activeTab]);
 
+  const pdfDocument = useMemo(
+    () => (
+      <DocumentoHistoriaPDF
+        paciente={paciente}
+        historial={historial}
+        doctor={doctor}
+        expedienteActual={expedienteActual}
+      />
+    ),
+    [paciente, historial, doctor, expedienteActual]
+  );
+
+  const docSignature = useMemo(
+    () =>
+      JSON.stringify({
+        pacienteNombre: paciente?.nombre || '',
+        pacienteSexo: paciente?.sexo || '',
+        doctorNombre: doctor?.nombre || '',
+        doctorCedula: doctor?.cedulaProfesional || doctor?.cedula || '',
+        expedienteId: expedienteActual?.px_info?.id_receta || '',
+        expedienteEdad: expedienteActual?.px_info?.edad || '',
+        expedienteGrupo: expedienteActual?.px_info?.grupo_sanguineo || '',
+        expedienteNacimiento: expedienteActual?.px_info?.fecha_nacimiento || '',
+        antecedentesPatologicos: expedienteActual?.antecedentes?.patologicos?.actuales || '',
+        alergias:
+          Array.isArray(expedienteActual?.antecedentes?.alergias?.lista)
+            ? expedienteActual.antecedentes.alergias.lista.map((a) => a?.sustancia || '').join('|')
+            : '',
+        historial: Array.isArray(historial)
+          ? historial.map((c) => ({
+              id: c?.id || '',
+              fecha: c?.fecha || '',
+              motivo: c?.motivo || '',
+              padecimiento: c?.padecimiento || '',
+              diagnostico: c?.diagnostico || '',
+              indicaciones: c?.indicaciones || '',
+              signos: c?.signos || {},
+              receta: c?.receta || [],
+              auditSnapshot: c?.auditSnapshot || null
+            }))
+          : []
+      }),
+    [paciente, doctor, expedienteActual, historial]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const buildPreview = async () => {
+      if (activePanel !== 'documento') return;
+      if (previewUrl && previewSignature === docSignature) return;
+
+      setPreviewLoading(!previewUrl);
+
+      try {
+        const blob = await pdf(pdfDocument).toBlob();
+        if (cancelled) return;
+        const nextUrl = URL.createObjectURL(blob);
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = nextUrl;
+        setPreviewUrl(nextUrl);
+        setPreviewSignature(docSignature);
+      } catch (error) {
+        console.error('Error creando previsualizacion PDF', error);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    };
+
+    buildPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePanel, pdfDocument, docSignature, previewSignature, previewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = '';
+      }
+    };
+  }, []);
+
+  const getAuditLabel = (status = '') => {
+    if (status === 'aprobado') return 'Aprobado';
+    if (status === 'incompleto') return 'Incompleto';
+    if (status === 'critico') return 'Critico';
+    return 'Sin auditoria';
+  };
+
+  const downloadPreview = async () => {
+    try {
+      const blob = await pdf(pdfDocument).toBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Historia_Clinica_${(paciente?.nombre || 'Paciente').replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (error) {
+      console.error('Error descargando PDF', error);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[160] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 font-sans overflow-hidden">
-      
-      {/* CONTENEDOR PRINCIPAL */}
-      <div className="bg-white w-full max-w-7xl h-[92vh] rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden border border-white/40">
-        
-        {/* HEADER */}
-        <div className="bg-white p-6 border-b border-slate-200 flex justify-between items-center shrink-0">
-            <div className="flex items-center gap-5">
-                <div className="bg-cyan-500 p-3 rounded-2xl text-white shadow-lg shadow-cyan-500/20">
-                    <ClipboardList size={24} />
-                </div>
-                <div>
-                    <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight leading-none">Expediente Histórico</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1.5">{paciente?.nombre || 'Paciente'}</p>
-                </div>
+    <div className="fixed inset-0 z-[220] bg-slate-900/55 backdrop-blur-sm flex items-center justify-center p-4 overflow-hidden">
+      <div className="bg-white w-full max-w-7xl h-[92vh] rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-200 bg-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-600/25">
+              <ClipboardList size={22} />
             </div>
-            
-            <div className="flex items-center gap-3">
-                <div className="relative hidden lg:block">
-                    <Search className="absolute left-4 top-3 text-slate-400" size={16}/>
-                    <input className="pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-cyan-400 w-64" placeholder="Filtrar..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+            <div>
+              <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight">Expediente Clinico</h2>
+              <p className="text-xs text-slate-500 font-semibold">{paciente?.nombre || 'Paciente'}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {onBackToMenu && (
+              <button
+                onClick={onBackToMenu}
+                className="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:text-blue-700 hover:border-blue-200 text-[11px] font-bold uppercase tracking-wide transition-colors"
+                style={{ fontFamily: 'Sora, sans-serif' }}
+              >
+                Regresar al menu
+              </button>
+            )}
+            <button
+              onClick={() => setActivePanel('historia')}
+              className={`px-3 py-2 rounded-lg border text-xs font-bold uppercase tracking-wide transition-colors ${
+                activePanel === 'historia'
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'
+              }`}
+            >
+              Historia
+            </button>
+            <button
+              onClick={() => setActivePanel('documento')}
+              className={`px-3 py-2 rounded-lg border text-xs font-bold uppercase tracking-wide transition-colors inline-flex items-center gap-1.5 ${
+                activePanel === 'documento'
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 text-slate-600 hover:border-blue-200 hover:text-blue-700'
+              }`}
+            >
+              <Eye size={14} /> Documento
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 flex">
+          <aside className="w-80 border-r border-slate-200 bg-white flex flex-col shrink-0">
+            <div className="p-4 border-b border-slate-100">
+              <div className="relative">
+                <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:border-blue-300"
+                  placeholder="Buscar por fecha o motivo"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="p-3 space-y-2 overflow-y-auto">
+              <button
+                onClick={() => setActiveTab('antecedentes')}
+                className={`w-full text-left p-3 rounded-xl border transition-colors ${
+                  activeTab === 'antecedentes'
+                    ? 'border-blue-300 bg-blue-50'
+                    : 'border-slate-200 bg-white hover:border-blue-200'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-slate-700">
+                  <User size={15} />
+                  <span className="text-xs font-bold uppercase tracking-wide">Ficha General</span>
                 </div>
-                <button onClick={() => setShowPrintOptions(true)} className="bg-slate-900 hover:bg-black text-white px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 shadow-lg active:scale-95 transition-all">
-                    <Printer size={16}/> Opciones PDF
+              </button>
+
+              {historialFiltrado.map((row) => (
+                <button
+                  key={row.id}
+                  onClick={() => setActiveTab(row.id)}
+                  className={`w-full text-left p-3 rounded-xl border transition-colors ${
+                    activeTab === row.id
+                      ? 'border-blue-300 bg-blue-50'
+                      : 'border-slate-200 bg-white hover:border-blue-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-black text-slate-500 uppercase">{row.fecha}</p>
+                    {activeTab === row.id && <ChevronRight size={14} className="text-blue-600" />}
+                  </div>
+                  <p className="text-xs font-bold text-slate-800 truncate mt-1">{row.motivo || 'Consulta'}</p>
+                  <p className="text-[10px] font-semibold text-slate-500 mt-1">
+                    Auditoria: {getAuditLabel(row?.auditSnapshot?.status)}
+                  </p>
                 </button>
-                <button onClick={onClose} className="p-2.5 hover:bg-red-50 rounded-xl text-slate-300 hover:text-red-500 transition-colors"><X size={24}/></button>
+              ))}
             </div>
-        </div>
+          </aside>
 
-        <div className="flex-1 flex overflow-hidden">
-            {/* SIDEBAR IZQUIERDA */}
-            <aside className="w-80 bg-white border-r border-slate-100 flex flex-col shrink-0">
-                <div className="p-4 bg-slate-50 border-b border-slate-100">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Navegación</p>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                    <button onClick={() => setActiveTab('antecedentes')} className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-all border text-left ${activeTab === 'antecedentes' ? 'bg-cyan-500 text-white border-cyan-400 shadow-lg' : 'hover:bg-slate-50 text-slate-500 border-transparent bg-white'}`}>
-                        <User size={18}/> 
-                        <div>
-                            <span className="text-xs font-black uppercase block leading-none">Ficha General</span>
-                            <span className={`text-[9px] mt-1 block ${activeTab === 'antecedentes' ? 'text-cyan-100' : 'text-slate-400'}`}>Antecedentes</span>
-                        </div>
-                    </button>
-                    {historialFiltrado.map(h => (
-                        <button key={h.id} onClick={() => setActiveTab(h.id)} className={`w-full p-4 rounded-2xl flex flex-col gap-1 transition-all border text-left ${activeTab === h.id ? 'bg-white border-cyan-500 shadow-xl ring-2 ring-cyan-50' : 'bg-white border-slate-100 text-slate-500 hover:border-blue-200'}`}>
-                            <div className="flex justify-between items-center w-full">
-                                <span className={`text-[9px] font-black uppercase ${activeTab === h.id ? 'text-cyan-600' : 'text-slate-400'}`}>{h.fecha}</span>
-                                {activeTab === h.id && <ChevronRight size={14} className="text-cyan-500"/>}
-                            </div>
-                            <span className={`text-xs font-bold uppercase truncate w-full ${activeTab === h.id ? 'text-slate-800' : 'text-slate-600'}`}>{h.motivo}</span>
-                        </button>
-                    ))}
-                </div>
-            </aside>
-
-            {/* CONTENIDO UI DETALLADO */}
-            <main className="flex-1 p-8 overflow-y-auto bg-slate-50/30 rounded-tl-[3.5rem] m-4 border border-slate-100 shadow-inner bg-white custom-scrollbar">
+          <main className="flex-1 min-h-0 bg-slate-50/50 p-5">
+            {activePanel === 'historia' ? (
+              <div className="h-full rounded-2xl border border-slate-200 bg-white p-6 overflow-y-auto">
                 {activeTab === 'antecedentes' ? (
-                    <div className="max-w-4xl animate-in fade-in slide-in-from-bottom-4 duration-300">
-                        {/* BADGES SUPERIORES */}
-                        <div className="flex flex-wrap gap-3 mb-8">
-                            <div className="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 flex items-center gap-3">
-                                <Activity size={18} className="text-blue-500" />
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">Edad</p><p className="text-xs font-bold text-slate-700">{expedienteActual?.px_info?.edad || '--'}</p></div>
-                            </div>
-                            <div className="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 flex items-center gap-3">
-                                <User size={18} className="text-teal-500" />
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">Sexo</p><p className="text-xs font-bold text-slate-700 uppercase">{paciente?.sexo || '--'}</p></div>
-                            </div>
-                            <div className="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 flex items-center gap-3">
-                                <Droplet size={18} className="text-rose-500" />
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">Sangre</p><p className="text-xs font-bold text-slate-700">{expedienteActual?.px_info?.grupo_sanguineo || '---'}</p></div>
-                            </div>
-                            <div className="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 flex items-center gap-3">
-                                <MapPin size={18} className="text-slate-400" />
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">Origen</p><p className="text-xs font-bold text-slate-700 uppercase">{paciente?.municipioEstado || 'Sin dato'}</p></div>
-                            </div>
-                        </div>
+                  <div className="max-w-4xl mx-auto">
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Resumen del paciente</h3>
+                    <p className="text-xs font-semibold text-slate-500 mt-1">Base clinica para auditoria y continuidad</p>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                            <section>
-                                <h3 className="text-[11px] font-black text-cyan-600 uppercase tracking-widest mb-4 border-b border-cyan-50 pb-2">Heredofamiliares</h3>
-                                <div className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100">
-                                    <p className="text-sm text-slate-600 leading-relaxed italic">
-                                        {Object.keys(expedienteActual?.antecedentes?.hereditarios || {}).filter(k => k !== 'otros' && Object.values(expedienteActual.antecedentes.hereditarios[k]).some(v => v)).join(', ') || 'No se registran antecedentes de relevancia.'}
-                                    </p>
-                                </div>
-                            </section>
-                            <section>
-                                <h3 className="text-[11px] font-black text-cyan-600 uppercase tracking-widest mb-4 border-b border-cyan-50 pb-2">Patológicos / Alergias</h3>
-                                <div className="space-y-4">
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Padecimientos previos</p>
-                                        <p className="text-sm text-slate-700 font-medium">{expedienteActual?.antecedentes?.patologicos?.actuales || 'Negados.'}</p>
-                                    </div>
-                                    <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100">
-                                        <p className="text-[10px] font-black text-rose-600 uppercase mb-1">Alertas / Alergias:</p>
-                                        <p className="text-sm font-bold text-rose-800">{expedienteActual?.antecedentes?.alergias?.lista?.map(a => a.sustancia).join(', ') || 'Sin alergias conocidas'}</p>
-                                    </div>
-                                </div>
-                            </section>
-                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-5">
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Edad</p>
+                        <p className="text-sm font-black text-slate-800 mt-1">{expedienteActual?.px_info?.edad || '--'}</p>
+                      </div>
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Sexo</p>
+                        <p className="text-sm font-black text-slate-800 mt-1">{paciente?.sexo || '--'}</p>
+                      </div>
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Grupo Sanguineo</p>
+                        <p className="text-sm font-black text-slate-800 mt-1 inline-flex items-center gap-1.5">
+                          <Droplet size={13} className="text-rose-500" />
+                          {expedienteActual?.px_info?.grupo_sanguineo || '---'}
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold">Procedencia</p>
+                        <p className="text-sm font-black text-slate-800 mt-1 inline-flex items-center gap-1.5">
+                          <MapPin size={13} className="text-slate-500" />
+                          {paciente?.municipioEstado || 'Sin dato'}
+                        </p>
+                      </div>
                     </div>
+                  </div>
                 ) : (
-                    <div className="max-w-4xl animate-in fade-in slide-in-from-bottom-4 duration-300">
-                        <div className="flex justify-between items-start mb-8">
-                            <div>
-                                <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight">{consultaActiva?.motivo || 'Consulta'}</h2>
-                                <p className="text-sm font-bold text-cyan-500 mt-1">{consultaActiva?.fecha}</p>
-                            </div>
-                            <div className="bg-slate-50 px-4 py-2 rounded-xl text-center border border-slate-200">
-                                <p className="text-[9px] font-black text-slate-400 uppercase">Consultorio</p>
-                                <p className="text-xs font-bold text-slate-700">SANTA CRUZ CENTRAL</p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-5 gap-4 mb-10">
-                            {Object.entries(consultaActiva?.signos || {}).map(([k, v]) => (
-                                <div key={k} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
-                                    <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">{k}</span>
-                                    <span className="text-lg font-black text-slate-700">{v || '--'}</span>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="space-y-8">
-                            <div>
-                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Descripción Clínica</h4>
-                                <p className="text-sm text-slate-700 leading-relaxed bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">{consultaActiva?.padecimiento}</p>
-                            </div>
-                            <div>
-                                <h4 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-3">Diagnóstico y Plan</h4>
-                                <div className="bg-emerald-50/40 p-6 rounded-3xl border border-emerald-100">
-                                    <p className="text-lg font-black text-slate-800 uppercase mb-4">{consultaActiva?.diagnostico}</p>
-                                    <div className="space-y-3">
-                                        {consultaActiva?.receta?.map((m, idx) => (
-                                            <div key={idx} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-emerald-100 shadow-sm">
-                                                <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-xs">{idx + 1}</div>
-                                                <p className="text-xs font-bold text-slate-700 uppercase">{m.nombre} <span className="text-slate-400 font-normal normal-case">- {m.dosis}</span></p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                  <div className="max-w-4xl mx-auto">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                          {consultaActiva?.motivo || 'Consulta medica'}
+                        </h3>
+                        <p className="text-xs font-semibold text-blue-700 mt-1">{consultaActiva?.fecha || '--/--/----'}</p>
+                      </div>
+                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                        <p className="text-[10px] uppercase font-black text-blue-700">Auditoria</p>
+                        <p className="text-xs font-bold text-slate-700 mt-0.5">
+                          {getAuditLabel(consultaActiva?.auditSnapshot?.status)}
+                          {typeof consultaActiva?.auditSnapshot?.score === 'number' ? ` (${consultaActiva.auditSnapshot.score}%)` : ''}
+                        </p>
+                      </div>
                     </div>
+                  </div>
                 )}
-            </main>
-        </div>
+              </div>
+            ) : (
+              <div className="h-full rounded-2xl border border-slate-200 bg-white p-4 flex flex-col">
+                <div className="flex justify-between items-center mb-3 gap-2">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wide text-slate-800 inline-flex items-center gap-2">
+                      <FileText size={16} /> Documento Profesional
+                    </h3>
+                    <p className="text-xs text-slate-500 font-semibold mt-1">Vista estable sin parpadeo</p>
+                  </div>
 
-        {/* MODAL INTERNO: OPCIONES PDF (Corregido) */}
-        {showPrintOptions && (
-            <div className="absolute inset-0 z-[200] flex items-center justify-center p-4 bg-white/90 backdrop-blur-md animate-in fade-in">
-                <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden">
-                    <div className="flex justify-between items-center p-6 border-b border-slate-100">
-                        <h3 className="text-xl font-black text-slate-800 uppercase">Generar Reporte PDF</h3>
-                        <button onClick={() => { setShowPrintOptions(false); setModoPrevisualizacion(false); }} className="p-2 hover:bg-slate-100 rounded-full"><X size={24}/></button>
-                    </div>
-
-                    <div className="flex-1 flex flex-col md:flex-row p-6 gap-8">
-                        {/* Opciones Izquierda */}
-                        <div className="w-full md:w-1/3 space-y-6">
-                            <div className="p-5 bg-blue-50 rounded-3xl border border-blue-100">
-                                <p className="text-xs font-bold text-blue-700 mb-2">Formato Profesional</p>
-                                <p className="text-[10px] text-blue-600 leading-relaxed opacity-80">
-                                    Documento PDF optimizado para impresión, con diseño de expediente clínico estándar y logotipos.
-                                </p>
-                            </div>
-                            
-                            <div className="space-y-3">
-                                <PDFDownloadLink 
-                                    document={<DocumentoHistoriaPDF paciente={paciente} historial={historial} doctor={doctor} expedienteActual={expedienteActual} />} 
-                                    fileName={`Historia_${paciente?.nombre || 'Px'}.pdf`}
-                                    className="w-full"
-                                >
-                                    {({ loading }) => (
-                                        <button disabled={loading} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl flex items-center justify-center gap-3 hover:scale-[1.02] transition-transform disabled:opacity-50">
-                                            {loading ? <Loader2 className="animate-spin" size={18}/> : <><Download size={18}/> Descargar PDF</>}
-                                        </button>
-                                    )}
-                                </PDFDownloadLink>
-
-                                <button 
-                                    onClick={() => setModoPrevisualizacion(true)}
-                                    className="w-full py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-50 flex items-center justify-center gap-3 transition-colors"
-                                >
-                                    <Eye size={18}/> Ver en Pantalla
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Visor Derecha */}
-                        <div className="flex-1 bg-slate-100 rounded-3xl overflow-hidden border border-slate-200 relative shadow-inner">
-                            {modoPrevisualizacion ? (
-                                <PDFViewer width="100%" height="100%" className="w-full h-full border-none">
-                                    <DocumentoHistoriaPDF paciente={paciente} historial={historial} doctor={doctor} expedienteActual={expedienteActual} />
-                                </PDFViewer>
-                            ) : (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-                                    <FileText size={48} className="mb-4 opacity-20"/>
-                                    <p className="text-sm font-medium">Vista previa del documento aquí</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                  <button
+                    onClick={downloadPreview}
+                    disabled={!previewUrl || previewLoading}
+                    className="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold uppercase tracking-wide inline-flex items-center gap-2 hover:bg-black disabled:opacity-60"
+                  >
+                    <Download size={14} /> Descargar PDF
+                  </button>
                 </div>
-            </div>
-        )}
+
+                <div className="flex-1 min-h-0 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                  {previewLoading ? (
+                    <div className="h-full w-full flex items-center justify-center gap-2 text-slate-500 text-sm font-semibold">
+                      <Loader2 className="animate-spin" size={18} /> Generando previsualizacion...
+                    </div>
+                  ) : previewUrl ? (
+                    <iframe title="Vista previa documento clinico" src={previewUrl} className="w-full h-full" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm font-semibold">
+                      No se pudo generar la vista previa.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
       </div>
     </div>
   );

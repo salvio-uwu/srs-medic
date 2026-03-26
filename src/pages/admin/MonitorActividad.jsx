@@ -1,273 +1,519 @@
-// src/pages/admin/MonitorActividad.jsx
-import React, { useState, useEffect } from 'react';
-import { Clock, Users, DollarSign, Activity, LogIn, LogOut, Timer, AlertCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, Calendar, Filter, Search, Users } from 'lucide-react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+
+const ESTADOS_REALIZADA = new Set(['completada', 'finalizada', 'atendida']);
+const ESTADOS_CANCELADA = new Set(['cancelada', 'no_asistio']);
+const ROLES_AUDITABLES = new Set(['medico', 'admin', 'admin_maestro', 'enfermeria', 'jefa_enfermeria', 'rh', 'intendencia', 'recepcion', 'operativo']);
+
+const toDateInput = (d) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateSafe = (value) => {
+  if (!value) return null;
+  if (value?.toDate) return value.toDate();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const formatMoney = (value) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(value || 0));
+
+const formatDateTime = (value) => {
+  const date = parseDateSafe(value);
+  if (!date) return '--';
+  return date.toLocaleString('es-MX', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+const toRoleLabel = (role) => String(role || 'sin_rol').replaceAll('_', ' ');
+
+const isUserOnline = (user, now = new Date()) => {
+  if (user?.isOnline === true) return true;
+  const lastSeenDate = parseDateSafe(user?.lastSeen);
+  if (!lastSeenDate) return false;
+  const minutes = (now.getTime() - lastSeenDate.getTime()) / 60000;
+  return minutes <= 10;
+};
+
+const calcConnectedMinutes = (user, now = new Date()) => {
+  const start = parseDateSafe(user?.lastLogin);
+  if (!start || !isUserOnline(user, now)) return 0;
+  const diff = Math.floor((now.getTime() - start.getTime()) / 60000);
+  return Math.max(0, diff);
+};
+
+const formatMinutes = (mins = 0) => {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+};
+
+const normalizeCita = (id, raw = {}) => {
+  const fecha = raw.fecha || (raw.fechaHora ? String(raw.fechaHora).split('T')[0] : '');
+  return {
+    id,
+    fecha,
+    estado: normalizeText(raw.estado),
+    doctorUid: raw.doctorUid || '',
+    doctorNombre: raw.doctorNombre || '',
+    creadoPor: raw.creadoPor || '',
+    motivoPrecio: Number(raw.motivoPrecioSnapshot ?? raw.motivoPrecio ?? 0),
+    sucursal: raw.sucursal || 'Sin sucursal'
+  };
+};
+
+const getSortableValue = (row, key) => {
+  const value = row[key];
+  if (typeof value === 'number') return value;
+  return normalizeText(value);
+};
 
 const MonitorActividad = () => {
-  const [medicos, setMedicos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({}); 
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [error, setError] = useState('');
+  const [isLive, setIsLive] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(toDateInput(new Date()));
+  const [selectedSucursal, setSelectedSucursal] = useState('todas');
+  const [selectedRol, setSelectedRol] = useState('todos');
+  const [selectedEstatus, setSelectedEstatus] = useState('todos');
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('score');
+  const [sortDir, setSortDir] = useState('desc');
+  const [users, setUsers] = useState([]);
+  const [citas, setCitas] = useState([]);
+  const [movimientosConsultorio, setMovimientosConsultorio] = useState([]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        // A. Traer TODO el personal (Filtramos en memoria para evitar errores de índices en Firebase)
-        const usersRef = collection(db, "users");
-        const usersSnap = await getDocs(usersRef);
-        const usersList = usersSnap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(u => ['medico', 'admin', 'enfermeria', 'rh'].includes(u.rol)); // Monitoreamos operativos
-        
-        // B. Traer Consultas DE HOY
-        const hoy = new Date().toLocaleDateString('en-CA'); 
-        const consultasRef = collection(db, "consultas");
-        const qConsultas = query(consultasRef, where("fechaBusqueda", "==", hoy));
-        const consultasSnap = await getDocs(qConsultas);
-        
-        // C. Procesar Estadísticas
-        const newStats = {};
-        
-        consultasSnap.forEach(doc => {
-            const data = doc.data();
-            const doctorId = data.doctorId || "sin_id";
-            
-            if(!newStats[doctorId]) {
-                newStats[doctorId] = { pacientes: 0, dinero: 0 };
-            }
-            newStats[doctorId].pacientes += 1;
-            const costo = parseFloat(data.costo);
-            newStats[doctorId].dinero += isNaN(costo) ? 0 : costo; 
-        });
+    setLoading(true);
+    setError('');
 
-        setStats(newStats);
-        setMedicos(usersList);
-      } catch (error) {
-        console.error("Error al traer datos en vivo:", error);
-      } finally {
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setUsers(rows);
+        setIsLive(true);
+      },
+      (e) => {
+        console.error(e);
+        setError('No se pudo sincronizar personal en tiempo real.');
+      }
+    );
+
+    const qCitas = query(collection(db, 'citas'), where('fecha', '==', selectedDate));
+    const unsubCitas = onSnapshot(
+      qCitas,
+      (snap) => {
+        setCitas(snap.docs.map((d) => normalizeCita(d.id, d.data())));
+        setIsLive(true);
+        setLoading(false);
+      },
+      (e) => {
+        console.error(e);
+        setError('No se pudo sincronizar actividad de citas para la fecha seleccionada.');
+        setCitas([]);
         setLoading(false);
       }
+    );
+
+    const qMovimientos = query(collection(db, 'auditoria_movimientos_consultorio'), where('fechaString', '==', selectedDate));
+    const unsubMovimientos = onSnapshot(
+      qMovimientos,
+      (snap) => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        rows.sort((a, b) => {
+          const da = parseDateSafe(a.fecha);
+          const dbDate = parseDateSafe(b.fecha);
+          return (dbDate?.getTime() || 0) - (da?.getTime() || 0);
+        });
+        setMovimientosConsultorio(rows);
+      },
+      (e) => {
+        console.error(e);
+      }
+    );
+
+    return () => {
+      unsubUsers();
+      unsubCitas();
+      unsubMovimientos();
     };
+  }, [selectedDate]);
 
-    fetchData();
-    
-    // Sincronización cada 60 segundos y reloj interno cada 1 segundo
-    const interval = setInterval(fetchData, 60000);
-    const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
+  const personalAuditable = useMemo(() => {
+    return users.filter((u) => ROLES_AUDITABLES.has(normalizeText(u.rol)));
+  }, [users]);
 
-    return () => { clearInterval(interval); clearInterval(clockInterval); };
-  }, []);
+  const sucursales = useMemo(() => {
+    return Array.from(new Set(personalAuditable.map((u) => u.sucursal || u.asignacionRecurrente).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  }, [personalAuditable]);
 
-  // --- ALGORITMOS DE AUDITORÍA DE TIEMPOS ---
-  
-  const calcularTiempos = (lastLogin, isOnline, pacientes) => {
-    if (!lastLogin) return { activoTxt: "--", inactivoTxt: "--", eficiencia: 0, color: '#94a3b8' };
-    
-    const start = new Date(lastLogin);
-    if (isNaN(start.getTime())) return { activoTxt: "--", inactivoTxt: "--", eficiencia: 0, color: '#94a3b8' };
-    
-    // Si está offline, calculamos en base a su última sesión guardada (si la tuviéramos), 
-    // pero por ahora solo mostramos datos si está online.
-    if (!isOnline) return { activoTxt: "Desconectado", inactivoTxt: "-", eficiencia: 0, color: '#94a3b8' };
+  const roles = useMemo(() => {
+    return Array.from(new Set(personalAuditable.map((u) => normalizeText(u.rol)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [personalAuditable]);
 
-    const diffMs = currentTime - start;
-    const hrsConectado = diffMs / (1000 * 60 * 60); // Horas totales conectado
-    
-    const hrsFormat = Math.floor(hrsConectado);
-    const minsFormat = Math.floor((diffMs / (1000 * 60)) % 60);
-    
-    // AUDITORÍA: Asumimos que cada consulta toma en promedio 25 minutos efectivos.
-    const horasEfectivas = (pacientes * 25) / 60;
-    
-    let eficiencia = hrsConectado > 0 ? (horasEfectivas / hrsConectado) * 100 : 0;
-    if (eficiencia > 100) eficiencia = 100; // Tope máximo
+  const rows = useMemo(() => {
+    const now = new Date();
 
-    // Determinar el color del semáforo de eficiencia
-    let colorSemáforo = '#10b981'; // Verde (Eficiente)
-    if (eficiencia < 40) colorSemáforo = '#f59e0b'; // Amarillo (Regular)
-    if (eficiencia < 15 && hrsConectado > 1) colorSemáforo = '#e11d48'; // Rojo (Mucho tiempo muerto)
+    const base = personalAuditable.map((u) => {
+      const online = isUserOnline(u, now);
+      const connectedMinutes = calcConnectedMinutes(u, now);
+      const normalizedName = normalizeText(u.nombre);
 
-    return {
-      activoTxt: `${hrsFormat}h ${minsFormat}m`,
-      eficiencia: Math.round(eficiencia),
-      color: colorSemáforo
-    };
+      const citasAsignadas = citas.filter(
+        (c) => c.doctorUid === u.id || (!c.doctorUid && normalizeText(c.doctorNombre) === normalizedName)
+      );
+      const citasCreadas = citas.filter((c) => c.creadoPor === u.id);
+      const realizadas = citasAsignadas.filter((c) => ESTADOS_REALIZADA.has(c.estado));
+      const canceladas = citasAsignadas.filter((c) => ESTADOS_CANCELADA.has(c.estado));
+
+      const ingresos = realizadas.reduce((acc, c) => acc + Number(c.motivoPrecio || 0), 0);
+      const cambiosConsultorio = movimientosConsultorio.filter((m) => m.doctorUid === u.id).length;
+      const eficienciaPct = connectedMinutes > 0
+        ? Math.min(100, Math.round((realizadas.length * 25 * 100) / connectedMinutes))
+        : 0;
+      const atencionesPorHora = connectedMinutes > 0
+        ? Number((realizadas.length / (connectedMinutes / 60)).toFixed(2))
+        : 0;
+
+      const score = Number((
+        (realizadas.length * 4) +
+        (citasCreadas.length * 2) +
+        Math.min(eficienciaPct, 100) -
+        (canceladas.length * 1.5)
+      ).toFixed(2));
+
+      return {
+        id: u.id,
+        nombre: u.nombre || 'Sin nombre',
+        rol: toRoleLabel(u.rol),
+        sucursal: u.sucursal || u.asignacionRecurrente || 'Sin sucursal',
+        estatus: online ? 'en_turno' : 'offline',
+        conectado: formatMinutes(connectedMinutes),
+        conectadoMin: connectedMinutes,
+        citasAsignadas: citasAsignadas.length,
+        citasRealizadas: realizadas.length,
+        citasCanceladas: canceladas.length,
+        citasCreadas: citasCreadas.length,
+        cambiosConsultorio,
+        ingresos,
+        eficiencia: eficienciaPct,
+        atencionesPorHora,
+        score,
+        lastLogin: formatDateTime(u.lastLogin),
+        lastSeen: formatDateTime(u.lastSeen)
+      };
+    });
+
+    const term = normalizeText(search);
+    let filtered = base;
+
+    if (selectedSucursal !== 'todas') {
+      filtered = filtered.filter((r) => r.sucursal === selectedSucursal);
+    }
+
+    if (selectedRol !== 'todos') {
+      filtered = filtered.filter((r) => normalizeText(r.rol) === selectedRol);
+    }
+
+    if (selectedEstatus !== 'todos') {
+      filtered = filtered.filter((r) => r.estatus === selectedEstatus);
+    }
+
+    if (term) {
+      filtered = filtered.filter((r) => normalizeText(`${r.nombre} ${r.rol} ${r.sucursal}`).includes(term));
+    }
+
+    return [...filtered].sort((a, b) => {
+      const va = getSortableValue(a, sortBy);
+      const vb = getSortableValue(b, sortBy);
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
+  }, [personalAuditable, citas, movimientosConsultorio, selectedSucursal, selectedRol, selectedEstatus, search, sortBy, sortDir]);
+
+  const metricas = useMemo(() => {
+    const personal = rows.length;
+    const enTurno = rows.filter((r) => r.estatus === 'en_turno').length;
+    const atenciones = rows.reduce((acc, r) => acc + r.citasRealizadas, 0);
+    const ingresos = rows.reduce((acc, r) => acc + r.ingresos, 0);
+    const cambiosConsultorio = movimientosConsultorio.length;
+    const eficienciaPromedio = personal > 0
+      ? Math.round(rows.reduce((acc, r) => acc + r.eficiencia, 0) / personal)
+      : 0;
+
+    return { personal, enTurno, atenciones, ingresos, cambiosConsultorio, eficienciaPromedio };
+  }, [rows, movimientosConsultorio]);
+
+  const toggleSort = (key) => {
+    if (sortBy === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortBy(key);
+    setSortDir('desc');
   };
 
-  const formatHora = (isoString) => {
-      if(!isoString) return "--:--";
-      const date = new Date(isoString);
-      if (isNaN(date.getTime())) return "--:--";
-      return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-  };
+  const columns = [
+    { key: 'nombre', label: 'Personal' },
+    { key: 'rol', label: 'Rol' },
+    { key: 'sucursal', label: 'Sucursal' },
+    { key: 'estatus', label: 'Estatus' },
+    { key: 'conectadoMin', label: 'Conectado' },
+    { key: 'citasAsignadas', label: 'Asignadas' },
+    { key: 'citasRealizadas', label: 'Realizadas' },
+    { key: 'citasCanceladas', label: 'Canceladas' },
+    { key: 'citasCreadas', label: 'Creadas' },
+    { key: 'cambiosConsultorio', label: 'Cambios consultorio' },
+    { key: 'atencionesPorHora', label: 'Atenc./h' },
+    { key: 'eficiencia', label: 'Eficiencia' },
+    { key: 'ingresos', label: 'Ingreso' },
+    { key: 'score', label: 'Score' },
+    { key: 'lastSeen', label: 'Ult. movimiento' }
+  ];
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
-        
-        .font-jakarta { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
-        .font-inter { font-family: 'Inter', system-ui, sans-serif; }
-        
-        .fade-up { animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; transform: translateY(20px); }
-        @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-        
-        .glass-card {
-          background: #ffffff;
-          border-radius: 20px;
-          box-shadow: 0 10px 30px -10px rgba(15,23,42,0.06), 0 0 0 1px rgba(15,23,42,0.04);
-          transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .glass-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 20px 40px -10px rgba(15,23,42,0.1), 0 0 0 1px rgba(15,23,42,0.05);
-        }
+    <div className="p-6 max-w-[1800px] mx-auto pb-16 space-y-5">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Sora, sans-serif' }}>
+            Monitor de Rendimiento del Personal
+          </h1>
+          <p className="text-sm text-slate-500">Vista auditable por persona con productividad, actividad operativa e impacto diario.</p>
+        </div>
+        <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-semibold ${isLive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+          <Activity size={14} />
+          {isLive ? 'Informacion en tiempo real' : 'Conectando...'}
+        </div>
+      </div>
 
-        .stripe-bg {
-          background-image: repeating-linear-gradient(-45deg, transparent, transparent 18px, rgba(15,23,42,0.01) 18px, rgba(15,23,42,0.01) 19px);
-        }
-        
-        /* Progress Bar Animation */
-        .progress-bar { transition: width 1s cubic-bezier(0.16, 1, 0.3, 1); }
-      `}</style>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">Personal auditado</p>
+          <p className="text-xl font-bold text-slate-800">{metricas.personal}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">En turno</p>
+          <p className="text-xl font-bold text-emerald-700">{metricas.enTurno}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">Atenciones</p>
+          <p className="text-xl font-bold text-slate-800">{metricas.atenciones}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">Cambios consultorio</p>
+          <p className="text-xl font-bold text-indigo-700">{metricas.cambiosConsultorio}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">Ingreso</p>
+          <p className="text-xl font-bold text-emerald-700">{formatMoney(metricas.ingresos)}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase">Eficiencia promedio</p>
+          <p className="text-xl font-bold text-blue-700">{metricas.eficienciaPromedio}%</p>
+        </div>
+      </div>
 
-      <div className="min-h-screen bg-[#f4f7f9] p-6 md:p-10 font-inter pb-20">
-        
-        {/* --- HEADER --- */}
-        <div className="fade-up flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-4">
-          <div>
-            <h1 className="font-jakarta text-3xl font-extrabold text-[#0f172a] flex items-center gap-3 tracking-tight">
-              Monitor de Productividad
-            </h1>
-            <p className="text-[13px] text-[#64748b] font-medium mt-1">
-              Auditoría en vivo de personal, tiempos efectivos y saturación.
-            </p>
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+        <div className="flex flex-wrap items-end gap-2.5">
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-600 min-w-[170px]">
+            Fecha
+            <div className="relative">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+              />
+            </div>
+          </label>
+
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-600 min-w-[165px]">
+            Sucursal
+            <select
+              value={selectedSucursal}
+              onChange={(e) => setSelectedSucursal(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+            >
+              <option value="todas">Todas</option>
+              {sucursales.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-600 min-w-[145px]">
+            Rol
+            <select
+              value={selectedRol}
+              onChange={(e) => setSelectedRol(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+            >
+              <option value="todos">Todos</option>
+              {roles.map((r) => (
+                <option key={r} value={r}>{toRoleLabel(r)}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-600 min-w-[145px]">
+            Estatus
+            <select
+              value={selectedEstatus}
+              onChange={(e) => setSelectedEstatus(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+            >
+              <option value="todos">Todos</option>
+              <option value="en_turno">En turno</option>
+              <option value="offline">Offline</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-600 flex-1 min-w-[220px]">
+            Buscar personal
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Nombre, rol o sucursal"
+                className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+              />
+            </div>
+          </label>
+
+          <div className="inline-flex items-center gap-2 text-xs text-slate-500 self-end pb-1">
+            <Filter size={13} />
+            {rows.length} registro(s) auditables
           </div>
-          <div className="flex items-center gap-3 bg-white px-5 py-2.5 rounded-full border border-[#cbd5e1] shadow-sm text-[12px] font-bold text-[#64748b] uppercase tracking-wider">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-            </span>
-            Actualización: 1s
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm border border-red-200 bg-red-50 text-red-700 rounded-xl px-4 py-3">{error}</div>
+      )}
+
+      <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">Tabla dinámica de rendimiento</h2>
+            <p className="text-xs text-slate-500">Ordena por cualquier columna para detectar saturación, tiempos muertos y resultados por personal.</p>
+          </div>
+          <div className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+            <Users size={13} />
+            Personal operativo
           </div>
         </div>
 
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 fade-up">
-            <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
-            <p className="text-[#64748b] font-medium text-sm">Escaneando red de sucursales...</p>
-          </div>
+          <div className="px-4 py-12 text-sm text-slate-500 text-center">Cargando monitor de actividad...</div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 fade-up">
-            {medicos.map((medico, idx) => {
-                const isOnline = medico.isOnline; 
-                const stat = stats[medico.id] || { pacientes: 0, dinero: 0 };
-                const tiempos = calcularTiempos(medico.lastLogin, isOnline, stat.pacientes);
-                
-                const nombreMostrar = medico.nombre || "Usuario Desconocido";
-                const inicial = nombreMostrar.charAt(0).toUpperCase();
-
-                return (
-                  <div key={medico.id} className="glass-card stripe-bg overflow-hidden flex flex-col relative" style={{ animationDelay: `${idx * 0.05}s` }}>
-                    
-                    {/* Borde superior dinámico según estado */}
-                    <div className="h-1.5 w-full" style={{ background: isOnline ? tiempos.color : '#cbd5e1' }}></div>
-
-                    {/* --- 1. CABECERA (IDENTIDAD) --- */}
-                    <div className="p-6 border-b border-[#f1f5f9] flex justify-between items-start bg-white">
-                        <div className="flex gap-4 items-center">
-                            <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-jakarta font-bold text-lg shadow-inner" style={{ background: isOnline ? '#f0fdf4' : '#f8fafc', color: isOnline ? '#16a34a' : '#94a3b8', border: `1px solid ${isOnline ? '#bbf7d0' : '#e2e8f0'}` }}>
-                                {inicial}
-                            </div>
-                            <div>
-                                <h3 className="font-jakarta font-bold text-[#0f172a] text-[15px] leading-tight">{nombreMostrar}</h3>
-                                <p className="text-[11px] text-[#64748b] font-bold uppercase tracking-wider mt-1 flex items-center gap-1.5">
-                                    <span className="text-blue-500">{medico.rol?.replace('_', ' ')}</span> • {medico.sucursal || 'General'}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border" style={{ background: isOnline ? '#f0fdf4' : '#f8fafc', color: isOnline ? '#16a34a' : '#94a3b8', borderColor: isOnline ? '#bbf7d0' : '#e2e8f0' }}>
-                            {isOnline && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>}
-                            {isOnline ? 'En Turno' : 'Offline'}
-                        </div>
-                    </div>
-
-                    {/* --- 2. AUDITORÍA DE TIEMPOS --- */}
-                    <div className="px-6 py-5 bg-[#f8fafc] border-b border-[#f1f5f9]">
-                        <div className="grid grid-cols-2 gap-4 mb-4">
-                            <div>
-                                <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5 mb-1">
-                                    <LogIn size={12}/> Entrada
-                                </p>
-                                <p className="font-jakarta text-[15px] font-bold text-[#0f172a]">
-                                    {formatHora(medico.lastLogin)}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1.5 mb-1">
-                                    {isOnline ? <Clock size={12} className="text-blue-500"/> : <LogOut size={12}/>}
-                                    Conectado
-                                </p>
-                                <p className={`font-jakarta text-[15px] font-bold ${isOnline ? 'text-blue-600' : 'text-[#94a3b8]'}`}>
-                                    {isOnline ? tiempos.activoTxt : formatHora(medico.lastSeen)}
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Barra de Eficiencia (Solo si está online) */}
-                        {isOnline && (
-                          <div>
-                            <div className="flex justify-between items-center mb-1.5">
-                              <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider flex items-center gap-1">
-                                <Timer size={10} /> Eficiencia Estimada
-                              </p>
-                              <span className="text-[10px] font-bold" style={{ color: tiempos.color }}>{tiempos.eficiencia}%</span>
-                            </div>
-                            <div className="w-full bg-[#e2e8f0] rounded-full h-1.5 overflow-hidden">
-                              <div className="h-full progress-bar rounded-full" style={{ width: `${tiempos.eficiencia}%`, background: tiempos.color }}></div>
-                            </div>
-                            {tiempos.eficiencia < 15 && tiempos.activoTxt !== "--" && (
-                              <p className="text-[10px] text-[#e11d48] font-medium mt-1.5 flex items-center gap-1">
-                                <AlertCircle size={10} /> Posible tiempo muerto detectado
-                              </p>
-                            )}
-                          </div>
-                        )}
-                    </div>
-
-                    {/* --- 3. RENDIMIENTO (PACIENTES / INGRESOS) --- */}
-                    <div className="p-6 grid grid-cols-2 gap-4 bg-white mt-auto">
-                        <div className="bg-[#f1f5f9] rounded-xl p-3 border border-[#e2e8f0] group hover:border-blue-300 transition-colors">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <Users size={12} className="text-blue-500"/>
-                                <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Atenciones</span>
-                            </div>
-                            <p className="font-jakarta text-2xl font-extrabold text-[#0f172a] group-hover:text-blue-600 transition-colors">
-                              {stat.pacientes}
-                            </p>
-                        </div>
-
-                        <div className="bg-[#f1f5f9] rounded-xl p-3 border border-[#e2e8f0] group hover:border-emerald-300 transition-colors">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <DollarSign size={12} className="text-emerald-500"/>
-                                <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Generado</span>
-                            </div>
-                            <p className="font-jakarta text-2xl font-extrabold text-[#0f172a] group-hover:text-emerald-600 transition-colors">
-                              ${stat.dinero}
-                            </p>
-                        </div>
-                    </div>
-
-                  </div>
-                );
-            })}
+          <div className="overflow-auto">
+            <table className="w-full min-w-[1700px] text-left">
+              <thead className="bg-slate-50">
+                <tr>
+                  {columns.map((col) => (
+                    <th
+                      key={col.key}
+                      onClick={() => toggleSort(col.key)}
+                      className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 cursor-pointer select-none"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {col.label}
+                        {sortBy === col.key ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={columns.length} className="px-4 py-12 text-sm text-slate-500 text-center">No hay personal para los filtros seleccionados.</td>
+                  </tr>
+                )}
+                {rows.map((row) => (
+                  <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/70">
+                    <td className="px-3 py-2.5 text-sm font-semibold text-slate-700">{row.nombre}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.rol}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.sucursal}</td>
+                    <td className="px-3 py-2.5 text-sm">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${row.estatus === 'en_turno' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                        {row.estatus === 'en_turno' ? 'En turno' : 'Offline'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.conectado}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.citasAsignadas}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-slate-700">{row.citasRealizadas}</td>
+                    <td className="px-3 py-2.5 text-sm text-rose-700">{row.citasCanceladas}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.citasCreadas}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.atencionesPorHora}</td>
+                    <td className="px-3 py-2.5 text-sm">
+                      <span className={`font-semibold ${row.eficiencia >= 70 ? 'text-emerald-700' : row.eficiencia >= 40 ? 'text-amber-700' : 'text-rose-700'}`}>
+                        {row.eficiencia}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-emerald-700">{formatMoney(row.ingresos)}</td>
+                    <td className="px-3 py-2.5 text-sm font-semibold text-blue-700">{row.score}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600">{row.lastSeen}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-      </div>
-    </>
+      </section>
+
+      <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">Auditoria de rotaciones de consultorio</h2>
+            <p className="text-xs text-slate-500">Movimientos registrados por médicos en la fecha seleccionada.</p>
+          </div>
+          <div className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+            <Users size={13} />
+            {movimientosConsultorio.length} movimiento(s)
+          </div>
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[900px] text-left">
+            <thead className="bg-slate-50">
+              <tr>
+                {['Hora', 'Medico', 'Sucursal anterior', 'Consultorio anterior', 'Sucursal nueva', 'Consultorio nuevo'].map((h) => (
+                  <th key={h} className="px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {movimientosConsultorio.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-sm text-slate-500 text-center">Sin movimientos de consultorio registrados para esta fecha.</td>
+                </tr>
+              )}
+              {movimientosConsultorio.map((m) => (
+                <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50/70">
+                  <td className="px-3 py-2.5 text-sm text-slate-600">{formatDateTime(m.fecha)}</td>
+                  <td className="px-3 py-2.5 text-sm font-semibold text-slate-700">{m.doctorNombre || '--'}</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-600">{m.sucursalAnterior || '--'}</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-600">{m.consultorioAnterior || '--'}</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-600">{m.sucursalNueva || '--'}</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-600">{m.consultorioNuevo || '--'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 };
 

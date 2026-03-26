@@ -5,19 +5,67 @@ import {
   Wind, CheckCircle, AlertCircle, XCircle 
 } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
-import { doc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import AvatarPaciente from '../../components/AvatarPaciente';
 
 const Triage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { citaId, pacienteId, pacienteNombre } = location.state || {};
+  const { citaId, pacienteId, pacienteNombre, editMode } = location.state || {};
 
   // --- ESTADOS ---
   const [signos, setSignos] = useState({
     peso: '', talla: '', temp: '', fc: '', fr: '', ta: '', spo2: '', imc: ''
   });
-  const [motivo, setMotivo] = useState('');
   const [alergias, setAlergias] = useState('');
+  const [cargandoDatos, setCargandoDatos] = useState(!!editMode);
+    const [pacienteMeta, setPacienteMeta] = useState({ sexo: '', fechaNacimiento: '' });
+
+  // Precargar datos existentes en modo edición
+  useEffect(() => {
+    if (!editMode || !citaId) return;
+    const cargar = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'citas', citaId));
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.signos_vitales) setSignos(prev => ({ ...prev, ...data.signos_vitales }));
+          if (data.triage_alergias) setAlergias(data.triage_alergias);
+        }
+      } catch (e) {
+        console.error('Error cargando triage existente', e);
+      } finally {
+        setCargandoDatos(false);
+      }
+    };
+    cargar();
+  }, [editMode, citaId]);
+
+    // Cargar datos del paciente para avatar en encabezado
+    useEffect(() => {
+        if (!pacienteId) {
+            setPacienteMeta({ sexo: '', fechaNacimiento: '' });
+            return;
+        }
+
+        let active = true;
+        const cargarPaciente = async () => {
+            try {
+                const snap = await getDoc(doc(db, 'pacientes', pacienteId));
+                if (!snap.exists() || !active) return;
+                const data = snap.data() || {};
+                setPacienteMeta({
+                    sexo: data.sexo || '',
+                    fechaNacimiento: data.fechaNacimiento || data.fecha_nacimiento || ''
+                });
+            } catch (e) {
+                console.error('Error cargando paciente para avatar', e);
+            }
+        };
+
+        cargarPaciente();
+        return () => { active = false; };
+    }, [pacienteId]);
   
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false); // Modal éxito
@@ -45,10 +93,6 @@ const Triage = () => {
         setErrorMsg("Error: No se ha identificado al paciente.");
         return;
     }
-    if (!motivo.trim()) {
-        setErrorMsg("Por favor, describe el motivo de la visita.");
-        return;
-    }
     
     setLoading(true);
     setErrorMsg(''); 
@@ -59,12 +103,12 @@ const Triage = () => {
             pacienteId: pacienteId || "externo",
             pacienteNombre,
             signos,
-            motivo,
             alergias,
             citaId: citaId || null,
             realizadoPor: auth.currentUser?.uid || 'anonimo',
             fecha: serverTimestamp(),
-            estado: 'esperando_doctor'
+            estado: 'esperando_doctor',
+            esEdicion: !!editMode
         });
 
         // 2. Actualizar Cita (Comunicación con el Médico)
@@ -72,10 +116,7 @@ const Triage = () => {
             await updateDoc(doc(db, "citas", citaId), { 
                 estado: 'en_espera', 
                 signos_vitales: signos,
-                // --- INYECCIÓN DE DATOS PARA EL EXPEDIENTE ---
-                triage_motivo: motivo, 
                 triage_alergias: alergias
-                // ---------------------------------------------
             });
         }
 
@@ -131,9 +172,12 @@ const Triage = () => {
                 
                 {/* 1. PACIENTE (Banner Compacto) */}
                 <div className="bg-gradient-to-r from-rose-50 to-indigo-50 p-4 rounded-2xl border border-white/60 shadow-sm flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-rose-500 shadow-sm shrink-0">
-                        <User size={20} strokeWidth={2.5} />
-                    </div>
+                    <AvatarPaciente
+                        sexo={pacienteMeta.sexo}
+                        fechaNacimiento={pacienteMeta.fechaNacimiento}
+                        size="md"
+                        className="shrink-0"
+                    />
                     <div className="flex-1">
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Paciente</p>
                         <input 
@@ -145,26 +189,16 @@ const Triage = () => {
                     </div>
                 </div>
 
-                {/* 2. MOTIVO Y ALERGIAS (Grid) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div>
-                        <label className={labelStyle}>Motivo de Visita</label>
-                        <textarea 
-                            value={motivo} onChange={e => setMotivo(e.target.value)}
-                            className={`${glassInput} h-24 resize-none`}
-                            placeholder="Razón de la urgencia..."
-                        />
-                    </div>
-                    <div>
-                        <label className={`${labelStyle} flex items-center gap-1 text-rose-500`}>
-                            Alergias <AlertCircle size={10} />
-                        </label>
-                        <textarea 
-                            value={alergias} onChange={e => setAlergias(e.target.value)}
-                            className={`${glassInput} h-24 resize-none bg-rose-50/40 border-rose-100/50 focus:ring-rose-200`}
-                            placeholder="Ninguna conocida..."
-                        />
-                    </div>
+                {/* 2. ALERGIAS */}
+                <div>
+                    <label className={`${labelStyle} flex items-center gap-1 text-rose-500`}>
+                        Alergias <AlertCircle size={10} />
+                    </label>
+                    <textarea 
+                        value={alergias} onChange={e => setAlergias(e.target.value)}
+                        className={`${glassInput} h-24 resize-none bg-rose-50/40 border-rose-100/50 focus:ring-rose-200`}
+                        placeholder="Ninguna conocida..."
+                    />
                 </div>
 
                 {/* 3. SIGNOS VITALES (Compacto) */}
@@ -208,7 +242,7 @@ const Triage = () => {
                         disabled={loading}
                         className="bg-slate-900 text-white px-8 py-3 rounded-xl font-bold text-sm shadow-lg shadow-slate-900/20 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:scale-100"
                     >
-                        {loading ? 'Guardando...' : <>Finalizar Triage <Save size={16}/></>}
+                        {loading ? 'Guardando...' : <>{editMode ? 'Guardar Cambios' : 'Finalizar Triage'} <Save size={16}/></>}
                     </button>
                 </div>
 
@@ -225,7 +259,7 @@ const Triage = () => {
                     </div>
                     <h2 className="text-xl font-bold text-slate-800">¡Listo!</h2>
                     <p className="text-xs text-slate-500 font-medium mb-6 mt-1">
-                        Información registrada correctamente.
+                        {editMode ? 'Triage actualizado correctamente.' : 'Información registrada correctamente.'}
                     </p>
                     <button 
                         onClick={() => navigate('/enfermeria/dashboard')}

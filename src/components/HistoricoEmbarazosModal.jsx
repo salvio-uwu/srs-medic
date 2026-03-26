@@ -3,7 +3,7 @@ import { X, Baby, Calendar, Activity, Loader2, AlertCircle } from 'lucide-react'
 import { db } from '../config/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
-const HistoricoEmbarazosModal = ({ onClose, pacienteId, pacienteNombre }) => {
+const HistoricoEmbarazosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNombre }) => {
   const [loading, setLoading] = useState(true);
   const [embarazos, setEmbarazos] = useState([]);
 
@@ -29,17 +29,28 @@ const HistoricoEmbarazosModal = ({ onClose, pacienteId, pacienteNombre }) => {
   }, [pacienteId]);
 
   return (
-    <div className="fixed inset-0 z-[150] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 font-sans">
+    <div className="fixed inset-0 z-[220] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 font-sans">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 border border-slate-100">
         
         {/* HEADER */}
         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2" style={{ fontFamily: 'Sora, sans-serif' }}>
             <Baby size={20} className="text-rose-500"/> Histórico de Embarazos
           </h3>
-          <button onClick={onClose} className="p-2 hover:bg-red-50 rounded-full text-slate-400 hover:text-red-500 transition-colors">
-            <X size={20}/>
-          </button>
+          <div className="flex items-center gap-2">
+            {onBackToMenu && (
+              <button
+                onClick={onBackToMenu}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:text-blue-700 hover:border-blue-200 text-[11px] font-bold uppercase tracking-wide transition-all"
+                style={{ fontFamily: 'Sora, sans-serif' }}
+              >
+                Regresar al menu
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-red-50 rounded-full text-slate-400 hover:text-red-500 transition-colors">
+              <X size={20}/>
+            </button>
+          </div>
         </div>
 
         <div className="p-6 overflow-y-auto max-h-[70vh] custom-scrollbar">
@@ -91,9 +102,20 @@ const HistoricoEmbarazosModal = ({ onClose, pacienteId, pacienteNombre }) => {
 
         {/* FOOTER */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
-          <button onClick={onClose} className="px-8 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-900 transition-all">
+          <div className="flex items-center gap-2">
+            {onBackToMenu && (
+              <button
+                onClick={onBackToMenu}
+                className="px-6 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-sm shadow hover:border-blue-200 hover:text-blue-700 transition-all"
+                style={{ fontFamily: 'Sora, sans-serif' }}
+              >
+                Regresar al menu
+              </button>
+            )}
+            <button onClick={onClose} className="px-8 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-900 transition-all" style={{ fontFamily: 'Sora, sans-serif' }}>
             Cerrar
-          </button>
+            </button>
+          </div>
         </div>
       </div>
     </div>

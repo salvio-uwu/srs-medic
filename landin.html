@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SRS Médico — Sistema de Gestión Clínica de Nueva Generación</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue-50: #e0f2fe;
+      --blue-100: #bae6fd;
+      --blue-400: #38bdf8;
+      --blue-500: #0ea5e9;
+      --blue-600: #0077B6;
+      --blue-700: #005f8f;
+      --blue-900: #0c2340;
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-300: #cbd5e1;
+      --slate-400: #94a3b8;
+      --slate-500: #64748b;
+      --slate-600: #475569;
+      --slate-700: #334155;
+      --slate-800: #1e293b;
+      --slate-900: #0f172a;
+      --emerald: #10b981;
+      --rose: #f43f5e;
+      --amber: #f59e0b;
+      --purple: #8b5cf6;
+      --teal: #14b8a6;
+      --indigo: #6366f1;
+      --cyan: #06b6d4;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--slate-900);
+      color: #e2e8f0;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    /* ── NOISE TEXTURE OVERLAY ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── NAVBAR ── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(15, 23, 42, 0.7);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      transition: all 0.3s;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+      text-decoration: none;
+    }
+
+    .nav-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--blue-600), var(--teal));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      box-shadow: 0 0 20px rgba(0,119,182,0.5);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--slate-400);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: #fff; }
+
+    .nav-cta {
+      background: var(--blue-600);
+      color: #fff !important;
+      padding: 0.5rem 1.25rem;
+      border-radius: 8px;
+      font-weight: 600 !important;
+      transition: all 0.2s !important;
+      box-shadow: 0 0 20px rgba(0,119,182,0.4);
+    }
+    .nav-cta:hover {
+      background: var(--blue-700) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 0 30px rgba(0,119,182,0.6) !important;
+    }
+
+    /* ── SECTIONS ── */
+    section { position: relative; z-index: 1; }
+
+    /* ── HERO ── */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6rem 2rem 4rem;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,119,182,0.25) 0%, transparent 70%),
+                  radial-gradient(ellipse 40% 40% at 80% 80%, rgba(20,184,166,0.1) 0%, transparent 60%),
+                  radial-gradient(ellipse 40% 40% at 20% 60%, rgba(99,102,241,0.08) 0%, transparent 60%);
+    }
+
+    /* Animated grid */
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,119,182,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,119,182,0.06) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
+    }
+
+    /* ECG line */
+    .ecg-container {
+      position: absolute;
+      bottom: 10%;
+      left: 0;
+      right: 0;
+      height: 80px;
+      overflow: hidden;
+      opacity: 0.2;
+    }
+
+    .ecg-line {
+      position: absolute;
+      height: 100%;
+      width: 200%;
+      animation: ecgScroll 8s linear infinite;
+    }
+
+    @keyframes ecgScroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    .hero-content { position: relative; max-width: 900px; }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(0,119,182,0.15);
+      border: 1px solid rgba(0,119,182,0.4);
+      color: var(--blue-400);
+      padding: 0.4rem 1rem;
+      border-radius: 100px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+      animation: fadeSlideDown 0.8s ease both;
+    }
+
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--emerald);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--emerald);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.4); }
+    }
+
+    h1 {
+      font-family: 'Sora', sans-serif;
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1.1;
+      color: #fff;
+      margin-bottom: 1.5rem;
+      animation: fadeSlideDown 0.8s 0.1s ease both;
+    }
+
+    h1 .accent {
+      background: linear-gradient(90deg, var(--blue-400), var(--teal));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      color: var(--slate-400);
+      max-width: 600px;
+      margin: 0 auto 2.5rem;
+      font-weight: 400;
+      animation: fadeSlideDown 0.8s 0.2s ease both;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      animation: fadeSlideDown 0.8s 0.3s ease both;
+    }
+
+    .btn-primary {
+      background: var(--blue-600);
+      color: #fff;
+      padding: 0.875rem 2rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      box-shadow: 0 0 30px rgba(0,119,182,0.5);
+      transition: all 0.3s;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 50px rgba(0,119,182,0.7);
+      background: #0088cc;
+    }
+
+    .btn-ghost {
+      background: rgba(255,255,255,0.05);
+      color: var(--slate-300);
+      padding: 0.875rem 2rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      transition: all 0.3s;
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      transform: translateY(-2px);
+    }
+
+    /* Stats */
+    .hero-stats {
+      display: flex;
+      justify-content: center;
+      gap: 3rem;
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      flex-wrap: wrap;
+      animation: fadeSlideDown 0.8s 0.4s ease both;
+    }
+
+    .stat-item { text-align: center; }
+
+    .stat-value {
+      font-family: 'Sora', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      color: #fff;
+      display: block;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--slate-500);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeSlideDown {
+      from { opacity: 0; transform: translateY(-20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── SECTION HEADERS ── */
+    .section-label {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--blue-400);
+      margin-bottom: 0.75rem;
+    }
+
+    .section-title {
+      font-family: 'Sora', sans-serif;
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      color: var(--slate-400);
+      font-size: 1rem;
+      max-width: 540px;
+      margin: 0 auto;
+    }
+
+    .section-header { text-align: center; margin-bottom: 4rem; }
+
+    /* ── MODULES SECTION ── */
+    #modulos { padding: 6rem 2rem; }
+
+    .modules-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .module-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 2rem;
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+      cursor: default;
+    }
+
+    .module-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 60% 60% at 0% 0%, var(--card-glow, rgba(0,119,182,0.1)) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .module-card:hover::before { opacity: 1; }
+
+    .module-card:hover {
+      border-color: rgba(255,255,255,0.12);
+      transform: translateY(-4px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+
+    .module-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .module-title {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .module-desc {
+      color: var(--slate-400);
+      font-size: 0.875rem;
+      line-height: 1.6;
+    }
+
+    .module-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 1.25rem;
+    }
+
+    .tag {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 100px;
+      border: 1px solid;
+    }
+
+    /* ── ROLES SECTION ── */
+    #roles {
+      padding: 6rem 2rem;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,119,182,0.04) 50%, transparent 100%);
+    }
+
+    .roles-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .role-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      padding: 1.5rem;
+      text-align: center;
+      transition: all 0.3s;
+    }
+
+    .role-card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(255,255,255,0.15);
+      box-shadow: 0 15px 40px rgba(0,0,0,0.3), 0 0 0 1px var(--role-color, transparent);
+    }
+
+    .role-avatar {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin: 0 auto 1rem;
+    }
+
+    .role-name {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: #fff;
+      margin-bottom: 0.35rem;
+    }
+
+    .role-desc {
+      font-size: 0.75rem;
+      color: var(--slate-500);
+    }
+
+    /* ── FEATURES BENTO ── */
+    #caracteristicas { padding: 6rem 2rem; }
+
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1.25rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .bento-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 2rem;
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .bento-card:hover {
+      border-color: rgba(255,255,255,0.12);
+      transform: translateY(-3px);
+    }
+
+    .bento-card.col-8 { grid-column: span 8; }
+    .bento-card.col-4 { grid-column: span 4; }
+    .bento-card.col-6 { grid-column: span 6; }
+    .bento-card.col-5 { grid-column: span 5; }
+    .bento-card.col-7 { grid-column: span 7; }
+    .bento-card.col-12 { grid-column: span 12; }
+
+    @media (max-width: 900px) {
+      .bento-card { grid-column: span 12 !important; }
+    }
+
+    .bento-card .bento-icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+
+    .bento-title {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 1.15rem;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .bento-desc {
+      color: var(--slate-400);
+      font-size: 0.875rem;
+      line-height: 1.65;
+    }
+
+    /* Chat preview */
+    .chat-preview {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .chat-msg {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.5rem;
+    }
+
+    .chat-msg.right { flex-direction: row-reverse; }
+
+    .chat-bubble {
+      padding: 0.6rem 1rem;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      max-width: 80%;
+    }
+
+    .chat-msg.left .chat-bubble {
+      background: rgba(255,255,255,0.07);
+      color: var(--slate-300);
+      border-bottom-left-radius: 4px;
+    }
+
+    .chat-msg.right .chat-bubble {
+      background: var(--blue-600);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .chat-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* Vitals */
+    .vitals-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .vital-item {
+      background: rgba(255,255,255,0.04);
+      border-radius: 10px;
+      padding: 0.75rem;
+    }
+
+    .vital-label {
+      font-size: 0.65rem;
+      color: var(--slate-500);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.2rem;
+    }
+
+    .vital-value {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: #fff;
+    }
+
+    .vital-unit {
+      font-size: 0.7rem;
+      color: var(--slate-400);
+      font-weight: 400;
+      margin-left: 2px;
+    }
+
+    /* Mini chart */
+    .mini-chart {
+      margin-top: 1.5rem;
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 60px;
+    }
+
+    .chart-bar {
+      flex: 1;
+      border-radius: 4px 4px 0 0;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .chart-bar:hover { opacity: 1; }
+
+    /* Document template preview */
+    .doc-preview {
+      margin-top: 1.5rem;
+      background: rgba(255,255,255,0.04);
+      border-radius: 10px;
+      padding: 1rem;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .doc-line {
+      height: 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.08);
+      margin-bottom: 0.5rem;
+    }
+
+    .doc-line.short { width: 60%; }
+    .doc-line.med { width: 80%; }
+    .doc-line.accent { background: rgba(0,119,182,0.4); width: 40%; }
+
+    /* Permission matrix preview */
+    .perm-matrix {
+      margin-top: 1.25rem;
+      display: grid;
+      grid-template-columns: auto repeat(4, 1fr);
+      gap: 4px;
+      font-size: 0.65rem;
+    }
+
+    .perm-cell {
+      padding: 4px;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .perm-header {
+      color: var(--slate-500);
+      font-weight: 600;
+    }
+
+    .perm-role { color: var(--slate-300); font-weight: 600; text-align: right; padding-right: 8px; }
+
+    .perm-yes { background: rgba(16,185,129,0.2); color: var(--emerald); }
+    .perm-no  { background: rgba(255,255,255,0.04); color: var(--slate-600); }
+
+    /* ── TECH SECTION ── */
+    #tecnologia {
+      padding: 6rem 2rem;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.3) 50%, transparent 100%);
+    }
+
+    .tech-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .tech-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 100px;
+      padding: 0.6rem 1.25rem;
+      font-size: 0.875rem;
+      color: var(--slate-300);
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .tech-pill:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.15);
+      color: #fff;
+      transform: scale(1.05);
+    }
+
+    .tech-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* ── DOCUMENTS SECTION ── */
+    #documentos { padding: 6rem 2rem; }
+
+    .docs-flex {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .doc-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 0.875rem 1.25rem;
+      transition: all 0.25s;
+    }
+
+    .doc-chip:hover {
+      background: rgba(0,119,182,0.1);
+      border-color: rgba(0,119,182,0.4);
+      transform: translateY(-2px);
+    }
+
+    .doc-chip-icon { font-size: 1.25rem; }
+
+    .doc-chip-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--slate-300);
+    }
+
+    /* ── FIREBASE SECTION ── */
+    .firebase-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 3rem auto 0;
+    }
+
+    .collection-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 1.25rem;
+      transition: all 0.2s;
+    }
+
+    .collection-card:hover {
+      border-color: rgba(255,140,0,0.3);
+      background: rgba(255,140,0,0.05);
+    }
+
+    .collection-name {
+      font-family: 'DM Sans', monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--amber);
+      margin-bottom: 0.5rem;
+    }
+
+    .collection-desc {
+      font-size: 0.75rem;
+      color: var(--slate-500);
+    }
+
+    /* ── CTA ── */
+    #cta {
+      padding: 8rem 2rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #cta::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(0,119,182,0.2) 0%, transparent 70%);
+    }
+
+    .cta-content { position: relative; }
+
+    .cta-title {
+      font-family: 'Sora', sans-serif;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 1rem;
+    }
+
+    .cta-sub {
+      color: var(--slate-400);
+      font-size: 1.1rem;
+      max-width: 500px;
+      margin: 0 auto 2.5rem;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      padding: 3rem 2rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      text-align: center;
+    }
+
+    .footer-brand {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .footer-sub {
+      color: var(--slate-600);
+      font-size: 0.8rem;
+    }
+
+    /* ── FLOATING PARTICLES ── */
+    .particles {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .particle {
+      position: absolute;
+      width: 2px;
+      height: 2px;
+      background: var(--blue-400);
+      border-radius: 50%;
+      opacity: 0;
+      animation: particleFloat var(--dur, 8s) var(--delay, 0s) linear infinite;
+    }
+
+    @keyframes particleFloat {
+      0% { opacity: 0; transform: translateY(100vh) scale(0); }
+      10% { opacity: 0.6; }
+      90% { opacity: 0.6; }
+      100% { opacity: 0; transform: translateY(-100px) scale(1); }
+    }
+
+    /* ── DIVIDER ── */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+      margin: 0 2rem;
+    }
+
+    /* UTILITY */
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    /* mobile nav */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- PARTICLES -->
+<div class="particles" id="particles"></div>
+
+<!-- NAV -->
+<nav>
+  <a href="#hero" class="nav-brand">
+    <div class="nav-logo">⚕</div>
+    SRS Médico
+  </a>
+  <ul class="nav-links">
+    <li><a href="#modulos">Módulos</a></li>
+    <li><a href="#roles">Roles</a></li>
+    <li><a href="#caracteristicas">Características</a></li>
+    <li><a href="#documentos">Documentos</a></li>
+    <li><a href="#tecnologia">Tecnología</a></li>
+    <li><a href="#cta" class="nav-cta">Ver sistema</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+
+  <!-- ECG animated line -->
+  <div class="ecg-container">
+    <svg class="ecg-line" viewBox="0 0 2000 80" preserveAspectRatio="none">
+      <polyline
+        points="0,40 100,40 120,40 130,10 140,70 155,10 170,40 220,40 260,40 280,15 295,65 310,40 400,40 450,40 460,20 470,60 480,40 600,40 640,40 650,5 660,75 675,5 690,40 800,40 850,40 870,15 885,65 900,40 1000,40 1050,40 1060,20 1070,60 1080,40 1200,40 1240,40 1250,10 1260,70 1275,10 1290,40 1400,40 1450,40 1470,15 1485,65 1500,40 1600,40 1640,40 1650,5 1660,75 1675,5 1690,40 1800,40 1850,40 1870,20 1880,60 1890,40 2000,40"
+        fill="none"
+        stroke="#0077B6"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  </div>
+
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      Sistema Activo — v2.0
+    </div>
+
+    <h1>
+      La medicina digital<br />
+      que tu clínica<br />
+      <span class="accent">merece</span>
+    </h1>
+
+    <p class="hero-sub">
+      Un ecosistema clínico completo — expediente electrónico, agenda inteligente,
+      triage en tiempo real, documentos médicos certificados y mucho más.
+      Todo en una sola plataforma.
+    </p>
+
+    <div class="hero-actions">
+      <a href="#modulos" class="btn-primary">
+        &#x25B6; Explorar módulos
+      </a>
+      <a href="#caracteristicas" class="btn-ghost">
+        &#x2139; Ver características
+      </a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat-item">
+        <span class="stat-value">8</span>
+        <span class="stat-label">Roles de usuario</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">12+</span>
+        <span class="stat-label">Módulos</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">9</span>
+        <span class="stat-label">Tipos de documento PDF</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">80+</span>
+        <span class="stat-label">Campos variables de plantilla</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">100%</span>
+        <span class="stat-label">Tiempo real con Firebase</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- MÓDULOS -->
+<section id="modulos">
+  <div class="section-header reveal">
+    <span class="section-label">Módulos del sistema</span>
+    <h2 class="section-title">Un sistema para<br />cada área de tu clínica</h2>
+    <p class="section-sub">Cada módulo diseñado específicamente para el flujo de trabajo de su área, integrado en tiempo real con los demás.</p>
+  </div>
+
+  <div class="modules-grid">
+
+    <div class="module-card reveal" style="--card-glow: rgba(0,119,182,0.15);">
+      <div class="module-icon" style="background: rgba(0,119,182,0.15); color: #38bdf8;">🏥</div>
+      <div class="module-title">Administración</div>
+      <div class="module-desc">Panel de control total: usuarios, catálogos globales, inventario, reportes financieros, monitoreo de actividad y supervisión operativa.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Dashboard</span>
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Reportes</span>
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Usuarios</span>
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Supervisión</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(20,184,166,0.12);">
+      <div class="module-icon" style="background: rgba(20,184,166,0.15); color: #2dd4bf;">🩺</div>
+      <div class="module-title">Consultorio Médico</div>
+      <div class="module-desc">Expediente clínico completo con antecedentes ICD-10, receta digital, diagnósticos, temporizador de consulta y búsqueda de medicamentos en inventario.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#2dd4bf; border-color:rgba(45,212,191,0.3);">Expediente</span>
+        <span class="tag" style="color:#2dd4bf; border-color:rgba(45,212,191,0.3);">Receta</span>
+        <span class="tag" style="color:#2dd4bf; border-color:rgba(45,212,191,0.3);">ICD-10</span>
+        <span class="tag" style="color:#2dd4bf; border-color:rgba(45,212,191,0.3);">Timer</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(244,63,94,0.1);">
+      <div class="module-icon" style="background: rgba(244,63,94,0.15); color: #fb7185;">💉</div>
+      <div class="module-title">Enfermería</div>
+      <div class="module-desc">Agenda con vista de timeline y cuadrícula, triage completo con cálculo automático de IMC, signos vitales, hoja de enfermería y registros históricos.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#fb7185; border-color:rgba(251,113,133,0.3);">Triage</span>
+        <span class="tag" style="color:#fb7185; border-color:rgba(251,113,133,0.3);">Vitales</span>
+        <span class="tag" style="color:#fb7185; border-color:rgba(251,113,133,0.3);">Agenda</span>
+        <span class="tag" style="color:#fb7185; border-color:rgba(251,113,133,0.3);">IMC Auto</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(99,102,241,0.12);">
+      <div class="module-icon" style="background: rgba(99,102,241,0.15); color: #a5b4fc;">👑</div>
+      <div class="module-title">Jefatura de Enfermería</div>
+      <div class="module-desc">Centro de comando multivista: temperaturas, cloro residual, limpieza y desinfección por área, recepción de insumos, entradas/salidas y centro de alertas críticas.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#a5b4fc; border-color:rgba(165,180,252,0.3);">Comando</span>
+        <span class="tag" style="color:#a5b4fc; border-color:rgba(165,180,252,0.3);">Alertas</span>
+        <span class="tag" style="color:#a5b4fc; border-color:rgba(165,180,252,0.3);">Bitácoras</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(245,158,11,0.1);">
+      <div class="module-icon" style="background: rgba(245,158,11,0.15); color: #fcd34d;">📊</div>
+      <div class="module-title">Recursos Humanos</div>
+      <div class="module-desc">Panel de auditoría de empleados con estado online/offline en tiempo real, estado operativo, duración de sesión, inventario macro y módulo de finanzas.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#fcd34d; border-color:rgba(252,211,77,0.3);">Auditoría</span>
+        <span class="tag" style="color:#fcd34d; border-color:rgba(252,211,77,0.3);">Finanzas</span>
+        <span class="tag" style="color:#fcd34d; border-color:rgba(252,211,77,0.3);">Inventario</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(6,182,212,0.1);">
+      <div class="module-icon" style="background: rgba(6,182,212,0.15); color: #67e8f9;">🧹</div>
+      <div class="module-title">Intendencia</div>
+      <div class="module-desc">Registro de limpieza con selección de áreas por sucursal, estados (Limpio/Pendiente/En proceso), foto obligatoria del registro físico y bitácoras con timestamp.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#67e8f9; border-color:rgba(103,232,249,0.3);">Bitácoras</span>
+        <span class="tag" style="color:#67e8f9; border-color:rgba(103,232,249,0.3);">Fotos</span>
+        <span class="tag" style="color:#67e8f9; border-color:rgba(103,232,249,0.3);">Multi-área</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(139,92,246,0.12);">
+      <div class="module-icon" style="background: rgba(139,92,246,0.15); color: #c4b5fd;">🎨</div>
+      <div class="module-title">Editor de Plantillas</div>
+      <div class="module-desc">UI tipo Canva con 3 zonas: panel de capas, lienzo interactivo y propiedades. Modos Documento/Lienzo/Preview, zoom, formas, 80+ variables de fusión y autoguardado.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#c4b5fd; border-color:rgba(196,181,252,0.3);">Canva-like</span>
+        <span class="tag" style="color:#c4b5fd; border-color:rgba(196,181,252,0.3);">80+ vars</span>
+        <span class="tag" style="color:#c4b5fd; border-color:rgba(196,181,252,0.3);">Drag & Drop</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(16,185,129,0.1);">
+      <div class="module-icon" style="background: rgba(16,185,129,0.15); color: #6ee7b7;">📅</div>
+      <div class="module-title">Agenda Maestra</div>
+      <div class="module-desc">Agenda centralizada con telemedicina (Google Meet auto-generado), asignación de motivos con precios, multi-consultorio, multi-sucursal y actualizaciones en tiempo real.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#6ee7b7; border-color:rgba(110,231,183,0.3);">Telemedicina</span>
+        <span class="tag" style="color:#6ee7b7; border-color:rgba(110,231,183,0.3);">Multi-sede</span>
+        <span class="tag" style="color:#6ee7b7; border-color:rgba(110,231,183,0.3);">Tiempo real</span>
+      </div>
+    </div>
+
+    <div class="module-card reveal" style="--card-glow: rgba(0,119,182,0.12);">
+      <div class="module-icon" style="background: rgba(0,119,182,0.15); color: #38bdf8;">💬</div>
+      <div class="module-title">Chat Interno</div>
+      <div class="module-desc">Sistema de mensajería con canales públicos, chats privados, adjuntos, grabación de audio, emojis, indicadores de no leído y notificaciones en tiempo real.</div>
+      <div class="module-tags">
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Canales</span>
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Audio</span>
+        <span class="tag" style="color:#38bdf8; border-color:rgba(56,189,248,0.3);">Archivos</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ROLES -->
+<section id="roles">
+  <div class="section-header reveal">
+    <span class="section-label">Control de Acceso</span>
+    <h2 class="section-title">Cada persona en su lugar,<br />con lo que necesita</h2>
+    <p class="section-sub">8 roles con permisos granulares. Cada usuario ve y puede hacer exactamente lo que su función requiere.</p>
+  </div>
+
+  <div class="roles-grid">
+
+    <div class="role-card reveal" style="--role-color: rgba(0,119,182,0.5);">
+      <div class="role-avatar" style="background: rgba(0,119,182,0.15); color: #38bdf8; --role-color: #38bdf8;">🔑</div>
+      <div class="role-name">Admin</div>
+      <div class="role-desc">Acceso total al sistema</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(20,184,166,0.5);">
+      <div class="role-avatar" style="background: rgba(20,184,166,0.15); color: #2dd4bf;">👨‍⚕️</div>
+      <div class="role-name">Médico</div>
+      <div class="role-desc">Consulta y expediente</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(244,63,94,0.5);">
+      <div class="role-avatar" style="background: rgba(244,63,94,0.15); color: #fb7185;">👩‍⚕️</div>
+      <div class="role-name">Enfermería</div>
+      <div class="role-desc">Triage y agenda</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(99,102,241,0.5);">
+      <div class="role-avatar" style="background: rgba(99,102,241,0.15); color: #a5b4fc;">👑</div>
+      <div class="role-name">Jefa de Enf.</div>
+      <div class="role-desc">Supervisión y alertas</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(245,158,11,0.5);">
+      <div class="role-avatar" style="background: rgba(245,158,11,0.15); color: #fcd34d;">📋</div>
+      <div class="role-name">RH</div>
+      <div class="role-desc">Personal y finanzas</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(6,182,212,0.5);">
+      <div class="role-avatar" style="background: rgba(6,182,212,0.15); color: #67e8f9;">🧹</div>
+      <div class="role-name">Intendencia</div>
+      <div class="role-desc">Limpieza y registro</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(139,92,246,0.5);">
+      <div class="role-avatar" style="background: rgba(139,92,246,0.15); color: #c4b5fd;">🗓️</div>
+      <div class="role-name">Recepción</div>
+      <div class="role-desc">Agenda y pacientes</div>
+    </div>
+
+    <div class="role-card reveal" style="--role-color: rgba(16,185,129,0.5);">
+      <div class="role-avatar" style="background: rgba(16,185,129,0.15); color: #6ee7b7;">⚙️</div>
+      <div class="role-name">Operativo</div>
+      <div class="role-desc">Soporte administrativo</div>
+    </div>
+
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- CARACTERÍSTICAS BENTO -->
+<section id="caracteristicas">
+  <div class="section-header reveal">
+    <span class="section-label">Características clave</span>
+    <h2 class="section-title">Construido para el mundo real<br />de la medicina</h2>
+    <p class="section-sub">Cada detalle diseñado con base en los flujos reales de trabajo clínico.</p>
+  </div>
+
+  <div class="bento-grid container">
+
+    <!-- Triage vitales -->
+    <div class="bento-card col-5 reveal">
+      <div class="bento-icon">🫀</div>
+      <div class="bento-title">Triage con cálculo automático de IMC</div>
+      <div class="bento-desc">Captura de 7 signos vitales: peso, talla, temperatura, FC, FR, TA, SpO2. El IMC se calcula automáticamente al ingresar peso y talla.</div>
+      <div class="vitals-grid">
+        <div class="vital-item">
+          <div class="vital-label">Frecuencia Cardíaca</div>
+          <div class="vital-value">72<span class="vital-unit">bpm</span></div>
+        </div>
+        <div class="vital-item">
+          <div class="vital-label">SpO2</div>
+          <div class="vital-value">98<span class="vital-unit">%</span></div>
+        </div>
+        <div class="vital-item">
+          <div class="vital-label">Temperatura</div>
+          <div class="vital-value">36.6<span class="vital-unit">°C</span></div>
+        </div>
+        <div class="vital-item">
+          <div class="vital-label">IMC (auto)</div>
+          <div class="vital-value" style="color: var(--emerald);">22.4</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Expediente ICD-10 -->
+    <div class="bento-card col-7 reveal">
+      <div class="bento-icon">📋</div>
+      <div class="bento-title">Expediente Clínico con catálogo ICD-10</div>
+      <div class="bento-desc">Tres secciones de expediente: Consulta, Antecedentes y Resumen. Búsqueda integrada de más de 80 diagnósticos con códigos ICD-10. Historial ginecológico, quirúrgico, vacunal y de alergias. Exportación a PDF.</div>
+      <div class="perm-matrix" style="margin-top:1.5rem; grid-template-columns: auto repeat(5, 1fr);">
+        <span class="perm-role">Sección</span>
+        <span class="perm-header">Consulta</span>
+        <span class="perm-header">Antec.</span>
+        <span class="perm-header">Ginec.</span>
+        <span class="perm-header">Cirugías</span>
+        <span class="perm-header">PDF</span>
+        <span class="perm-role">Médico</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-role">Enferm.</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-no">—</span>
+        <span class="perm-cell perm-no">—</span>
+        <span class="perm-cell perm-no">—</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-role">Admin</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+        <span class="perm-cell perm-yes">✓</span>
+      </div>
+    </div>
+
+    <!-- Reportes -->
+    <div class="bento-card col-4 reveal">
+      <div class="bento-icon">📈</div>
+      <div class="bento-title">Reportes financieros</div>
+      <div class="bento-desc">Analítica de consultas por fecha, sucursal y médico. Seguimiento de ingresos con precios por motivo.</div>
+      <div class="mini-chart">
+        <div class="chart-bar" style="height:40%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:65%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:55%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:80%; background: var(--teal);"></div>
+        <div class="chart-bar" style="height:70%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:90%; background: var(--teal);"></div>
+        <div class="chart-bar" style="height:75%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:60%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:85%; background: var(--teal);"></div>
+        <div class="chart-bar" style="height:95%; background: var(--emerald);"></div>
+        <div class="chart-bar" style="height:70%; background: var(--blue-600);"></div>
+        <div class="chart-bar" style="height:88%; background: var(--emerald);"></div>
+      </div>
+    </div>
+
+    <!-- Chat -->
+    <div class="bento-card col-8 reveal">
+      <div class="bento-icon">💬</div>
+      <div class="bento-title">Chat institucional en tiempo real</div>
+      <div class="bento-desc">Canales públicos + chats privados con badges de no leídos, adjuntos, grabación de voz, emojis y notificaciones.</div>
+      <div class="chat-preview">
+        <div class="chat-msg left">
+          <div class="chat-avatar" style="background: rgba(244,63,94,0.2); color: #fb7185;">E</div>
+          <div class="chat-bubble">Paciente en sala 2 listo para consulta 🩺</div>
+        </div>
+        <div class="chat-msg right">
+          <div class="chat-bubble">Perfecto, ahorita paso. ¿Ya tiene los vitales?</div>
+          <div class="chat-avatar" style="background: rgba(20,184,166,0.2); color: #2dd4bf;">M</div>
+        </div>
+        <div class="chat-msg left">
+          <div class="chat-avatar" style="background: rgba(244,63,94,0.2); color: #fb7185;">E</div>
+          <div class="chat-bubble">Sí, ya los cargué en el triage ✓</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telemedicina -->
+    <div class="bento-card col-6 reveal">
+      <div class="bento-icon">📹</div>
+      <div class="bento-title">Telemedicina integrada</div>
+      <div class="bento-desc">Al marcar una cita como teleconsulta, el sistema genera automáticamente un enlace de Google Meet y lo asocia a la cita. El médico y el paciente tienen acceso directo desde la plataforma.</div>
+    </div>
+
+    <!-- Plantillas -->
+    <div class="bento-card col-6 reveal">
+      <div class="bento-icon">🎨</div>
+      <div class="bento-title">Editor de plantillas tipo Canva</div>
+      <div class="bento-desc">Crea y edita documentos médicos con una interfaz visual. Inserta variables dinámicas que se fusionan automáticamente con los datos del paciente.</div>
+      <div class="doc-preview">
+        <div class="doc-line accent"></div>
+        <div class="doc-line med"></div>
+        <div class="doc-line short"></div>
+        <div style="height:1px; background: rgba(255,255,255,0.06); margin: 0.5rem 0;"></div>
+        <div class="doc-line med"></div>
+        <div class="doc-line"></div>
+        <div class="doc-line short"></div>
+      </div>
+    </div>
+
+    <!-- Monitor -->
+    <div class="bento-card col-12 reveal" style="background: linear-gradient(135deg, rgba(0,119,182,0.08), rgba(20,184,166,0.05));">
+      <div style="display: flex; gap: 3rem; align-items: center; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px;">
+          <div class="bento-icon">🖥️</div>
+          <div class="bento-title">Monitor de actividad en tiempo real</div>
+          <div class="bento-desc">Visualiza quién está conectado, en qué estado operativo (En Consulta, En Comida, Trabajo Admin) y cuánto tiempo llevan activos. Umbral de 10 minutos para detectar inactividad. Historial de sesiones por usuario.</div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; flex: 1; min-width: 280px;">
+          <div style="background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.2); border-radius: 10px; padding: 0.875rem; text-align: center;">
+            <div style="font-size: 0.65rem; color: var(--emerald); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">Online</div>
+            <div style="font-family:'Sora',sans-serif; font-size:1.4rem; font-weight:800; color:#fff;">7</div>
+          </div>
+          <div style="background: rgba(0,119,182,0.12); border: 1px solid rgba(0,119,182,0.2); border-radius: 10px; padding: 0.875rem; text-align: center;">
+            <div style="font-size: 0.65rem; color: var(--blue-400); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">Consulta</div>
+            <div style="font-family:'Sora',sans-serif; font-size:1.4rem; font-weight:800; color:#fff;">3</div>
+          </div>
+          <div style="background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.2); border-radius: 10px; padding: 0.875rem; text-align: center;">
+            <div style="font-size: 0.65rem; color: var(--amber); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">Comida</div>
+            <div style="font-family:'Sora',sans-serif; font-size:1.4rem; font-weight:800; color:#fff;">2</div>
+          </div>
+          <div style="background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.2); border-radius: 10px; padding: 0.875rem; text-align: center;">
+            <div style="font-size: 0.65rem; color: var(--purple); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">Admin</div>
+            <div style="font-family:'Sora',sans-serif; font-size:1.4rem; font-weight:800; color:#fff;">2</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- DOCUMENTOS -->
+<section id="documentos" style="padding: 6rem 2rem;">
+  <div class="section-header reveal">
+    <span class="section-label">Documentos Médicos</span>
+    <h2 class="section-title">Todos los documentos<br />que tu clínica necesita</h2>
+    <p class="section-sub">9 tipos de documento PDF generados automáticamente con los datos del expediente. Listos para imprimir o enviar.</p>
+  </div>
+
+  <div class="docs-flex reveal">
+    <div class="doc-chip"><span class="doc-chip-icon">💊</span><span class="doc-chip-name">Receta Médica</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">❤️</span><span class="doc-chip-name">Carta de Buena Salud (Adulto)</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">👶</span><span class="doc-chip-name">Carta de Buena Salud (Menor)</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🛂</span><span class="doc-chip-name">Carta Pasaporte Universal</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">💍</span><span class="doc-chip-name">Certificado Prenupcial</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">📝</span><span class="doc-chip-name">Consentimiento Informado</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🏛️</span><span class="doc-chip-name">Solicitud DIF</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🦠</span><span class="doc-chip-name">Reporte COVID-19</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🤧</span><span class="doc-chip-name">Reporte Influenza</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🦟</span><span class="doc-chip-name">Reporte Dengue</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🧪</span><span class="doc-chip-name">Antidoping</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">🔏</span><span class="doc-chip-name">Aviso de Privacidad</span></div>
+    <div class="doc-chip"><span class="doc-chip-icon">📁</span><span class="doc-chip-name">Historia Clínica PDF</span></div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- FIREBASE COLLECTIONS -->
+<section id="tecnologia">
+  <div style="padding: 6rem 2rem;">
+    <div class="section-header reveal">
+      <span class="section-label">Infraestructura</span>
+      <h2 class="section-title">Base de datos en tiempo real<br />con Firebase</h2>
+      <p class="section-sub">14 colecciones Firestore que sincronizan cada acción al instante en todos los módulos y usuarios conectados.</p>
+    </div>
+
+    <div class="firebase-grid reveal">
+      <div class="collection-card"><div class="collection-name">pacientes</div><div class="collection-desc">Datos demográficos y médicos de cada paciente</div></div>
+      <div class="collection-card"><div class="collection-name">citas</div><div class="collection-desc">Citas con estado, signos vitales y asignaciones</div></div>
+      <div class="collection-card"><div class="collection-name">consultas</div><div class="collection-desc">Consultas completadas con diagnóstico y receta</div></div>
+      <div class="collection-card"><div class="collection-name">triage_enfermeria</div><div class="collection-desc">Registros de triage con signos vitales capturados</div></div>
+      <div class="collection-card"><div class="collection-name">users</div><div class="collection-desc">Perfiles, roles, permisos y estado online/offline</div></div>
+      <div class="collection-card"><div class="collection-name">bitacorasLimpieza</div><div class="collection-desc">Registros de limpieza por área con foto adjunta</div></div>
+      <div class="collection-card"><div class="collection-name">canales / mensajes</div><div class="collection-desc">Chat institucional con historial completo</div></div>
+      <div class="collection-card"><div class="collection-name">inventario</div><div class="collection-desc">Stock de insumos y medicamentos por sucursal</div></div>
+      <div class="collection-card"><div class="collection-name">catalogo_motivos</div><div class="collection-desc">Motivos de consulta con precio y nivel de triage</div></div>
+      <div class="collection-card"><div class="collection-name">catalogo_consultorios</div><div class="collection-desc">Consultorios con horarios y configuración</div></div>
+      <div class="collection-card"><div class="collection-name">catalogo_sucursales</div><div class="collection-desc">Sedes con horarios y datos de contacto</div></div>
+      <div class="collection-card"><div class="collection-name">estudios</div><div class="collection-desc">Catálogo de estudios de laboratorio e imagen</div></div>
+      <div class="collection-card"><div class="collection-name">configuracion</div><div class="collection-desc">Parámetros globales del sistema</div></div>
+      <div class="collection-card"><div class="collection-name">chats_privados</div><div class="collection-desc">Hilos de mensajería directa entre usuarios</div></div>
+    </div>
+
+    <!-- Tech Stack pills -->
+    <div style="margin-top: 4rem;">
+      <div class="section-header">
+        <span class="section-label">Stack Tecnológico</span>
+        <h3 style="font-family:'Sora',sans-serif; font-size:1.5rem; font-weight:700; color:#fff; margin-bottom:2rem;">Tecnologías que potencian el sistema</h3>
+      </div>
+      <div class="tech-grid reveal">
+        <div class="tech-pill"><span class="tech-dot" style="background:#61dafb;"></span>React 19</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#646cff;"></span>Vite</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#ff6b35;"></span>Firebase Firestore</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#ffca28;"></span>Firebase Auth</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#38bdf8;"></span>Firebase Storage</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#38bdf8;"></span>Tailwind CSS</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#f97316;"></span>React Router v6</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#10b981;"></span>Lucide React</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#a855f7;"></span>Sora + DM Sans</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#0ea5e9;"></span>Google Fonts</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#2563eb;"></span>Docker + Nginx</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#059669;"></span>Google Meet API</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#dc2626;"></span>ICD-10 Catalog</div>
+        <div class="tech-pill"><span class="tech-dot" style="background:#7c3aed;"></span>PDF Export</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- CTA -->
+<section id="cta">
+  <div class="cta-content reveal">
+    <div class="hero-badge" style="margin-bottom: 1.5rem;">
+      <span class="badge-dot"></span>
+      Sistema listo para producción
+    </div>
+    <h2 class="cta-title">La herramienta que tu<br />clínica estaba esperando</h2>
+    <p class="cta-sub">
+      SRS Médico centraliza toda la operación de tu centro de salud en una plataforma moderna, segura y diseñada para los profesionales de la medicina.
+    </p>
+    <div class="hero-actions" style="justify-content: center;">
+      <a href="#modulos" class="btn-primary">
+        &#x2665; Conocer más
+      </a>
+      <a href="#tecnologia" class="btn-ghost">
+        &#x1F527; Ver infraestructura
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-brand">⚕ SRS Médico</div>
+  <div class="footer-sub" style="margin-top: 0.35rem;">
+    Sistema de Gestión Clínica &mdash; Centro Médico Santa Cruz &mdash; v2.0
+  </div>
+  <div class="footer-sub" style="margin-top: 0.5rem; color: var(--slate-700);">
+    React · Firebase · Vite · Tailwind CSS
+  </div>
+</footer>
+
+<script>
+  /* ── PARTICLES ── */
+  const container = document.getElementById('particles');
+  for (let i = 0; i < 30; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.left = Math.random() * 100 + '%';
+    p.style.setProperty('--dur', (6 + Math.random() * 10) + 's');
+    p.style.setProperty('--delay', (Math.random() * 10) + 's');
+    p.style.width = p.style.height = (1 + Math.random() * 2) + 'px';
+    container.appendChild(p);
+  }
+
+  /* ── SCROLL REVEAL ── */
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry, i) => {
+      if (entry.isIntersecting) {
+        // stagger siblings
+        const siblings = entry.target.parentElement.querySelectorAll('.reveal');
+        siblings.forEach((el, idx) => {
+          if (el === entry.target) {
+            setTimeout(() => el.classList.add('visible'), idx * 60);
+          }
+        });
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+  /* ── NAV SCROLL EFFECT ── */
+  const nav = document.querySelector('nav');
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 50) {
+      nav.style.background = 'rgba(15, 23, 42, 0.95)';
+    } else {
+      nav.style.background = 'rgba(15, 23, 42, 0.7)';
+    }
+  });
+
+  /* ── SMOOTH STATS COUNTER ── */
+  function animateCounter(el, target, duration = 1500) {
+    let start = 0;
+    const step = timestamp => {
+      if (!start) start = timestamp;
+      const progress = Math.min((timestamp - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const val = Math.floor(ease * target);
+      el.textContent = val + (el.dataset.suffix || '');
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  const statsObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.querySelectorAll('.stat-value').forEach(el => {
+          const raw = el.textContent.replace(/\D/g, '');
+          if (raw) {
+            el.dataset.suffix = el.textContent.replace(/\d/g, '');
+            animateCounter(el, parseInt(raw));
+          }
+        });
+        statsObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.5 });
+
+  document.querySelector('.hero-stats') && statsObserver.observe(document.querySelector('.hero-stats'));
+
+  /* ── CARD MOUSE GLOW ── */
+  document.querySelectorAll('.module-card, .bento-card, .role-card').forEach(card => {
+    card.addEventListener('mousemove', e => {
+      const rect = card.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      card.style.background = `radial-gradient(circle at ${x}% ${y}%, rgba(0,119,182,0.08) 0%, rgba(255,255,255,0.03) 60%)`;
+    });
+    card.addEventListener('mouseleave', () => {
+      card.style.background = '';
+    });
+  });
+</script>
+</body>
+</html>

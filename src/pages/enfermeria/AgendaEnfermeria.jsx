@@ -3,35 +3,23 @@ import {
   Calendar as CalIcon, Clock, User, Plus, ChevronLeft, ChevronRight, 
   Search, X, Activity, Stethoscope, ChevronDown, CheckCircle, 
   AlertCircle, Zap, Video, MapPin, Building, AlertTriangle, CheckCircle2,
-  Phone, ClipboardList
+  Phone, ClipboardList, Edit3
 } from 'lucide-react';
-import { db } from '../../config/firebase'; 
-import { collection, addDoc, query, where, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
+import { db, functions } from '../../config/firebase'; 
+import { collection, addDoc, query, where, orderBy, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import ModalPaciente from '../../components/ModalPaciente';
 import RegistrosEnfermeriaModal from '../../components/RegistrosEnfermeriaModal'; 
-
-// --- ICONOS DECORATIVOS (Estilo PortalAcceso) ---
-const IconCross = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-    <path d="M12 2v20M2 12h20"/>
-  </svg>
-);
 
 const AgendaEnfermeria = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const scrollRef = useRef(null); 
   
-  // --- CONFIGURACIÓN ---
-  const INTERVALO_MINUTOS = 10; 
-
-  const MOTIVOS_CONSULTA = [
-    "Consulta", "Valoración", "Estudios", "Vacunas", 
-    "Nota de urgencia", "Nota de evolución", "Nota de traslado", 
-    "Nota de interconsulta", "Rehabilitación", "Post-cirugía"
-  ];
+    // --- CONFIGURACIÓN ---
+    const INTERVALO_MINUTOS = 10; 
 
   // --- ESTADOS ---
   const [citas, setCitas] = useState([]);
@@ -49,30 +37,46 @@ const AgendaEnfermeria = () => {
   const [sugerencias, setSugerencias] = useState([]);
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   
-  const [consultorios, setConsultorios] = useState(["Consultorio 1", "Consultorio 2", "Consultorio 3", "Consultorio 4"]);
+    const [consultorios, setConsultorios] = useState([]);
+    const [catalogoMotivos, setCatalogoMotivos] = useState([]);
+    const [catalogoSucursales, setCatalogoSucursales] = useState([]);
   const [selectedConsultorio, setSelectedConsultorio] = useState('Todos');
 
   const [nuevaCita, setNuevaCita] = useState({
     paciente: '', pacienteId: '', pacienteTelefono: '', 
     fecha: new Date().toLocaleDateString('en-CA'), 
-    hora: '', motivo: 'Consulta', doctorAsignado: '', doctorUid: '',
-    esTeleconsulta: false, consultorio: ''
+        hora: '', horaFin: '', motivo: '', motivoId: '', doctorAsignado: '', doctorUid: '',
+        esTeleconsulta: false, consultorio: '', consultorioId: '', sucursal: '', sucursalId: '',
+        tipoConsulta: 'Primera vez'
   });
 
   // --- ESTADOS DE UI (Toasts y Alertas) ---
   const [toast, setToast] = useState({ show: false, msg: '', type: 'error' });
   const [confirmModal, setConfirmModal] = useState({ show: false, slot: null });
+        const modoLigero = true;
 
-  // --- GENERADORES ---
-  const generarLinkMeet = () => {
-    const chars = 'abcdefghijklmnopqrstuvwxyz';
-    return `https://meet.google.com/${chars.slice(0,3)}-${chars.slice(3,7)}-${chars.slice(7,10)}`;
-  };
+    // --- GENERADORES ---
 
   const showToast = (msg, type = 'error') => {
     setToast({ show: true, msg, type });
     setTimeout(() => setToast({ show: false, msg: '', type: 'error' }), 4000);
   };
+
+    const sumarMinutos = (hora, minutos) => {
+        if (!hora) return '';
+        const [horas, mins] = hora.split(':').map(Number);
+        if (Number.isNaN(horas) || Number.isNaN(mins)) return '';
+        const total = horas * 60 + mins + minutos;
+        const horasFinal = Math.floor((total % (24 * 60)) / 60).toString().padStart(2, '0');
+        const minsFinal = (total % 60).toString().padStart(2, '0');
+        return `${horasFinal}:${minsFinal}`;
+    };
+
+    const formatMotivoOption = (motivoData) => {
+        const nombre = motivoData?.nombre || 'Motivo';
+        const precio = Number(motivoData?.precio || 0);
+        return precio > 0 ? `${nombre} · $${precio.toLocaleString('es-MX')}` : nombre;
+    };
 
   // --- CÁLCULO DE HORARIOS EN RANGOS (Ej: 14:00 - 14:10) ---
   const timeSlots = useMemo(() => {
@@ -116,49 +120,183 @@ const AgendaEnfermeria = () => {
   // AUTO SCROLL INTELIGENTE AL HORARIO ACTUAL
   useEffect(() => {
     if(scrollRef.current && viewFilter === 'timeline') {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            scrollRef.current.scrollIntoView({ behavior: modoLigero ? 'auto' : 'smooth', block: 'center' });
     }
-  }, [timeSlots, viewFilter]);
+    }, [timeSlots, viewFilter, modoLigero]);
 
-  useEffect(() => {
-    const dateStr = currentDate.toLocaleDateString('en-CA');
-    const startOfDay = `${dateStr}T00:00`;
-    const endOfDay = `${dateStr}T23:59`;
+    useEffect(() => {
+        const dateStr = currentDate.toLocaleDateString('en-CA');
+        const startOfDay = `${dateStr}T00:00`;
+        const endOfDay = `${dateStr}T23:59`;
 
-    const q = query(
-        collection(db, "citas"), 
-        where("fechaHora", ">=", startOfDay), where("fechaHora", "<=", endOfDay), orderBy("fechaHora", "asc")
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-        setCitas(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+        const q = query(
+            collection(db, "citas"), 
+            where("fechaHora", ">=", startOfDay), where("fechaHora", "<=", endOfDay), orderBy("fechaHora", "asc")
+        );
 
-    const qDocs = query(collection(db, "users"), where("rol", "==", "medico"));
-    const unsubDocs = onSnapshot(qDocs, (snap) => {
-        setDoctores(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+        let isMounted = true;
+        const loadCitas = async () => {
+            try {
+                const snapshot = await getDocs(q);
+                if (!isMounted) return;
+                setCitas(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+            } catch {}
+        };
 
-    const fetchConsultorios = async () => {
-        try {
-            const snap = await getDocs(collection(db, "consultorios"));
-            if (!snap.empty) setConsultorios(snap.docs.map(d => d.data().nombre));
-        } catch (error) { console.log("Usando consultorios por defecto"); }
-    };
-    fetchConsultorios();
+        loadCitas();
+        const intervalId = setInterval(loadCitas, 120000);
+        return () => {
+            isMounted = false;
+            clearInterval(intervalId);
+        };
+    }, [currentDate]);
 
-    return () => { unsub(); unsubDocs(); };
-  }, [currentDate]);
+    useEffect(() => {
+        let isMounted = true;
+        const loadDoctores = async () => {
+            try {
+                const qDocs = query(collection(db, "users"), where("rol", "==", "medico"));
+                const snap = await getDocs(qDocs);
+                if (!isMounted) return;
+                setDoctores(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+            } catch {}
+        };
+
+        loadDoctores();
+        const intervalId = setInterval(loadDoctores, 300000);
+        return () => {
+            isMounted = false;
+            clearInterval(intervalId);
+        };
+    }, []);
+
+    useEffect(() => {
+        const CACHE_KEY = 'agenda_enfermeria_catalogos_v1';
+        const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+        let isMounted = true;
+
+        const loadCatalogos = async () => {
+            try {
+                const cachedRaw = sessionStorage.getItem(CACHE_KEY);
+                if (cachedRaw) {
+                    const cached = JSON.parse(cachedRaw);
+                    if (Date.now() - Number(cached?.savedAt || 0) < CACHE_TTL_MS) {
+                        if (!isMounted) return;
+                        setCatalogoMotivos(cached.motivos || []);
+                        setConsultorios(cached.consultorios || []);
+                        setCatalogoSucursales(cached.sucursales || []);
+                        return;
+                    }
+                }
+            } catch {}
+
+            try {
+                const qMotivos = query(collection(db, "catalogo_motivos_consulta"), orderBy("nombre", "asc"));
+                const qConsultorios = query(collection(db, "catalogo_consultorios"), orderBy("nombre", "asc"));
+                const qSucursales = query(collection(db, "catalogo_sucursales"), orderBy("nombre", "asc"));
+
+                const [motivosSnap, consultoriosSnap, sucursalesSnap] = await Promise.all([
+                    getDocs(qMotivos),
+                    getDocs(qConsultorios),
+                    getDocs(qSucursales)
+                ]);
+                if (!isMounted) return;
+
+                const payload = {
+                    savedAt: Date.now(),
+                    motivos: motivosSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })).filter((item) => item.activo !== false),
+                    consultorios: consultoriosSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })).filter((item) => item.activo !== false),
+                    sucursales: sucursalesSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })).filter((item) => item.activo !== false)
+                };
+
+                setCatalogoMotivos(payload.motivos);
+                setConsultorios(payload.consultorios);
+                setCatalogoSucursales(payload.sucursales);
+                sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+            } catch {}
+        };
+
+        loadCatalogos();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
   useEffect(() => {
     const getPacientes = async () => {
-        const qPac = query(collection(db, "pacientes"), orderBy("nombre"));
-        const snap = await getDocs(qPac);
-        setTodosLosPacientes(snap.docs.map(d => ({ 
-            id: d.id, nombre: d.data().nombreCompleto || d.data().nombre, telefono: d.data().telefonoMovil || ''
-        })));
+        const snap = await getDocs(collection(db, "pacientes"));
+        const pacientes = snap.docs
+            .map((d) => {
+                const row = d.data() || {};
+                return {
+                    id: d.id,
+                    nombre: row.nombreCompleto || row.nombre || '',
+                    telefono: row.telefonoMovil || row.telefono || '',
+                    idPaciente: row.idPaciente || row.idPacienteMigrado || ''
+                };
+            })
+            .filter((p) => Boolean(p.nombre))
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+        setTodosLosPacientes(pacientes);
     };
     getPacientes();
   }, []);
+
+    const consultoriosNombres = useMemo(
+        () => consultorios.map((c) => c.nombre).filter(Boolean),
+        [consultorios]
+    );
+
+    const sucursalPredeterminada = useMemo(() => {
+        if (catalogoSucursales.length === 0) {
+            return { id: '', nombre: user?.sucursal || 'Sin sucursal configurada' };
+        }
+
+        const sucursalUsuario = catalogoSucursales.find(
+            (sucursal) =>
+                (sucursal.nombre || '').trim().toLowerCase() === (user?.sucursal || '').trim().toLowerCase()
+        );
+
+        return sucursalUsuario || catalogoSucursales[0];
+    }, [catalogoSucursales, user?.sucursal]);
+
+    useEffect(() => {
+        if (selectedConsultorio !== 'Todos' && !consultoriosNombres.includes(selectedConsultorio)) {
+            setSelectedConsultorio('Todos');
+        }
+    }, [selectedConsultorio, consultoriosNombres]);
+
+    const citasFiltradasConsultorio = useMemo(() => {
+        if (selectedConsultorio === 'Todos') return citas;
+        return citas.filter((cita) => cita.consultorio === selectedConsultorio);
+    }, [citas, selectedConsultorio]);
+
+    const citasPorSlot = useMemo(() => {
+        const mapa = new Map();
+
+        citasFiltradasConsultorio.forEach((cita) => {
+            const fechaHora = cita?.fechaHora || '';
+            const horaTexto = fechaHora.includes('T') ? fechaHora.split('T')[1] : (cita?.hora || '');
+            if (!horaTexto) return;
+
+            const [horas, minutos] = horaTexto.split(':').map(Number);
+            if (Number.isNaN(horas) || Number.isNaN(minutos)) return;
+
+            const minutoInicioSlot = Math.floor(minutos / INTERVALO_MINUTOS) * INTERVALO_MINUTOS;
+            const clave = `${horas.toString().padStart(2, '0')}:${minutoInicioSlot.toString().padStart(2, '0')}`;
+
+            if (!mapa.has(clave)) mapa.set(clave, []);
+            mapa.get(clave).push(cita);
+        });
+
+        return mapa;
+    }, [citasFiltradasConsultorio, INTERVALO_MINUTOS]);
+
+    const citasPendientesFiltradas = useMemo(
+        () => citasFiltradasConsultorio.filter((cita) => cita.estado === 'pendiente'),
+        [citasFiltradasConsultorio]
+    );
 
   // --- HELPERS ---
   const getDoctorStatus = (docData) => {
@@ -200,11 +338,22 @@ const AgendaEnfermeria = () => {
   };
 
   const abrirModalCita = (slot) => {
+        const consultorioNombre = selectedConsultorio !== 'Todos' ? selectedConsultorio : (consultoriosNombres[0] || '');
+        const consultorioData = consultorios.find((c) => c.nombre === consultorioNombre);
+        const motivoData = catalogoMotivos[0] || null;
+      const sucursalData = sucursalPredeterminada || null;
+
     setNuevaCita({ 
         ...nuevaCita, 
         fecha: currentDate.toLocaleDateString('en-CA'), 
         hora: slot.startTime, 
-        consultorio: selectedConsultorio !== 'Todos' ? selectedConsultorio : consultorios[0] 
+                horaFin: slot.endTime || sumarMinutos(slot.startTime, INTERVALO_MINUTOS),
+                consultorio: consultorioNombre,
+                consultorioId: consultorioData?.id || '',
+                motivo: motivoData?.nombre || '',
+                motivoId: motivoData?.id || '',
+                sucursal: sucursalData?.nombre || user?.sucursal || '',
+                sucursalId: sucursalData?.id || ''
     });
     setShowCitaModal(true);
     setConfirmModal({ show: false, slot: null });
@@ -212,33 +361,89 @@ const AgendaEnfermeria = () => {
 
 const handleGuardarCita = async (e) => {
     e?.preventDefault(); 
-    if(!nuevaCita.paciente || !nuevaCita.hora || !nuevaCita.doctorUid || !nuevaCita.consultorio) {
-        showToast("Faltan campos obligatorios (Paciente, Hora, Consultorio o Médico).", "error");
+    if(!nuevaCita.paciente || !nuevaCita.hora || !nuevaCita.horaFin || !nuevaCita.doctorUid || !nuevaCita.consultorio || !nuevaCita.motivo) {
+        showToast("Faltan campos obligatorios (Paciente, horario, motivo, consultorio o médico).", "error");
         return;
     }
     try {
         let meetLink = '';
-        if (nuevaCita.esTeleconsulta) meetLink = generarLinkMeet();
+        if (nuevaCita.esTeleconsulta) {
+          const roomId = `srs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          meetLink = `https://meet.jit.si/${roomId}`;
+        }
 
-        await addDoc(collection(db, "citas"), {
-            ...nuevaCita, meetLink,
-            fechaHora: `${nuevaCita.fecha}T${nuevaCita.hora}`,
-            estado: 'pendiente', creadoPor: user.uid, creadoPorRol: 'enfermeria'
-        });
+        const motivoData = catalogoMotivos.find((m) => m.id === nuevaCita.motivoId) || catalogoMotivos.find((m) => m.nombre === nuevaCita.motivo);
+        const consultorioData = consultorios.find((c) => c.id === nuevaCita.consultorioId) || consultorios.find((c) => c.nombre === nuevaCita.consultorio);
+        const sucursalData = catalogoSucursales.find((s) => s.id === nuevaCita.sucursalId) || catalogoSucursales.find((s) => s.nombre === nuevaCita.sucursal);
+
+        const payload = {
+          ...nuevaCita,
+          motivo: motivoData?.nombre || nuevaCita.motivo,
+          motivoId: motivoData?.id || nuevaCita.motivoId || '',
+          motivoPrecio: Number(motivoData?.precio || 0),
+          areaConsulta: motivoData?.area || '',
+          consultorio: consultorioData?.nombre || nuevaCita.consultorio,
+          consultorioId: consultorioData?.id || nuevaCita.consultorioId || '',
+          sucursal: sucursalData?.nombre || nuevaCita.sucursal || sucursalPredeterminada?.nombre || user?.sucursal || '',
+          sucursalId: sucursalData?.id || nuevaCita.sucursalId || '',
+          meetLink,
+          fechaHora: `${nuevaCita.fecha}T${nuevaCita.hora}`,
+          fechaHoraFin: `${nuevaCita.fecha}T${nuevaCita.horaFin}`,
+          estado: 'pendiente',
+          creadoPor: user.uid,
+          creadoPorRol: 'enfermeria'
+        };
+
+                const citaRef = await addDoc(collection(db, "citas"), payload);
+
+                if (nuevaCita.esTeleconsulta && nuevaCita.pacienteTelefono) {
+                    try {
+                        const enviarWA = httpsCallable(functions, 'enviarWhatsAppNotificacion');
+                        await enviarWA({
+                            telefono: nuevaCita.pacienteTelefono,
+                            nombrePaciente: nuevaCita.paciente,
+                            consultorio: payload.consultorio || 'Consultorio',
+                            nombreDoctor: user?.nombre || '',
+                            nombreClinica: payload.sucursal || user?.sucursal || 'Clínica',
+                            motivo: `${payload.motivo || 'Consulta'} | Link Meet: ${meetLink}`,
+                            templateName: 'teleconsulta_turno'
+                        });
+                        await updateDoc(doc(db, 'citas', citaRef.id), {
+                            notificadoWhatsApp: true,
+                            notificadoWhatsAppAt: serverTimestamp(),
+                            notificadoPor: user?.uid || '',
+                            notificadoPorNombre: user?.nombre || ''
+                        });
+                        showToast("Cita agendada y enlace enviado por WhatsApp", "success");
+                    } catch (waError) {
+                        console.error('Error al enviar WhatsApp automático de teleconsulta:', waError);
+                        showToast("Cita agendada, pero no se pudo enviar el enlace por WhatsApp", "warning");
+                    }
+                } else {
+                    showToast("Cita agendada correctamente", "success");
+                }
+
         setShowCitaModal(false);
-        setNuevaCita({ ...nuevaCita, paciente: '', pacienteId: '', hora: '', esTeleconsulta: false });
-        showToast("Cita agendada correctamente", "success");
+        setNuevaCita({ 
+          ...nuevaCita,
+          paciente: '',
+          pacienteId: '',
+          pacienteTelefono: '',
+          hora: '',
+          horaFin: '',
+          esTeleconsulta: false
+        });
     } catch (e) { 
         console.error(e); 
         showToast("Error al guardar la cita en el servidor", "error"); 
     }
   };
 
-  const metrics = {
-    espera: citas.filter(c => c.estado === 'pendiente' || c.estado === 'en_espera').length,
-    consulta: citas.filter(c => c.estado === 'en_consulta').length,
-    fin: citas.filter(c => c.estado === 'completada').length
-  };
+    const metrics = useMemo(() => ({
+        espera: citas.filter(c => c.estado === 'pendiente' || c.estado === 'en_espera').length,
+        consulta: citas.filter(c => c.estado === 'en_consulta').length,
+        fin: citas.filter(c => c.estado === 'completada').length
+    }), [citas]);
 
   const doctoresFiltrados = useMemo(() => {
       if (selectedConsultorio === 'Todos') return doctores;
@@ -252,13 +457,14 @@ const handleGuardarCita = async (e) => {
     <>
       {/* --- ESTILOS GLOBALES LIQUID / GLASS --- */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+                @import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap');
 
-        .font-jakarta { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+                .font-jakarta { font-family: 'Sora', system-ui, sans-serif; }
+                .sora { font-family: 'Sora', system-ui, sans-serif; }
         body { font-family: 'Inter', sans-serif; }
 
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-        .cross-float { animation: float 6s ease-in-out infinite; }
+        .cross-float { animation: ${modoLigero ? 'none' : 'float 6s ease-in-out infinite'}; }
 
         .btn-main {
           background: #0f172a; color: #fff; transition: transform 0.15s, box-shadow 0.2s;
@@ -267,9 +473,83 @@ const handleGuardarCita = async (e) => {
         .btn-main:hover { background: #1e293b; transform: scale(0.98); }
         
         .glass-panel {
-          background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 10px 40px -10px rgba(0,0,0,0.05);
+                    background: ${modoLigero ? 'rgba(255,255,255,1)' : 'rgba(255, 255, 255, 0.85)'};
+                    backdrop-filter: ${modoLigero ? 'none' : 'blur(16px)'};
+                    border: 1px solid ${modoLigero ? 'rgba(226,232,240,1)' : 'rgba(255, 255, 255, 0.6)'};
+                    box-shadow: ${modoLigero ? '0 2px 8px rgba(15,23,42,0.06)' : '0 10px 40px -10px rgba(0,0,0,0.05)'};
         }
+
+                .app-shell {
+                    background: #f8fafc;
+                }
+
+                .app-header-lite {
+                    background: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+                }
+
+                .badge-branch-lite {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    background: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #64748b;
+                    text-transform: uppercase;
+                    letter-spacing: .08em;
+                }
+
+                .status-online-lite {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #059669;
+                    text-transform: uppercase;
+                    letter-spacing: .08em;
+                }
+
+                .timeline-toolbar {
+                    padding: 12px 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 12px;
+                    border-bottom: 1px solid #e2e8f0;
+                    background: #ffffff;
+                }
+
+                .timeline-chip-lite {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 999px;
+                    padding: 5px 10px;
+                    font-size: 10px;
+                    font-weight: 800;
+                    letter-spacing: .05em;
+                    text-transform: uppercase;
+                    color: #475569;
+                    background: #ffffff;
+                }
+
+                .timeline-chip-lite.active {
+                    border-color: #93c5fd;
+                    color: #1d4ed8;
+                    background: #eff6ff;
+                }
+
+                .modo-ligero *, .modo-ligero *::before, .modo-ligero *::after {
+                    animation-duration: 0ms !important;
+                    transition-duration: 0ms !important;
+                }
         
         /* Ocultar input date nativo pero mantenerlo clickeable */
         .date-picker-overlay::-webkit-calendar-picker-indicator {
@@ -284,31 +564,22 @@ const handleGuardarCita = async (e) => {
         <span className="font-bold text-sm">{toast.msg}</span>
       </div>
 
-      <div className="h-screen flex flex-col relative overflow-hidden bg-[#f0f4f8] text-slate-700">
-        
-        {/* Fondo Líquido */}
-        <div style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
-          background: 'radial-gradient(ellipse 70% 60% at 15% 0%, rgba(219,234,254,0.6) 0%, transparent 55%), radial-gradient(ellipse 55% 50% at 90% 100%, rgba(204,251,241,0.4) 0%, transparent 50%)',
-        }}/>
-        <div className="cross-float" style={{ position: 'absolute', top: '10%', left: '5%', color: 'rgba(37,99,235,0.1)', pointerEvents: 'none', zIndex: 0 }}>
-          <IconCross />
-        </div>
+        <div className={`h-screen flex flex-col relative overflow-hidden text-slate-700 app-shell ${modoLigero ? 'modo-ligero' : ''}`}>
 
 {/* 1. HEADER GLASSMORPHISM */}
-        <div className="glass-panel px-6 py-3 flex justify-between items-center z-30 shrink-0 mx-6 mt-3 rounded-2xl mb-3">
+                <div className="app-header-lite px-6 py-3 flex justify-between items-center z-30 shrink-0 mx-6 mt-3 rounded-2xl mb-3">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-blue-500/30">
               <Activity size={20}/>
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-800 leading-none font-jakarta tracking-tight">Enfermeria</h1>
+                            <h1 className="text-xl font-bold text-slate-900 leading-none sora tracking-tight">Enfermería</h1>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                    <MapPin size={10}/> {user?.sucursal || 'Central'}
+                                <span className="badge-branch-lite">
+                    <MapPin size={10}/> {sucursalPredeterminada?.nombre || 'Sin sucursal configurada'}
                 </span>
                 <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                <span className="text-[9px] font-bold text-emerald-600 flex items-center gap-1 uppercase tracking-widest">
+                                <span className="status-online-lite">
                     <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div> En Linea
                 </span>
               </div>
@@ -325,12 +596,12 @@ const handleGuardarCita = async (e) => {
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 date-picker-overlay"
                     value={currentDate.toLocaleDateString('en-CA')}
                     onChange={(e) => {
-                        if(e.target.value) setCurrentDate(new Date(e.target.value + 'T12:00:00'));
-                    }}
-                />
-                <div className="flex flex-col items-center group-hover:text-blue-600 transition-colors">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                        <CalIcon size={14} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                            if(e.target.value) setCurrentDate(new Date(e.target.value + 'T12:00:00'));
+                        }}
+                    />
+                    <div className="flex flex-col items-center group-hover:text-blue-600 transition-colors">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                            <CalIcon size={14} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
                         <span className="text-sm font-bold text-slate-800 capitalize font-jakarta group-hover:text-blue-700 transition-colors">
                             {currentDate.toLocaleDateString('es-MX', { weekday: 'long' })}
                         </span>
@@ -358,7 +629,25 @@ const handleGuardarCita = async (e) => {
             </button>
             
             {/* BOTÓN EXISTENTE: NUEVA CITA */}
-            <button onClick={() => { setNuevaCita({...nuevaCita, fecha: currentDate.toLocaleDateString('en-CA'), hora: ''}); setShowCitaModal(true); }} 
+                        <button onClick={() => {
+                                const consultorioNombre = selectedConsultorio !== 'Todos' ? selectedConsultorio : (consultoriosNombres[0] || '');
+                                const consultorioData = consultorios.find((c) => c.nombre === consultorioNombre);
+                                const motivoData = catalogoMotivos[0] || null;
+                                const sucursalData = sucursalPredeterminada || null;
+                                setNuevaCita({
+                                    ...nuevaCita,
+                                    fecha: currentDate.toLocaleDateString('en-CA'),
+                                    hora: '',
+                                    horaFin: '',
+                                    consultorio: consultorioNombre,
+                                    consultorioId: consultorioData?.id || '',
+                                    motivo: motivoData?.nombre || '',
+                                    motivoId: motivoData?.id || '',
+                                    sucursal: sucursalData?.nombre || user?.sucursal || '',
+                                    sucursalId: sucursalData?.id || ''
+                                });
+                                setShowCitaModal(true);
+                            }} 
                 className="btn-main font-jakarta rounded-xl px-4 py-2 flex items-center gap-2 text-xs shadow-md">
               <Plus size={16} strokeWidth={2.5} /> Nueva Cita
             </button>
@@ -386,7 +675,7 @@ const handleGuardarCita = async (e) => {
                             className="bg-transparent border-none outline-none font-bold text-[11px] text-slate-800 pr-6 cursor-pointer font-jakarta appearance-none"
                           >
                              <option value="Todos">Todos los Consultorios</option>
-                             {consultorios.map(c => <option key={c} value={c}>{c}</option>)}
+                                      {consultoriosNombres.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                           <ChevronDown size={14} className="absolute right-1 top-0.5 text-slate-400 pointer-events-none"/>
                       </div>
@@ -394,13 +683,16 @@ const handleGuardarCita = async (e) => {
               </div>
 
               {/* FILTROS */}
-              <div className="px-8 pt-5 pb-0 flex gap-8 shrink-0 border-b border-slate-200/50 bg-white/20">
-                  <button onClick={()=>setViewFilter('timeline')} className={`text-xs font-bold pb-3 border-b-[3px] transition-colors flex items-center gap-2 uppercase tracking-widest ${viewFilter==='timeline' ? 'text-blue-600 border-blue-600' : 'text-slate-400 border-transparent hover:text-slate-600'}`}>
-                      Línea de Tiempo
-                  </button>
-                  <button onClick={()=>setViewFilter('pendientes')} className={`text-xs font-bold pb-3 border-b-[3px] transition-colors flex items-center gap-2 uppercase tracking-widest ${viewFilter==='pendientes' ? 'text-orange-600 border-orange-500' : 'text-slate-400 border-transparent hover:text-slate-600'}`}>
-                      Atención Pendiente
-                  </button>
+              <div className="timeline-toolbar">
+                  <h2 className="text-base font-bold text-slate-900 sora">Consultas del día</h2>
+                  <div className="flex items-center gap-2">
+                      <button onClick={()=>setViewFilter('timeline')} className={`timeline-chip-lite ${viewFilter==='timeline' ? 'active' : ''}`}>
+                          <Clock size={11}/> Ahora
+                      </button>
+                      <button onClick={()=>setViewFilter('pendientes')} className={`timeline-chip-lite ${viewFilter==='pendientes' ? 'active' : ''}`}>
+                          <AlertTriangle size={11}/> Pendientes
+                      </button>
+                  </div>
               </div>
 
               {/* TIMELINE ESTILO RANGOS (14:00 - 14:10) */}
@@ -414,13 +706,7 @@ const handleGuardarCita = async (e) => {
                           </div>
 
                           {timeSlots.map((slot, index) => {
-                              const citasEnSlot = citas.filter(c => {
-                                  const horaCita = c.fechaHora.split('T')[1];
-                                  const [hCita, mCita] = horaCita.split(':').map(Number);
-                                  const citaMinutes = hCita * 60 + mCita;
-                                  const matchConsultorio = selectedConsultorio === 'Todos' || c.consultorio === selectedConsultorio;
-                                  return matchConsultorio && (citaMinutes >= slot.startMinutes && citaMinutes < slot.endMinutes);
-                              });
+                              const citasEnSlot = citasPorSlot.get(slot.startTime) || [];
 
                               return (
                                   <div 
@@ -431,7 +717,7 @@ const handleGuardarCita = async (e) => {
                                       }`}
                                   >
                                       {/* Línea Activa */}
-                                      {slot.isCurrent && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500 z-20 rounded-r-md animate-pulse"></div>}
+                                      {slot.isCurrent && <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500 z-20 rounded-r-md ${modoLigero ? '' : 'animate-pulse'}`}></div>}
 
                                       <div className={`w-40 flex flex-col items-center justify-center border-r border-slate-100 shrink-0 ${slot.isPast ? 'text-slate-400' : 'text-slate-600'} ${slot.isCurrent ? 'text-blue-700 bg-blue-100/30' : ''}`}>
                                           <span className={`font-bold font-mono tracking-tight ${slot.isCurrent ? 'text-base' : 'text-sm'}`}>{slot.value}</span>
@@ -480,7 +766,7 @@ const handleGuardarCita = async (e) => {
                       </div>
                   ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto mt-4">
-                          {citas.filter(c => c.estado === 'pendiente' && (selectedConsultorio === 'Todos' || c.consultorio === selectedConsultorio)).map(cita => (
+                          {citasPendientesFiltradas.map(cita => (
                               <CardCita key={cita.id} cita={cita} onClick={setSelectedCita} navigate={navigate} />
                           ))}
                       </div>
@@ -553,7 +839,7 @@ const handleGuardarCita = async (e) => {
                 <div className="px-6 md:px-8 py-5 md:py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
                     <div>
                         <h2 className="text-lg md:text-xl font-black text-slate-800 font-jakarta">Agendar Cita</h2>
-                        <p className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{nuevaCita.hora || '--:--'} • {nuevaCita.fecha}</p>
+                        <p className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{nuevaCita.hora || '--:--'} - {nuevaCita.horaFin || '--:--'} • {nuevaCita.fecha}</p>
                     </div>
                     <button onClick={() => setShowCitaModal(false)} className="p-2 md:p-2.5 bg-white border border-slate-200 text-slate-400 hover:text-red-500 rounded-full transition-all shadow-sm"><X size={18} className="md:w-5 md:h-5"/></button>
                 </div>
@@ -568,9 +854,16 @@ const handleGuardarCita = async (e) => {
                                     className={`${inputStyle} pl-10 md:pl-12 py-3 md:py-3.5`} placeholder="Buscar en expediente..." value={nuevaCita.paciente}
                                     onChange={(e) => {
                                         setNuevaCita({...nuevaCita, paciente: e.target.value});
-                                        const txt = e.target.value.toLowerCase();
+                                        const txt = e.target.value.toLowerCase().trim();
                                         if(txt.length > 1) {
-                                            setSugerencias(todosLosPacientes.filter(p => p.nombre.toLowerCase().includes(txt)));
+                                            const filtered = todosLosPacientes
+                                                .filter((p) => {
+                                                    const nombre = (p.nombre || '').toLowerCase();
+                                                    const idPaciente = String(p.idPaciente || '').toLowerCase();
+                                                    return nombre.includes(txt) || idPaciente.includes(txt);
+                                                })
+                                                .slice(0, 20);
+                                            setSugerencias(filtered);
                                             setMostrarSugerencias(true);
                                         } else setMostrarSugerencias(false);
                                     }}
@@ -579,7 +872,7 @@ const handleGuardarCita = async (e) => {
                                     <div className="absolute top-full left-0 w-full bg-white shadow-2xl rounded-xl md:rounded-2xl mt-2 border border-slate-100 max-h-40 md:max-h-48 overflow-y-auto z-50 p-2">
                                         {sugerencias.map(p => (
                                             <div key={p.id} onClick={() => seleccionarPaciente(p)} className="p-3 hover:bg-slate-50 rounded-lg md:rounded-xl cursor-pointer text-xs md:text-sm font-bold text-slate-700 transition-colors">
-                                                {p.nombre}
+                                                {p.nombre}{p.idPaciente ? ` (${p.idPaciente})` : ''}
                                             </div>
                                         ))}
                                     </div>
@@ -589,14 +882,32 @@ const handleGuardarCita = async (e) => {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className={labelStyle}>Fecha</label>
                             <input type="date" className={`${inputStyle} py-3 md:py-3.5`} value={nuevaCita.fecha} onChange={e => setNuevaCita({...nuevaCita, fecha: e.target.value})} />
                         </div>
-                        <div>
-                            <label className={labelStyle}>Hora</label>
-                            <input type="time" className={`${inputStyle} py-3 md:py-3.5`} value={nuevaCita.hora} onChange={e => setNuevaCita({...nuevaCita, hora: e.target.value})} />
+                                                <div className="grid grid-cols-2 gap-3">
+                                                        <div>
+                                                                <label className={labelStyle}>Hora Inicio</label>
+                                                                <input
+                                                                    type="time"
+                                                                    className={`${inputStyle} py-3 md:py-3.5`}
+                                                                    value={nuevaCita.hora}
+                                                                    onChange={e => {
+                                                                        const nuevaHora = e.target.value;
+                                                                        setNuevaCita({
+                                                                            ...nuevaCita,
+                                                                            hora: nuevaHora,
+                                                                            horaFin: nuevaCita.horaFin || sumarMinutos(nuevaHora, INTERVALO_MINUTOS)
+                                                                        });
+                                                                    }}
+                                                                />
+                                                        </div>
+                                                        <div>
+                                                                <label className={labelStyle}>Hora Fin</label>
+                                                                <input type="time" className={`${inputStyle} py-3 md:py-3.5`} value={nuevaCita.horaFin} onChange={e => setNuevaCita({...nuevaCita, horaFin: e.target.value})} />
+                                                        </div>
                         </div>
                     </div>
 
@@ -604,9 +915,20 @@ const handleGuardarCita = async (e) => {
                         <div>
                             <label className={labelStyle}>Consultorio</label>
                             <div className="relative">
-                                <select className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`} value={nuevaCita.consultorio} onChange={e => setNuevaCita({...nuevaCita, consultorio: e.target.value})}>
+                                                                <select
+                                                                    className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`}
+                                                                    value={nuevaCita.consultorioId}
+                                                                    onChange={e => {
+                                                                        const consultorioData = consultorios.find((c) => c.id === e.target.value);
+                                                                        setNuevaCita({
+                                                                            ...nuevaCita,
+                                                                            consultorioId: e.target.value,
+                                                                            consultorio: consultorioData?.nombre || ''
+                                                                        });
+                                                                    }}
+                                                                >
                                     <option value="">Asignar Sala...</option>
-                                    {consultorios.map(c => <option key={c} value={c}>{c}</option>)}
+                                                                        {consultorios.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </select>
                                 <ChevronDown size={16} className="absolute right-3 md:right-4 top-3 md:top-4 text-slate-400 pointer-events-none"/>
                             </div>
@@ -633,11 +955,57 @@ const handleGuardarCita = async (e) => {
                         </div>
                     </div>
 
-                    <div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                        <label className={labelStyle}>Tipo de Consulta</label>
+                                                        <div className="relative">
+                                                                <select className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`} value={nuevaCita.tipoConsulta} onChange={e => setNuevaCita({...nuevaCita, tipoConsulta: e.target.value})}>
+                                                                        <option value="Primera vez">Primera vez</option>
+                                                                        <option value="Subsecuente">Subsecuente</option>
+                                                                </select>
+                                                                <ChevronDown size={16} className="absolute right-3 md:right-4 top-3 md:top-4 text-slate-400 pointer-events-none"/>
+                                                        </div>
+                                                </div>
+                                                <div>
+                                                        <label className={labelStyle}>Sucursal</label>
+                                                        <div className="relative">
+                                                                <select
+                                                                    className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`}
+                                                                    value={nuevaCita.sucursalId}
+                                                                    onChange={e => {
+                                                                        const sucursalData = catalogoSucursales.find((s) => s.id === e.target.value);
+                                                                        setNuevaCita({
+                                                                            ...nuevaCita,
+                                                                            sucursalId: e.target.value,
+                                                                            sucursal: sucursalData?.nombre || ''
+                                                                        });
+                                                                    }}
+                                                                >
+                                                                        <option value="">Seleccionar sucursal...</option>
+                                                                        {catalogoSucursales.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                                                                </select>
+                                                                <ChevronDown size={16} className="absolute right-3 md:right-4 top-3 md:top-4 text-slate-400 pointer-events-none"/>
+                                                        </div>
+                                                </div>
+                                        </div>
+
+                                        <div>
                         <label className={labelStyle}>Motivo de la Visita</label>
                         <div className="relative">
-                            <select className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`} value={nuevaCita.motivo} onChange={e => setNuevaCita({...nuevaCita, motivo: e.target.value})}>
-                                {MOTIVOS_CONSULTA.map(m => <option key={m} value={m}>{m}</option>)}
+                                                        <select
+                                                            className={`${inputStyle} appearance-none pr-8 py-3 md:py-3.5`}
+                                                            value={nuevaCita.motivoId}
+                                                            onChange={e => {
+                                                                const motivoData = catalogoMotivos.find((m) => m.id === e.target.value);
+                                                                setNuevaCita({
+                                                                    ...nuevaCita,
+                                                                    motivoId: e.target.value,
+                                                                    motivo: motivoData?.nombre || ''
+                                                                });
+                                                            }}
+                                                        >
+                                                                <option value="">Seleccionar motivo...</option>
+                                                                {catalogoMotivos.map(m => <option key={m.id} value={m.id}>{formatMotivoOption(m)}</option>)}
                             </select>
                             <ChevronDown size={16} className="absolute right-3 md:right-4 top-3 md:top-4 text-slate-400 pointer-events-none"/>
                         </div>
@@ -728,6 +1096,48 @@ const handleGuardarCita = async (e) => {
                                                 Iniciar Triage
                                             </button>
                                         </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {selectedCita.estado === 'en_espera' && (
+                                <div className="space-y-4">
+                                    <div className="bg-blue-50 rounded-2xl p-5 border border-blue-100 relative overflow-hidden">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="bg-white p-2 rounded-xl text-blue-500 shadow-sm"><CheckCircle2 size={20}/></div>
+                                            <h4 className="font-black text-blue-800 text-sm">Triage Completado</h4>
+                                        </div>
+                                        {selectedCita.signos_vitales && (
+                                            <div className="grid grid-cols-4 gap-2 mb-4">
+                                                {[
+                                                    { l: 'Peso', v: selectedCita.signos_vitales.peso, u: 'kg' },
+                                                    { l: 'Talla', v: selectedCita.signos_vitales.talla, u: 'm' },
+                                                    { l: 'Temp', v: selectedCita.signos_vitales.temp, u: '°C' },
+                                                    { l: 'T/A', v: selectedCita.signos_vitales.ta, u: '' },
+                                                    { l: 'F.C.', v: selectedCita.signos_vitales.fc, u: 'lpm' },
+                                                    { l: 'F.R.', v: selectedCita.signos_vitales.fr, u: 'rpm' },
+                                                    { l: 'SpO2', v: selectedCita.signos_vitales.spo2, u: '%' },
+                                                    { l: 'IMC', v: selectedCita.signos_vitales.imc, u: '' },
+                                                ].map((s, i) => (
+                                                    <div key={i} className="bg-white rounded-lg p-2 text-center border border-blue-100">
+                                                        <p className="text-[8px] font-bold text-blue-400 uppercase">{s.l}</p>
+                                                        <p className="text-sm font-black text-slate-700">{s.v || '--'} <span className="text-[8px] font-normal text-slate-400">{s.u}</span></p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {selectedCita.triage_alergias && (
+                                            <div className="bg-white rounded-lg p-3 border border-blue-100 mb-4">
+                                                <p className="text-[9px] font-bold text-rose-400 uppercase mb-0.5">Alergias</p>
+                                                <p className="text-xs text-slate-700 font-medium">{selectedCita.triage_alergias}</p>
+                                            </div>
+                                        )}
+                                        <button 
+                                            onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente, editMode: true } })}
+                                            className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                        >
+                                            <Edit3 size={16}/> Editar Triage
+                                        </button>
                                     </div>
                                 </div>
                             )}
