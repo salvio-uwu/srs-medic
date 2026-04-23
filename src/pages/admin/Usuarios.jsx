@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
-import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth, deleteUser } from 'firebase/auth';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 
@@ -191,9 +191,18 @@ const Usuarios = () => {
   const isClinicalNonMedico = formData.rol === 'enfermeria' || formData.rol === 'jefa_enfermeria';
 
   const assignmentOptions = useMemo(() => {
-    if (isMedicoRole) return consultoriosCatalogo;
-    return sucursalesCatalogo;
+    const source = isMedicoRole ? consultoriosCatalogo : sucursalesCatalogo;
+    return source.map((item) => item.nombre || item);
   }, [consultoriosCatalogo, sucursalesCatalogo, isMedicoRole]);
+
+  const resolverAsignacionIds = (nombre) => {
+    if (isMedicoRole) {
+      const c = consultoriosCatalogo.find((item) => item.nombre === nombre);
+      return { consultorioRecurrenteId: c?.id || '', sucursalId: c?.sucursalId || '', sucursalNombre: c?.sucursal || '' };
+    }
+    const s = sucursalesCatalogo.find((item) => item.nombre === nombre);
+    return { sucursalId: s?.id || '', sucursalNombre: s?.nombre || nombre };
+  };
 
   const enabledPermissionIds = useMemo(
     () => Object.entries(formData.permissions || {}).filter(([, v]) => !!v).map(([id]) => id),
@@ -223,14 +232,12 @@ const Usuarios = () => {
       const consultorios = consultoriosSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((item) => item.activo !== false && item.nombre)
-        .map((item) => item.nombre)
-        .sort((a, b) => String(a).localeCompare(String(b), 'es'));
+        .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
 
       const sucursales = sucursalesSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((item) => item.activo !== false && item.nombre)
-        .map((item) => item.nombre)
-        .sort((a, b) => String(a).localeCompare(String(b), 'es'));
+        .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
 
       const especialidades = especialidadesSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
@@ -247,10 +254,27 @@ const Usuarios = () => {
   };
 
   useEffect(() => {
-    fetchUsuarios();
-    fetchCatalogos();
-    const interval = setInterval(fetchUsuarios, 60000);
-    return () => clearInterval(interval);
+    setLoading(true);
+    const unsub = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const usersList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setUsuarios(usersList);
+      setLoading(false);
+    }, () => { setLoading(false); });
+
+    const unsub2 = onSnapshot(collection(db, 'catalogo_consultorios'), (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false && item.nombre).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+      setConsultoriosCatalogo(rows);
+    }, () => {});
+    const unsub3 = onSnapshot(collection(db, 'catalogo_sucursales'), (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false && item.nombre).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+      setSucursalesCatalogo(rows);
+    }, () => {});
+    const unsub4 = onSnapshot(collection(db, 'catalogo_especialidades'), (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false && item.nombre).map((item) => item.nombre).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+      setEspecialidadesCatalogo(rows);
+    }, () => {});
+
+    return () => { unsub(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
   useEffect(() => {
@@ -525,12 +549,16 @@ const Usuarios = () => {
         editableData.cargo = formData.cargo.trim();
       }
 
+      const ids = resolverAsignacionIds(formData.asignacionRecurrente);
       if (isMedicoRole) {
         editableData.consultorioRecurrente = formData.asignacionRecurrente;
-        editableData.sucursal = formData.asignacionRecurrente;
+        editableData.consultorioRecurrenteId = ids.consultorioRecurrenteId;
+        editableData.sucursal = ids.sucursalNombre || formData.asignacionRecurrente;
+        editableData.sucursalId = ids.sucursalId;
       } else {
         editableData.areaRecurrente = formData.asignacionRecurrente;
         editableData.sucursal = formData.asignacionRecurrente;
+        editableData.sucursalId = ids.sucursalId;
       }
 
       if (isEditing) {
@@ -551,7 +579,6 @@ const Usuarios = () => {
         alert(`${roleLabel(formData.rol)} ${nombreCompleto} actualizado con exito.`);
         setViewMode('tabla');
         resetUserForm();
-        fetchUsuarios();
         return;
       }
 
@@ -589,12 +616,16 @@ const Usuarios = () => {
         baseData.cargo = formData.cargo.trim();
       }
 
+      const idsNew = resolverAsignacionIds(formData.asignacionRecurrente);
       if (isMedicoRole) {
         baseData.consultorioRecurrente = formData.asignacionRecurrente;
-        baseData.sucursal = formData.asignacionRecurrente;
+        baseData.consultorioRecurrenteId = idsNew.consultorioRecurrenteId;
+        baseData.sucursal = idsNew.sucursalNombre || formData.asignacionRecurrente;
+        baseData.sucursalId = idsNew.sucursalId;
       } else {
         baseData.areaRecurrente = formData.asignacionRecurrente;
         baseData.sucursal = formData.asignacionRecurrente;
+        baseData.sucursalId = idsNew.sucursalId;
       }
 
       const userRef = doc(db, 'users', newUser.uid);
@@ -671,7 +702,6 @@ const Usuarios = () => {
       alert(`${roleLabel(formData.rol)} ${nombreCompleto} creado con exito.`);
       setViewMode('tabla');
       resetUserForm();
-      fetchUsuarios();
     } catch (error) {
       if (newUser && !userProvisioned) {
         try {
@@ -703,7 +733,6 @@ const Usuarios = () => {
         targetNombre: user.nombre || 'sin nombre',
         payload: { rol: user.rol || 'sin rol' }
       });
-      fetchUsuarios();
     } catch (error) {
       alert(`Error al eliminar: ${error.message}`);
     }

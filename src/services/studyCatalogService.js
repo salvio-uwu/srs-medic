@@ -3,6 +3,55 @@ import { db } from '../config/firebase';
 
 const clean = (value) => String(value ?? '').trim();
 
+const normalizeCategoryToken = (value = '') => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .trim()
+  .replace(/[\s-]+/g, '_')
+  .replace(/[^a-z0-9_]/g, '')
+  .replace(/_+/g, '_')
+  .replace(/^_|_$/g, '');
+
+export const STUDY_CATEGORY_ORDER = ['ecografia', 'rayos_x', 'estudio_imagen', 'paquete', 'laboratorio'];
+
+export const STUDY_CATEGORY_LABELS = {
+  ecografia: 'Ecografia',
+  rayos_x: 'Rayos X',
+  estudio_imagen: 'Estudios de imagen',
+  paquete: 'Paquetes',
+  laboratorio: 'Laboratorios individuales'
+};
+
+export const STUDY_CATEGORY_OPTIONS = STUDY_CATEGORY_ORDER.map((id) => ({
+  id,
+  label: STUDY_CATEGORY_LABELS[id]
+}));
+
+const STUDY_CATEGORY_ALIASES = {
+  ecografia: ['ecografia', 'ultrasonido', 'ultrasonografia'],
+  rayos_x: ['rayos_x', 'rayosx', 'rx', 'radiografia', 'radiografias'],
+  estudio_imagen: ['estudio_imagen', 'estudios_de_imagen', 'imagen', 'imagenes', 'imagenologia'],
+  paquete: ['paquete', 'paquetes'],
+  laboratorio: ['laboratorio', 'laboratorios', 'estudio', 'estudios', 'individual', 'individuales', 'lab']
+};
+
+export const normalizeStudyCategory = (value = '') => {
+  const token = normalizeCategoryToken(value || 'laboratorio');
+  if (!token) return 'laboratorio';
+
+  for (const [category, aliases] of Object.entries(STUDY_CATEGORY_ALIASES)) {
+    if (aliases.includes(token)) return category;
+  }
+
+  return 'laboratorio';
+};
+
+export const getStudyCategoryLabel = (category = 'laboratorio') => {
+  const normalized = normalizeStudyCategory(category);
+  return STUDY_CATEGORY_LABELS[normalized] || STUDY_CATEGORY_LABELS.laboratorio;
+};
+
 const toNumber = (value) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const normalized = String(value ?? '').replace(/[^\d.-]/g, '');
@@ -41,8 +90,7 @@ export const normalizeStudyRecord = (raw = {}, idFallback = '') => {
   const descripcion = clean(
     raw.descripcion || raw.Descripción || raw.descripcionEstudio || raw.nombre || raw.name
   );
-  const categoriaRaw = clean(raw.categoria || raw.tipo || raw.modo || 'estudio').toLowerCase();
-  const categoria = categoriaRaw === 'paquete' ? 'paquete' : 'estudio';
+  const categoria = normalizeStudyCategory(raw.categoria || raw.tipo || raw.modo || 'laboratorio');
 
   return {
     id: clean(raw.id || idFallback || `${clave || 'estudio'}-${descripcion}`),
@@ -116,13 +164,13 @@ export const getStudiesCatalog = async ({ includeInactive = false } = {}) => {
 
 export const resolveStudyPackages = (studies = []) => {
   return studies
-    .filter((item) => item.categoria === 'paquete' && item.activo !== false)
+    .filter((item) => normalizeStudyCategory(item.categoria) === 'paquete' && item.activo !== false)
     .map((item) => item.descripcion);
 };
 
 export const getPackageDefinitions = (studies = []) => {
   return studies
-    .filter((item) => item.categoria === 'paquete' && item.activo !== false)
+    .filter((item) => normalizeStudyCategory(item.categoria) === 'paquete' && item.activo !== false)
     .map((item) => ({
       id: item.id,
       nombre: item.descripcion,

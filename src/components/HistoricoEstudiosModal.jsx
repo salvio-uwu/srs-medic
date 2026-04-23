@@ -1,7 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { X, Calendar, FileText, ImageIcon, Loader2, AlertCircle } from 'lucide-react';
 import { db } from '../config/firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+
+const parseDateValue = (value) => {
+  if (!value) return null;
+  if (value?.toDate) {
+    const parsed = value.toDate();
+    return Number.isNaN(parsed?.getTime?.()) ? null : parsed;
+  }
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const formatDateLabel = (value) => {
+  const parsed = parseDateValue(value);
+  return parsed
+    ? parsed.toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'Fecha no disponible';
+};
 
 const HistoricoEstudiosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNombre }) => {
   const [loading, setLoading] = useState(true);
@@ -10,31 +28,59 @@ const HistoricoEstudiosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNom
   const [errorVacio, setErrorVacio] = useState(false);
 
   useEffect(() => {
-    const fetchHistorico = async () => {
-      try {
-        // Consultamos la colección 'estudios_previos' (o la que uses para guardar resultados)
-        const q = query(
-          collection(db, "estudios_previos"),
-          where("pacienteId", "==", pacienteId),
-          orderBy("fecha", "desc")
-        );
-        
-        const snap = await getDocs(q);
-        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-        if (docs.length === 0) {
-          setErrorVacio(true);
-        } else {
-          setEstudios(docs);
-          setSeleccionado(docs[0]); // Seleccionar el más reciente por defecto
-        }
-      } catch (error) {
-        console.error("Error cargando histórico:", error);
-      }
+    if (!pacienteId) {
+      setEstudios([]);
+      setSeleccionado(null);
+      setErrorVacio(true);
       setLoading(false);
-    };
+      return undefined;
+    }
 
-    fetchHistorico();
+    setLoading(true);
+    const q = query(
+      collection(db, "estudios_previos"),
+      where("pacienteId", "==", pacienteId)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const docs = snap.docs
+          .map((d) => {
+            const data = d.data();
+            const fechaDate = parseDateValue(data.fecha);
+            return {
+              id: d.id,
+              ...data,
+              fechaDate,
+              fechaLabel: formatDateLabel(data.fecha)
+            };
+          })
+          .sort((a, b) => {
+            const aTs = a.fechaDate?.getTime?.() || 0;
+            const bTs = b.fechaDate?.getTime?.() || 0;
+            return bTs - aTs;
+          });
+
+        setEstudios(docs);
+        setErrorVacio(docs.length === 0);
+        setSeleccionado((prev) => {
+          if (docs.length === 0) return null;
+          if (!prev?.id) return docs[0];
+          return docs.find((row) => row.id === prev.id) || docs[0];
+        });
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error cargando histórico:", error);
+        setEstudios([]);
+        setSeleccionado(null);
+        setErrorVacio(true);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
   }, [pacienteId]);
 
   // Si no hay estudios, mostramos la alerta estilo Mac/Web de tu imagen
@@ -114,7 +160,7 @@ const HistoricoEstudiosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNom
                   value={seleccionado?.id}
                 >
                   {estudios.map(est => (
-                    <option key={est.id} value={est.id}>{est.fecha}</option>
+                    <option key={est.id} value={est.id}>{est.fechaLabel}</option>
                   ))}
                 </select>
                  <div className="bg-blue-100 text-blue-800 text-center py-2 font-black text-xs uppercase tracking-wide rounded-xl border border-blue-200">
@@ -127,7 +173,7 @@ const HistoricoEstudiosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNom
                       onClick={() => setSeleccionado(est)}
                       className={`w-full py-2 px-3 text-sm font-medium rounded transition-all text-left ${seleccionado?.id === est.id ? 'bg-white shadow-sm border border-slate-200 text-blue-600' : 'text-slate-500 hover:bg-slate-100'}`}
                     >
-                      {est.fecha}
+                      {est.fechaLabel}
                     </button>
                   ))}
                 </div>
@@ -137,7 +183,7 @@ const HistoricoEstudiosModal = ({ onClose, onBackToMenu, pacienteId, pacienteNom
             <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-5 bg-white">
                 <div className="flex justify-between items-center border-b border-slate-100 pb-2">
                     <h3 className="text-blue-900 font-black text-3xl uppercase tracking-tight">{pacienteNombre}</h3>
-                    <span className="text-slate-400 font-bold">{seleccionado?.fecha || '--/--/----'}</span>
+                  <span className="text-slate-400 font-bold">{seleccionado?.fechaLabel || '--/--/----'}</span>
                 </div>
 
                 <div>

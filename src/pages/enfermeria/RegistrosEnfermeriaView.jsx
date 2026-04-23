@@ -12,7 +12,7 @@ const RegistrosEnfermeriaView = () => {
       standalone
       onClose={() => navigate('/enfermeria/jefatura')}
       enfermeraNombre={user?.nombre || 'Jefatura Enfermeria'}
-      sucursal={user?.sucursal || 'Central'}
+      sucursal={user?.sucursal || ''}
     />
   );
 };

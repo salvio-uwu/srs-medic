@@ -4,17 +4,39 @@
     import { collection, getDocs, query, orderBy, onSnapshot } from 'firebase/firestore';
     import { functions } from '../../../config/firebase';
     import { db } from '../../../config/firebase';
-    import { getPackageDefinitions, getStudiesCatalog } from '../../../services/studyCatalogService';
+    import { PROCEDURE_CATEGORY_OPTIONS, getProcedureCategoryLabel, normalizeProcedureCategory, normalizeProcedureRecord } from '../../../services/procedureCatalogService';
+    import { getPackageDefinitions, getStudyCategoryLabel, loadStudiesFromPublicData, normalizeStudyCategory, normalizeStudyRecord } from '../../../services/studyCatalogService';
+    import {
+        buildSymptomCategorySections,
+        getDefaultSymptomCategoryId,
+        getSymptomCategoryLabelFromId,
+        SYMPTOM_CATEGORY_COLOR_FALLBACK,
+        SYMPTOM_CATEGORY_DEFAULTS
+    } from '../../../services/symptomCatalogService';
     import { 
     FileText, Activity, ArrowLeft, Droplet, Eye, FlaskConical, 
     Search, Trash2, Scissors, Package, CheckCircle, Mic, 
     AlertTriangle, ChevronRight, ChevronDown, Pill, X, Check, Info, Calculator, Zap,
-    Sparkles, Loader2, Brain, Pencil, Plus, Link2
+    Sparkles, Loader2, Brain, Pencil, Plus, Link2, ScanLine, Radiation, Images, Boxes, Microscope, ClipboardList, Bandage, Syringe, Printer, ShieldAlert, Scale, ArrowUp, ArrowDown
     } from 'lucide-react';
 
     let cacheCie10 = null;
         let cacheMeds = null;
         let cacheStudies = null;
+                let cacheProcedures = null;
+
+        const PROCEDURE_PRIORITY_OPTIONS = [
+            { id: 'electivo', label: 'Electivo' },
+            { id: 'preferente', label: 'Preferente' },
+            { id: 'urgente', label: 'Urgente' }
+        ];
+
+        const PROCEDURE_STATUS_OPTIONS = [
+            { id: 'indicado', label: 'Indicado' },
+            { id: 'programado', label: 'Programado' },
+            { id: 'realizado', label: 'Realizado' },
+            { id: 'cancelado', label: 'Cancelado' }
+        ];
 
     // --- ATAJOS INTELIGENTES: Motivos relacionados ---
     const MOTIVOS_RELACIONADOS = {
@@ -48,13 +70,7 @@
       { nombre: 'Hipertensión', categoria: 'generales' },
     ];
 
-    const CATEGORIAS_SINTOMAS = [
-      { id: 'generales', label: 'Generales', color: 'bg-slate-500' },
-      { id: 'respiratorios', label: 'Respiratorios', color: 'bg-sky-500' },
-      { id: 'abdominales', label: 'Abdominales', color: 'bg-amber-500' },
-      { id: 'urinarios', label: 'Urinarios', color: 'bg-violet-500' },
-      { id: 'neurologicos', label: 'Neurológicos', color: 'bg-rose-500' },
-    ];
+                const titleFromId = getSymptomCategoryLabelFromId;
 
 
         const normalizeCatalogMedication = (raw) => {
@@ -100,24 +116,60 @@
             };
         };
 
+    // Normaliza texto eliminando acentos, convirtiendo a minúsculas y quitando caracteres especiales
+    const normalizar = (str) =>
+        String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim();
+
+    // Divide la query en palabras y verifica que todas aparezcan en el texto objetivo
+    const matchFuzzy = (texto, query) => {
+        const t = normalizar(texto);
+        const words = normalizar(query).split(/\s+/).filter(Boolean);
+        return words.every(w => t.includes(w));
+    };
+
     const SeccionConsulta = ({ 
     expediente, 
     updateCampo, 
     activeConsulta, 
     setActiveConsulta, 
+        onPrintRecetaSalir,
+        onPrintReceta,
     tempMed, 
-    setTempMed,
-    doctorUid
+    setTempMed
     }) => {  
     
     // --- ESTADOS DE NAVEGACIÓN ---
     const [activeExploracion, setActiveExploracion] = useState('signos');
-    const [activeEstudiosTab, setActiveEstudiosTab] = useState('paquetes');
+    const [activeEstudiosTab, setActiveEstudiosTab] = useState('ecografia');
 
     // --- ESTADOS ATAJOS (LEÍDOS DESDE FIRESTORE) ---
-    const [atajos, setAtajos] = useState(ATAJOS_DEFAULT);
+        const [atajos, setAtajos] = useState(ATAJOS_DEFAULT);
+        const [categoriasSintomas, setCategoriasSintomas] = useState(SYMPTOM_CATEGORY_DEFAULTS);
     const [relacionados, setRelacionados] = useState([]);
-    
+
+        const categoriaSintomaDefaultId = useMemo(
+            () => getDefaultSymptomCategoryId(categoriasSintomas),
+            [categoriasSintomas]
+        );
+
+        const categoriasConAtajos = useMemo(() => {
+            return buildSymptomCategorySections({
+                categories: categoriasSintomas,
+                symptoms: atajos,
+                defaultCategoryId: categoriaSintomaDefaultId,
+                includeEmptyCategories: false,
+                includeInactiveCategories: true
+            });
+        }, [atajos, categoriaSintomaDefaultId, categoriasSintomas]);
+
+        const categoriasConItems = useMemo(() => {
+            return categoriasConAtajos.filter((cat) => cat.items.length > 0);
+        }, [categoriasConAtajos]);
+
     // --- ESTADOS DE BUSCADORES Y MEDICAMENTOS ---
     const [sugerenciasCie10, setSugerenciasCie10] = useState([]);
     const [mostrarCie10, setMostrarCie10] = useState(false);
@@ -157,17 +209,135 @@
     const [editandoMedIndex, setEditandoMedIndex] = useState(null);
     const [medEdicion, setMedEdicion] = useState({ nombre: '', presentacion: '', sustanciasActivas: '', dosis: '' });
 
+    const isMedNameLocked = Boolean(medSeleccionadoDetalle);
+    const recetaHabilitada = cie10Valido;
+
+    const resetMedSelection = () => {
+        setTempMed({ nombre: '', dosis: '', presentacion: '', sustanciasActivas: '', numeroAcomodo: '' });
+        setMedSeleccionadoDetalle(null);
+        setDosisRecomendada('');
+        setSugerenciasMeds([]);
+        setMostrarMeds(false);
+        setIndiceMeds(-1);
+    };
+
+    const enfocarDiagnosticoCie10 = () => {
+        setSacudirCie10(true);
+        setTimeout(() => setSacudirCie10(false), 600);
+        refInputCie10.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => refInputCie10.current?.focus(), 250);
+    };
+
+    const usarDosisCatalogo = () => {
+        const dosisCatalogo = String(dosisRecomendada || '').trim();
+        if (!dosisCatalogo) return;
+        setTempMed((prev) => ({ ...prev, dosis: dosisCatalogo }));
+        showNotification('La dosis del catálogo se copió a la receta.', 'success');
+    };
+
     // --- ESTADOS IA CALCULADORA ---
     const [iaCalcLoading, setIaCalcLoading] = useState(false);
     const [iaCalcResult, setIaCalcResult] = useState('');
 
     // --- ESTADOS UI (MODALES) ---
     const [showRiskModal, setShowRiskModal] = useState(false);
-    const [riskData, setRiskData] = useState({ mensaje: '', medicamento: '' });
+    const [riskData, setRiskData] = useState({ mensaje: '', medicamento: '', nivel: 'ninguno', tipo: 'ninguno' });
     const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
     const [tempGlucosa, setTempGlucosa] = useState({ fecha: '', categoria: 'Antes del desayuno', valor: '' });
     const [catalogoEstudios, setCatalogoEstudios] = useState([]);
+    const [catalogoEstudiosLoading, setCatalogoEstudiosLoading] = useState(false);
     const [busquedaEstudio, setBusquedaEstudio] = useState('');
+    const [catalogoProcedimientos, setCatalogoProcedimientos] = useState([]);
+    const [catalogoProcedimientosLoading, setCatalogoProcedimientosLoading] = useState(false);
+    const [busquedaProcedimiento, setBusquedaProcedimiento] = useState('');
+    const [filtroProcedimientoCategoria, setFiltroProcedimientoCategoria] = useState('todos');
+    const [sugerenciasEvitarAlergia, setSugerenciasEvitarAlergia] = useState([]);
+    const [cargandoSugerenciasEvitarAlergia, setCargandoSugerenciasEvitarAlergia] = useState(false);
+
+    const normalizarAlergiaKey = (value = '') => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const esAlergiaNoUtil = (value = '') => {
+        const token = normalizarAlergiaKey(value);
+        if (!token) return true;
+        const descartables = [
+            'interrogadas y negadas',
+            'preguntados y negados',
+            'sin alergias',
+            'sin alergia',
+            'ninguna',
+            'ninguno',
+            'na',
+            'n a',
+            'n a',
+            'no refiere alergias',
+            'negado',
+            'negadas'
+        ];
+        return descartables.some((item) => token === item);
+    };
+
+    const resumenAlergiasPaciente = useMemo(() => {
+        const preguntadosNegados = expediente?.antecedentes?.alergias?.preguntados_y_negados === true;
+        const listaAlergias = Array.isArray(expediente?.antecedentes?.alergias?.lista)
+            ? expediente.antecedentes.alergias.lista
+            : [];
+        const textoOtros = String(expediente?.antecedentes?.alergias?.otros || expediente?.antecedentes?.alergias?.otras || '').trim();
+        const alergiasBase = String(expediente?.px_info?.alergias_base || '').trim();
+
+        const fromLista = listaAlergias
+            .map((item) => String(item?.sustancia || item?.nombre || '').trim())
+            .filter(Boolean);
+
+        const fromOtros = textoOtros
+            .split(/[\n,;/]+/)
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+
+        const fromBase = alergiasBase
+            .split(/[\n,;/]+/)
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+
+        const merged = [...fromLista, ...fromOtros, ...fromBase]
+            .filter((item) => !esAlergiaNoUtil(item));
+
+        const unique = [];
+        const seen = new Set();
+        merged.forEach((item) => {
+            const key = normalizarAlergiaKey(item);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            unique.push(item);
+        });
+
+        return {
+            preguntadosNegados,
+            tieneAlergias: !preguntadosNegados && unique.length > 0,
+            items: unique,
+            contexto: unique.join(', ')
+        };
+    }, [
+        expediente?.antecedentes?.alergias?.lista,
+        expediente?.antecedentes?.alergias?.otros,
+        expediente?.antecedentes?.alergias?.otras,
+        expediente?.antecedentes?.alergias?.preguntados_y_negados,
+        expediente?.px_info?.alergias_base
+    ]);
+
+    useEffect(() => {
+        setSugerenciasEvitarAlergia([]);
+    }, [resumenAlergiasPaciente.contexto, resumenAlergiasPaciente.preguntadosNegados]);
+
+    useEffect(() => {
+        if (cie10Valido) return;
+        setMostrarMeds(false);
+        setIndiceMeds(-1);
+    }, [cie10Valido]);
 
     // --- FUNCIONES ATAJOS ---
     const usarAtajo = (nombre) => {
@@ -206,30 +376,166 @@
                             cacheMeds = [];
                         }
                 }
-
-                if (!cacheStudies) {
-                    cacheStudies = await getStudiesCatalog();
-                }
-
-                setCatalogoEstudios(Array.isArray(cacheStudies) ? cacheStudies : []);
         };
         cargarCatalogos();
     }, []);
 
-    // --- CARGA ATAJOS DESDE FIRESTORE ---
     useEffect(() => {
-        const unsub = onSnapshot(
-            query(collection(db, 'catalogo_sintomatologia'), orderBy('nombre', 'asc')),
+        let isMounted = true;
+        let fallbackRequested = false;
+
+        const sortStudies = (rows = []) => [...rows].sort((a, b) => String(a?.descripcion || '').localeCompare(String(b?.descripcion || ''), 'es', { sensitivity: 'base' }));
+
+        const applyStudies = (rows = []) => {
+            const normalizedRows = sortStudies(Array.isArray(rows) ? rows : []);
+            cacheStudies = normalizedRows;
+            if (!isMounted) return;
+            setCatalogoEstudios(normalizedRows);
+            setCatalogoEstudiosLoading(false);
+        };
+
+        const applyFallback = async () => {
+            if (fallbackRequested) return;
+            fallbackRequested = true;
+            try {
+                const fallbackRows = await loadStudiesFromPublicData();
+                const activeRows = (Array.isArray(fallbackRows) ? fallbackRows : []).filter((row) => row.activo !== false);
+                applyStudies(activeRows);
+            } catch (error) {
+                console.error('Error cargando fallback de estudios', error);
+                applyStudies([]);
+            }
+        };
+
+        if (Array.isArray(cacheStudies) && cacheStudies.length > 0) {
+            setCatalogoEstudios(cacheStudies);
+            setCatalogoEstudiosLoading(false);
+        } else {
+            setCatalogoEstudiosLoading(true);
+        }
+
+        const unsubscribeStudies = onSnapshot(
+            collection(db, 'catalogo_estudios'),
             (snap) => {
-                const items = snap.docs
-                    .map(d => ({ id: d.id, ...d.data() }))
-                    .filter(item => item.activo !== false && item.nombre);
-                setAtajos(items.length > 0 ? items : ATAJOS_DEFAULT);
+                const rows = snap.docs
+                    .map((d) => normalizeStudyRecord({ id: d.id, ...d.data() }, d.id))
+                    .filter((row) => row.descripcion);
+
+                if (snap.size === 0) {
+                    applyFallback();
+                    return;
+                }
+
+                const activeRows = rows.filter((row) => row.activo !== false);
+                applyStudies(activeRows);
             },
-            () => setAtajos(ATAJOS_DEFAULT)
+            (error) => {
+                console.error('Error suscribiendo catalogo_estudios en tiempo real', error);
+                if (Array.isArray(cacheStudies) && cacheStudies.length > 0) {
+                    setCatalogoEstudios(cacheStudies);
+                    setCatalogoEstudiosLoading(false);
+                    return;
+                }
+                applyFallback();
+            }
         );
-        return () => unsub();
+
+        return () => {
+            isMounted = false;
+            unsubscribeStudies();
+        };
     }, []);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const sortProcedures = (rows = []) => [...rows].sort((a, b) => String(a?.nombre || '').localeCompare(String(b?.nombre || ''), 'es', { sensitivity: 'base' }));
+
+        const applyProcedures = (rows = []) => {
+            const normalizedRows = sortProcedures(Array.isArray(rows) ? rows : []);
+            cacheProcedures = normalizedRows;
+            if (!isMounted) return;
+            setCatalogoProcedimientos(normalizedRows);
+            setCatalogoProcedimientosLoading(false);
+        };
+
+        if (Array.isArray(cacheProcedures) && cacheProcedures.length > 0) {
+            setCatalogoProcedimientos(cacheProcedures);
+            setCatalogoProcedimientosLoading(false);
+        } else {
+            setCatalogoProcedimientosLoading(true);
+        }
+
+        const unsubscribeProcedures = onSnapshot(
+            collection(db, 'catalogo_procedimientos'),
+            (snap) => {
+                const rows = snap.docs
+                    .map((d) => normalizeProcedureRecord({ id: d.id, ...d.data() }, d.id))
+                    .filter((row) => row.nombre)
+                    .filter((row) => row.activo !== false);
+                applyProcedures(rows);
+            },
+            (error) => {
+                console.error('Error suscribiendo catalogo_procedimientos en tiempo real', error);
+                if (Array.isArray(cacheProcedures) && cacheProcedures.length > 0) {
+                    setCatalogoProcedimientos(cacheProcedures);
+                    setCatalogoProcedimientosLoading(false);
+                    return;
+                }
+                applyProcedures([]);
+            }
+        );
+
+        return () => {
+            isMounted = false;
+            unsubscribeProcedures();
+        };
+    }, []);
+
+    // --- CARGA ATAJOS DESDE FIRESTORE ---
+        useEffect(() => {
+                const unsubSintomas = onSnapshot(
+                    collection(db, 'catalogo_sintomatologia'),
+                        (snap) => {
+                                const items = snap.docs
+                                        .map(d => ({ id: d.id, ...d.data() }))
+                            .filter(item => item.activo !== false && item.nombre)
+                            .sort((a, b) => {
+                                const ordenA = Number(a.orden ?? 9999);
+                                const ordenB = Number(b.orden ?? 9999);
+                                if (ordenA !== ordenB) return ordenA - ordenB;
+                                return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' });
+                            });
+                                setAtajos(items.length > 0 ? items : ATAJOS_DEFAULT);
+                        },
+                        () => setAtajos(ATAJOS_DEFAULT)
+                );
+
+                const unsubCategorias = onSnapshot(
+                        query(collection(db, 'catalogo_sintomatologia_categorias'), orderBy('orden', 'asc')),
+                        (snap) => {
+                            const rows = snap.docs
+                                .map((d) => {
+                                    const data = d.data();
+                                    return {
+                                        id: d.id,
+                                        label: String(data.nombre || '').trim() || titleFromId(d.id),
+                                        color: data.color || SYMPTOM_CATEGORY_COLOR_FALLBACK,
+                                        activo: data.activo !== false,
+                                        orden: Number(data.orden || 999)
+                                    };
+                                })
+                                .filter((item) => item.activo !== false);
+                            setCategoriasSintomas(rows.length > 0 ? rows : SYMPTOM_CATEGORY_DEFAULTS);
+                        },
+                        () => setCategoriasSintomas(SYMPTOM_CATEGORY_DEFAULTS)
+                );
+
+                return () => {
+                    unsubSintomas();
+                    unsubCategorias();
+                };
+            }, []);
 
     const paquetesCatalogo = useMemo(
         () => getPackageDefinitions(catalogoEstudios),
@@ -241,6 +547,17 @@
         paquetesCatalogo.forEach((item) => map.set(item.nombre, item));
         return map;
     }, [paquetesCatalogo]);
+
+    const estudiosTabs = useMemo(() => ([
+        { id: 'ecografia', label: 'Ecografia', icon: <ScanLine size={24} /> },
+        { id: 'rayos_x', label: 'Rayos X', icon: <Radiation size={24} /> },
+        { id: 'estudio_imagen', label: 'Estudios de imagen', icon: <Images size={24} /> },
+        { id: 'paquete', label: 'Paquetes', icon: <Boxes size={24} /> },
+        { id: 'laboratorio', label: 'Laboratorios individuales', icon: <Microscope size={24} /> }
+    ]), []);
+
+    const esTabPaquete = activeEstudiosTab === 'paquete';
+    const tituloTabEstudios = getStudyCategoryLabel(activeEstudiosTab);
 
     const estudiosSeleccionadosNormalizados = useMemo(() => {
         const source = expediente?.consulta?.estudios?.estudios_seleccionados || [];
@@ -255,27 +572,154 @@
                     nombre: String(item?.nombre || item?.descripcion || '').trim(),
                     clave: String(item?.clave || '').trim(),
                     nota: String(item?.nota || '').trim(),
-                    paqueteOrigen: String(item?.paqueteOrigen || '').trim()
+                    paqueteOrigen: String(item?.paqueteOrigen || '').trim(),
+                    categoria: normalizeStudyCategory(item?.categoria || item?.tipo || 'laboratorio')
                 };
             })
             .filter((item) => item.nombre);
     }, [expediente?.consulta?.estudios?.estudios_seleccionados]);
 
     const estudiosDisponiblesFiltrados = useMemo(() => {
+        if (esTabPaquete) return [];
+
         const seleccionados = new Set(estudiosSeleccionadosNormalizados.map((item) => item.nombre.toLowerCase()));
         const q = busquedaEstudio.trim().toLowerCase();
 
         return catalogoEstudios
-            .filter((item) => item.categoria !== 'paquete')
+            .filter((item) => normalizeStudyCategory(item.categoria) === activeEstudiosTab)
             .filter((item) => !seleccionados.has(item.descripcion.toLowerCase()))
             .filter((item) => {
                 if (!q) return true;
                 return (`${item.descripcion} ${item.clave}`).toLowerCase().includes(q);
             })
             .slice(0, 40);
-    }, [catalogoEstudios, estudiosSeleccionadosNormalizados, busquedaEstudio]);
+    }, [activeEstudiosTab, busquedaEstudio, catalogoEstudios, esTabPaquete, estudiosSeleccionadosNormalizados]);
 
     const paquetesSeleccionados = expediente?.consulta?.estudios?.paquetes_seleccionados || [];
+
+    const prioridadProcedimientoDefault = PROCEDURE_PRIORITY_OPTIONS[0].id;
+    const estadoProcedimientoDefault = PROCEDURE_STATUS_OPTIONS[0].id;
+
+    const procedimientosSeleccionadosNormalizados = useMemo(() => {
+        const source = expediente?.consulta?.procedimientos?.seleccionados || [];
+        if (!Array.isArray(source)) return [];
+
+        return source
+            .map((item, index) => {
+                if (!item || typeof item !== 'object') {
+                    const nombreLegacy = String(item || '').trim();
+                    if (!nombreLegacy) return null;
+                    return {
+                        id: `manual-${index}`,
+                        clave: '',
+                        nombre: nombreLegacy,
+                        categoria: 'otro',
+                        duracionMin: 20,
+                        requiereConsentimiento: false,
+                        consentimientoFirmado: false,
+                        prioridad: prioridadProcedimientoDefault,
+                        estado: estadoProcedimientoDefault,
+                        sitio: '',
+                        nota: ''
+                    };
+                }
+
+                const nombre = String(item.nombre || item.descripcion || item.procedimiento || '').trim();
+                if (!nombre) return null;
+
+                const requiereConsentimiento = item.requiereConsentimiento === true;
+
+                return {
+                    id: String(item.id || `manual-${index}`).trim() || `manual-${index}`,
+                    clave: String(item.clave || '').trim(),
+                    nombre,
+                    categoria: normalizeProcedureCategory(item.categoria || item.tipo || 'otro'),
+                    duracionMin: Number.isFinite(Number(item.duracionMin)) ? Math.max(1, Number(item.duracionMin)) : 20,
+                    descripcion: String(item.descripcion || '').trim(),
+                    preparacion: String(item.preparacion || '').trim(),
+                    contraindicaciones: String(item.contraindicaciones || '').trim(),
+                    requiereConsentimiento,
+                    consentimientoFirmado: requiereConsentimiento ? item.consentimientoFirmado === true : false,
+                    prioridad: String(item.prioridad || prioridadProcedimientoDefault).trim() || prioridadProcedimientoDefault,
+                    estado: String(item.estado || estadoProcedimientoDefault).trim() || estadoProcedimientoDefault,
+                    sitio: String(item.sitio || ''),
+                    nota: String(item.nota || '')
+                };
+            })
+            .filter(Boolean);
+    }, [estadoProcedimientoDefault, expediente?.consulta?.procedimientos?.seleccionados, prioridadProcedimientoDefault]);
+
+    const categoriasProcedimientosConConteo = useMemo(() => {
+        return PROCEDURE_CATEGORY_OPTIONS.map((option) => ({
+            ...option,
+            count: catalogoProcedimientos.filter((item) => normalizeProcedureCategory(item.categoria) === option.id).length
+        }));
+    }, [catalogoProcedimientos]);
+
+    const procedimientosDisponiblesFiltrados = useMemo(() => {
+        const seleccionados = new Set(procedimientosSeleccionadosNormalizados.map((item) => item.id));
+        const q = String(busquedaProcedimiento || '').trim().toLowerCase();
+
+        return catalogoProcedimientos
+            .filter((item) => filtroProcedimientoCategoria === 'todos' || normalizeProcedureCategory(item.categoria) === filtroProcedimientoCategoria)
+            .filter((item) => !seleccionados.has(item.id))
+            .filter((item) => {
+                if (!q) return true;
+                return (`${item.nombre} ${item.clave || ''} ${item.descripcion || ''}`).toLowerCase().includes(q);
+            })
+            .slice(0, 40);
+    }, [busquedaProcedimiento, catalogoProcedimientos, filtroProcedimientoCategoria, procedimientosSeleccionadosNormalizados]);
+
+    const agregarProcedimientoDesdeCatalogo = (item) => {
+        if (!item?.id || !item?.nombre) return;
+
+        const exists = procedimientosSeleccionadosNormalizados.some((proc) => proc.id === item.id);
+        if (exists) {
+            showNotification('Ese procedimiento ya esta agregado.', 'error');
+            return;
+        }
+
+        updateCampo('consulta.procedimientos.seleccionados', [
+            ...procedimientosSeleccionadosNormalizados,
+            {
+                id: item.id,
+                clave: item.clave || '',
+                nombre: item.nombre,
+                categoria: normalizeProcedureCategory(item.categoria),
+                duracionMin: item.duracionMin || 20,
+                descripcion: item.descripcion || '',
+                preparacion: item.preparacion || '',
+                contraindicaciones: item.contraindicaciones || '',
+                requiereConsentimiento: item.requiereConsentimiento === true,
+                consentimientoFirmado: false,
+                prioridad: prioridadProcedimientoDefault,
+                estado: estadoProcedimientoDefault,
+                sitio: '',
+                nota: ''
+            }
+        ]);
+    };
+
+    const updateProcedimientoSeleccionado = (index, patch = {}) => {
+        updateCampo(
+            'consulta.procedimientos.seleccionados',
+            procedimientosSeleccionadosNormalizados.map((item, idx) => {
+                if (idx !== index) return item;
+                const next = { ...item, ...patch };
+                if (next.requiereConsentimiento !== true) {
+                    next.consentimientoFirmado = false;
+                }
+                return next;
+            })
+        );
+    };
+
+    const removeProcedimientoSeleccionado = (index) => {
+        updateCampo(
+            'consulta.procedimientos.seleccionados',
+            procedimientosSeleccionadosNormalizados.filter((_, idx) => idx !== index)
+        );
+    };
 
     const togglePaquete = (nombrePaquete) => {
         const exists = paquetesSeleccionados.some((item) => item === nombrePaquete);
@@ -295,7 +739,8 @@
                         nombre: String(comp.descripcion || '').trim(),
                         clave: String(comp.clave || '').trim(),
                         nota: '',
-                        paqueteOrigen: nombrePaquete
+                        paqueteOrigen: nombrePaquete,
+                        categoria: 'laboratorio'
                     }))
                     .filter((comp) => comp.nombre)
                     .filter((comp) => !existentes.has(comp.nombre.toLowerCase()));
@@ -311,7 +756,7 @@
         const exists = estudiosSeleccionadosNormalizados.some((est) => est.nombre.toLowerCase() === item.descripcion.toLowerCase());
         const next = exists
             ? estudiosSeleccionadosNormalizados.filter((est) => est.nombre.toLowerCase() !== item.descripcion.toLowerCase())
-            : [...estudiosSeleccionadosNormalizados, { nombre: item.descripcion, clave: item.clave || '', nota: '' }];
+            : [...estudiosSeleccionadosNormalizados, { nombre: item.descripcion, clave: item.clave || '', nota: '', categoria: normalizeStudyCategory(item.categoria || activeEstudiosTab) }];
         updateCampo('consulta.estudios.estudios_seleccionados', next);
     };
 
@@ -337,7 +782,7 @@
 
         updateCampo('consulta.estudios.estudios_seleccionados', [
             ...estudiosSeleccionadosNormalizados,
-            { nombre, clave: '', nota: '', capturaManual: true }
+            { nombre, clave: '', nota: '', capturaManual: true, categoria: normalizeStudyCategory(activeEstudiosTab) }
         ]);
         setBusquedaEstudio('');
         showNotification('Estudio agregado manualmente', 'success');
@@ -351,12 +796,18 @@
 
     useEffect(() => {
         if (toast.show) {
-        const t = setTimeout(() => setToast({ ...toast, show: false }), 4000);
+        const t = setTimeout(() => setToast((prev) => ({ ...prev, show: false })), 4000);
         return () => clearTimeout(t);
         }
     }, [toast.show]);
 
     const showNotification = (msg, type = 'success') => setToast({ show: true, message: msg, type });
+
+    const getNivelRiesgoBadge = (nivel = 'medio') => {
+        if (nivel === 'alto') return 'bg-rose-100 text-rose-700 border-rose-200';
+        if (nivel === 'bajo') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        return 'bg-amber-100 text-amber-700 border-amber-200';
+    };
 
     // ==========================================
     // FUNCIONES DE LÓGICA Y CÁLCULOS
@@ -461,6 +912,94 @@ Sin markdown, sin explicaciones.`
         }
     };
 
+    const sugerirQueEvitarPorAlergias = async () => {
+        if (!resumenAlergiasPaciente.tieneAlergias) {
+            showNotification('No hay alergias clínicas registradas para analizar.', 'error');
+            return;
+        }
+
+        if (!cacheMeds || cacheMeds.length === 0) {
+            showNotification('No hay medicamentos en el catálogo para analizar.', 'error');
+            return;
+        }
+
+        setCargandoSugerenciasEvitarAlergia(true);
+        setSugerenciasEvitarAlergia([]);
+
+        try {
+            const catalogoResumen = cacheMeds
+                .slice(0, 220)
+                .map((m) => `${m.nombreComercial}|${m.sustanciasActivas}|${m.grupo || m.marca || ''}|${m.indicacion || ''}`)
+                .join('\n');
+
+            const askGemini = httpsCallable(functions, 'askGemini');
+            const response = await askGemini({
+                prompt: `Eres un farmacólogo ultra-estricto. Tu objetivo es EVITAR FALSOS POSITIVOS. Solo lista medicamentos con riesgo DOCUMENTADO y REAL.
+
+Alergias registradas del paciente: "${resumenAlergiasPaciente.contexto}".
+Diagnóstico actual: "${expediente?.consulta?.diagnostico?.enfermedad_actual || 'No definido'}".
+
+TABLA DE REACTIVIDAD CRUZADA VÁLIDA (ÚNICA referencia):
+- Beta-lactámicos: penicilina↔amoxicilina↔ampicilina↔piperacilina↔dicloxacilina (mismo grupo)
+- Cefalosporinas de 1ra gen (cefadroxilo, cefalexina) cruzan con amoxicilina/ampicilina (~1-2%). Ceftriaxona/cefotaxima/cefepime NO cruzan con penicilinas.
+- Sulfonamidas antibióticas cruzan entre sí (sulfametoxazol↔sulfasalazina). Furosemida y tiazidas NO son sulfonamidas.
+- AINEs solo cruzan dentro del MISMO subgrupo químico. Paracetamol NO es AINE.
+- NO inventes cruces que no estén en esta tabla.
+
+REGLAS:
+1. Solo incluye medicamentos del catálogo que tengan cruce DOCUMENTADO con >5% de incidencia según la tabla anterior.
+2. Si la alergia no tiene cruces conocidos en la tabla → responde arreglo vacío [].
+3. NO listes medicamentos por "precaución teórica" o "evidencia limitada".
+4. Máximo 5 elementos, solo los realmente peligrosos.
+
+Catálogo (NombreComercial|Sustancias|Grupo|Indicación):
+${catalogoResumen}
+
+Responde ÚNICAMENTE JSON válido:
+[
+  {"item":"Nombre exacto del catálogo","motivo":"razón específica con grupo farmacológico","nivel":"alto|medio"}
+]
+Sin markdown, sin texto adicional. Si no hay riesgo real, responde [].`
+            });
+
+            let raw = String(response?.data?.result || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+            const start = raw.indexOf('[');
+            const end = raw.lastIndexOf(']');
+            if (start !== -1 && end !== -1 && end > start) raw = raw.slice(start, end + 1);
+
+            const parsed = JSON.parse(raw);
+            const normalized = (Array.isArray(parsed) ? parsed : [])
+                .map((entry) => {
+                    if (typeof entry === 'string') {
+                        const item = entry.trim();
+                        if (!item) return null;
+                        return { item, motivo: 'Posible riesgo alérgico', nivel: 'medio' };
+                    }
+
+                    const item = String(entry?.item || entry?.medicamento || entry?.sustancia || entry?.nombre || '').trim();
+                    if (!item) return null;
+
+                    const motivo = String(entry?.motivo || entry?.razon || entry?.justificacion || '').trim() || 'Posible riesgo alérgico';
+                    const nivelRaw = String(entry?.nivel || '').trim().toLowerCase();
+                    const nivel = ['alto', 'medio', 'bajo'].includes(nivelRaw) ? nivelRaw : 'medio';
+
+                    return { item, motivo, nivel };
+                })
+                .filter(Boolean)
+                .slice(0, 8);
+
+            setSugerenciasEvitarAlergia(normalized);
+            if (normalized.length === 0) {
+                showNotification('La IA no detectó elementos claros para evitar con la información actual.', 'error');
+            }
+        } catch (error) {
+            console.error('Error analizando alergias con IA:', error);
+            showNotification('No se pudo generar sugerencias de alergias por IA.', 'error');
+        } finally {
+            setCargandoSugerenciasEvitarAlergia(false);
+        }
+    };
+
     // --- IA: ASISTENTE DE DOSIS ---
     const consultarIADosis = async () => {
         const medNombre = tempMed.nombre;
@@ -492,12 +1031,27 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     const analizarRiesgoConIA = async (medicamentoNuevo) => {
         setAnalizandoRiesgo(true);
         try {
-            const listaAlergias = expediente.antecedentes?.alergias?.lista || [];
-            const nombresLista = listaAlergias.map((a) => a.sustancia);
-            const textoOtras = expediente.antecedentes?.alergias?.otras || "";
-            const alergiasBase = expediente.px_info?.alergias_base || "";
-            const contextoAlergias = [...nombresLista, textoOtras, alergiasBase].filter(Boolean).join(", ");
-            const medicamentosActuales = expediente.consulta.diagnostico.tratamiento_lista?.map((m) => m.nombre).join(", ") || "Ninguno";
+            const preguntadosNegados = resumenAlergiasPaciente.preguntadosNegados;
+
+            // Si el paciente niega alergias, no hay riesgo alérgico que validar
+            if (preguntadosNegados) {
+                setAnalizandoRiesgo(false);
+                // Solo validar interacciones entre medicamentos actuales
+                const medicamentosActuales = expediente.consulta.diagnostico.tratamiento_lista?.map((m) => m.sustanciasActivas ? `${m.nombre} (${m.sustanciasActivas})` : m.nombre).join(", ") || "Ninguno";
+                if (medicamentosActuales === "Ninguno") return { riesgo: false };
+                const analizarMedicamento = httpsCallable(functions, 'analizarMedicamento');
+                const response = await analizarMedicamento({
+                    medicamento: medicamentoNuevo,
+                    historialAlergias: "",
+                    sinAlergiasConfirmadas: true,
+                    medicamentosActuales
+                });
+                setAnalizandoRiesgo(false);
+                return response?.data || { riesgo: false, mensaje: '' };
+            }
+
+            const contextoAlergias = resumenAlergiasPaciente.contexto;
+            const medicamentosActuales = expediente.consulta.diagnostico.tratamiento_lista?.map((m) => m.sustanciasActivas ? `${m.nombre} (${m.sustanciasActivas})` : m.nombre).join(", ") || "Ninguno";
 
             if (!contextoAlergias.trim() && medicamentosActuales === "Ninguno") {
                 setAnalizandoRiesgo(false);
@@ -508,11 +1062,12 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             const response = await analizarMedicamento({
                 medicamento: medicamentoNuevo,
                 historialAlergias: contextoAlergias,
+                sinAlergiasConfirmadas: false,
                 medicamentosActuales
             });
             setAnalizandoRiesgo(false);
             return response?.data || { riesgo: false, mensaje: '' };
-        } catch (error) {
+        } catch {
             setAnalizandoRiesgo(false);
             return {
                 riesgo: false,
@@ -522,6 +1077,12 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     };
 
     const handleAgregarMedicamento = async () => {
+        if (!cie10Valido) {
+            showNotification('Selecciona primero un CIE-10 válido antes de agregar medicamentos.', 'error');
+            enfocarDiagnosticoCie10();
+            return;
+        }
+
         if (!String(tempMed.nombre || '').trim()) return;
 
         const nombreNuevo = String(tempMed.nombre || '').trim().toLowerCase();
@@ -538,22 +1099,37 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         });
 
         if (yaExisteExacto) {
-            setRiskData({ mensaje: 'Este medicamento ya está capturado con la misma presentación y dosis.', medicamento: tempMed.nombre });
+            setRiskData({ mensaje: 'Este medicamento ya está capturado con la misma presentación y dosis.', medicamento: tempMed.nombre, nivel: 'medio', tipo: 'duplicado' });
             setShowRiskModal(true);
             return;
         }
 
-        const resultadoIA = await analizarRiesgoConIA(tempMed.nombre);
+        const infoMedParaIA = tempMed.sustanciasActivas
+            ? `${tempMed.nombre} (Sustancia activa: ${tempMed.sustanciasActivas})`
+            : tempMed.nombre;
+        const resultadoIA = await analizarRiesgoConIA(infoMedParaIA);
         if (resultadoIA?.advertencia) {
             showNotification(resultadoIA.advertencia, 'error');
         }
         if (resultadoIA.riesgo) {
-            setRiskData({ mensaje: resultadoIA.mensaje, medicamento: tempMed.nombre });
+            setRiskData({ 
+                mensaje: resultadoIA.mensaje, 
+                medicamento: tempMed.nombre, 
+                nivel: resultadoIA.nivel || 'medio', 
+                tipo: resultadoIA.tipo || 'ninguno' 
+            });
             setShowRiskModal(true);
             return;
         }
 
         ejecutarAgregado();
+    };
+
+    const handleDosisKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        event.preventDefault();
+        if (analizandoRiesgo) return;
+        handleAgregarMedicamento();
     };
 
     const ejecutarAgregado = () => {
@@ -586,9 +1162,9 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     const guardarEdicionMedicamento = () => {
         if (editandoMedIndex === null) return;
 
-        const nombre = String(medEdicion.nombre || '').trim();
-        if (!nombre) {
-            showNotification('El medicamento debe tener nombre', 'error');
+        const dosis = String(medEdicion.dosis || '').trim();
+        if (!dosis) {
+            showNotification('La dosis no puede estar vacía', 'error');
             return;
         }
 
@@ -597,16 +1173,19 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             if (idx !== editandoMedIndex) return item;
             return {
                 ...item,
-                nombre,
-                presentacion: String(medEdicion.presentacion || '').trim(),
-                sustanciasActivas: String(medEdicion.sustanciasActivas || '').trim(),
-                dosis: String(medEdicion.dosis || '').trim()
+                dosis
             };
         });
 
         updateCampo('consulta.diagnostico.tratamiento_lista', nuevaLista);
         cancelarEdicionMedicamento();
         showNotification('Medicamento actualizado', 'success');
+    };
+
+    const handleEdicionDosisKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        event.preventDefault();
+        guardarEdicionMedicamento();
     };
 
     const eliminarMedicamento = (index) => {
@@ -621,6 +1200,30 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         if (editandoMedIndex !== null && index < editandoMedIndex) {
             setEditandoMedIndex((prev) => prev - 1);
         }
+    };
+
+    const moverMedicamentoArriba = (index) => {
+        if (index <= 0) return;
+        const listaActual = [...(expediente.consulta.diagnostico.tratamiento_lista || [])];
+        const temp = listaActual[index - 1];
+        listaActual[index - 1] = listaActual[index];
+        listaActual[index] = temp;
+        updateCampo('consulta.diagnostico.tratamiento_lista', listaActual);
+
+        if (editandoMedIndex === index) setEditandoMedIndex(index - 1);
+        else if (editandoMedIndex === index - 1) setEditandoMedIndex(index);
+    };
+
+    const moverMedicamentoAbajo = (index) => {
+        const listaActual = [...(expediente.consulta.diagnostico.tratamiento_lista || [])];
+        if (index >= listaActual.length - 1) return;
+        const temp = listaActual[index + 1];
+        listaActual[index + 1] = listaActual[index];
+        listaActual[index] = temp;
+        updateCampo('consulta.diagnostico.tratamiento_lista', listaActual);
+
+        if (editandoMedIndex === index) setEditandoMedIndex(index + 1);
+        else if (editandoMedIndex === index + 1) setEditandoMedIndex(index);
     };
 
     const toggleDictado = () => {
@@ -652,12 +1255,10 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         </div>
         
         <div className="flex-1 grid grid-cols-2 gap-4 min-h-[350px]">
-            {/* Columna izquierda: Textarea */}
             <div className="flex flex-col">
                 <textarea className="flex-1 w-full p-5 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 text-base leading-relaxed focus:bg-white focus:border-blue-300 transition-colors resize-none"
                     placeholder="¿Cuál es el motivo de la consulta hoy?" value={expediente.consulta.padecimiento} onChange={e => updateCampo('consulta.padecimiento', e.target.value)} />
 
-                {/* Sugerencias relacionadas */}
                 {relacionados.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 mt-2 pb-1">
                     <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-semibold whitespace-nowrap shrink-0">
@@ -674,39 +1275,29 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                 )}
             </div>
 
-            {/* Columna derecha: Sintomatología agrupada */}
             <div className="flex flex-col bg-slate-50 border border-slate-200 rounded-xl p-3 overflow-hidden">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sintomatología rápida</p>
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5">
-                    {CATEGORIAS_SINTOMAS.map((cat) => {
-                        const items = atajos.filter(a => (a.categoria || 'generales') === cat.id);
-                        if (items.length === 0) return null;
-                        return (
-                            <div key={cat.id}>
-                                <div className="flex items-center gap-1.5 mb-1">
-                                    <span className={`w-2 h-2 rounded-full ${cat.color}`}></span>
-                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">{cat.label}</span>
-                                </div>
-                                <div className="flex flex-wrap gap-1 ml-3.5">
-                                    {items.map((a) => (
-                                    <button key={a.nombre} onClick={() => usarAtajo(a.nombre)} 
-                                        className="px-2 py-1 border rounded-md text-[11px] font-semibold transition-all whitespace-nowrap bg-white border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm active:scale-95">
-                                        {a.nombre}
-                                    </button>
-                                    ))}
-                                </div>
+                    {categoriasConItems.map((cat) => (
+                        <div key={cat.id}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                                <span className={`w-2 h-2 rounded-full ${cat.color || SYMPTOM_CATEGORY_COLOR_FALLBACK}`}></span>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">{cat.label}</span>
                             </div>
-                        );
-                    })}
+                            <div className="flex flex-wrap gap-1 ml-3.5">
+                                {cat.items.map((a) => (
+                                <button key={a.nombre} onClick={() => usarAtajo(a.nombre)} 
+                                    className="px-2 py-1 border rounded-md text-[11px] font-semibold transition-all whitespace-nowrap bg-white border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm active:scale-95">
+                                    {a.nombre}
+                                </button>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
         </div>
 
-        <div className="mt-8 flex items-center justify-end shrink-0 pt-6 border-t border-slate-100">
-            <button onClick={() => setActiveConsulta('exploracion')} className={`px-8 py-3 rounded-lg font-semibold text-sm flex items-center gap-2 transition-colors ${buttonPrimary}`}>
-            Siguiente <ArrowLeft size={18} className="rotate-180"/>
-            </button>
-        </div>
         </div>
     );
 
@@ -721,14 +1312,14 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                 
                 <div className="flex-1"></div>
 
-                {expediente.px_info?.alergias_base && (
+                {resumenAlergiasPaciente.tieneAlergias && (
                     <div className="bg-rose-50 border border-rose-100 p-4 rounded-xl shadow-sm">
                         <div className="flex items-center gap-2 mb-2 text-rose-600">
                             <AlertTriangle size={18} />
                             <span className="text-xs font-black uppercase tracking-wider">Alergias</span>
                         </div>
                         <p className="text-sm font-bold text-rose-800 leading-tight">
-                            {expediente.px_info.alergias_base}
+                            {resumenAlergiasPaciente.contexto}
                         </p>
                     </div>
                 )}
@@ -983,12 +1574,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                         </div>
                     )}
                 </div>
-                
-                <div className="p-6 border-t border-slate-100 bg-white flex justify-end shrink-0">
-                    <button onClick={() => setActiveConsulta('diagnostico')} className={`px-8 py-3 rounded-lg font-semibold text-sm flex items-center gap-2 transition-colors ${buttonPrimary}`}>
-                        Siguiente <ArrowLeft size={18} className="rotate-180"/>
-                    </button>
-                </div>
+
             </div>
         </div>
     );
@@ -1028,12 +1614,13 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             const utilidad = getMarcaColor(m.grupo || m.marca, m.nivelUtilidad);
                                             return (
                                                 <button key={i} type="button"
+                                                    disabled={!recetaHabilitada}
                                                     onClick={() => {
                                                         setTempMed({ nombre: m.nombreComercial, dosis: '', presentacion: m.presentacion || '', sustanciasActivas: m.sustanciasActivas || '', numeroAcomodo: m.numeroAcomodo || '', grupo: m.grupo || m.marca || '', marca: m.grupo || m.marca || '', nivelUtilidad: m.nivelUtilidad || null, color: m.color || '' });
                                                         setDosisRecomendada(m.dosisCatalogo || '');
                                                         setMedSeleccionadoDetalle(m);
                                                     }}
-                                                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border bg-white hover:shadow-sm hover:border-indigo-300 transition-all border-l-[3px] ${utilidad.borderLeft}`}
+                                                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border bg-white transition-all border-l-[3px] ${utilidad.borderLeft} ${recetaHabilitada ? 'hover:shadow-sm hover:border-indigo-300' : 'opacity-50 cursor-not-allowed'}`}
                                                 >
                                                     <span className="text-slate-700">{m.nombreComercial}</span>
                                                     {m.sustanciasActivas && <span className="text-slate-400 font-normal hidden sm:inline">· {m.sustanciasActivas.split(',')[0]}</span>}
@@ -1065,8 +1652,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             if(String(i.code||'').includes('-')) return false;
                                             const code=String(i.code||'').toLowerCase();
                                             const codeCompact=code.replace(/[^a-z0-9]/g,'');
-                                            const desc=String(i.description||'').toLowerCase();
-                                            return desc.includes(q) || code.includes(q) || codeCompact.startsWith(qCode) || codeCompact.includes(qCode);
+                                            return matchFuzzy(i.description, t) || code.includes(q) || codeCompact.startsWith(qCode) || codeCompact.includes(qCode);
                                         }).slice(0,20)
                                     );
                                     setMostrarCie10(true)
@@ -1093,67 +1679,130 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                         )}
                     </div>
 
+                    {resumenAlergiasPaciente.tieneAlergias && (
+                        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-2.5">
+                                    <AlertTriangle size={16} className="text-rose-600 mt-0.5 shrink-0" />
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-wider text-rose-700">Alerta de alergias del paciente</p>
+                                        <p className="text-[11px] text-rose-700/90 mt-1">Verifica contraindicaciones antes de recetar. La validación IA también se ejecuta al agregar cada medicamento.</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={sugerirQueEvitarPorAlergias}
+                                    disabled={cargandoSugerenciasEvitarAlergia}
+                                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-rose-200 bg-white text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                >
+                                    {cargandoSugerenciasEvitarAlergia ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
+                                    IA: qué evitar
+                                </button>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {resumenAlergiasPaciente.items.slice(0, 8).map((item) => (
+                                    <span key={item} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border border-rose-200 bg-white text-rose-700">
+                                        {item}
+                                    </span>
+                                ))}
+                                {resumenAlergiasPaciente.items.length > 8 && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border border-rose-200 bg-white text-rose-700">
+                                        +{resumenAlergiasPaciente.items.length - 8} más
+                                    </span>
+                                )}
+                            </div>
+
+                            {sugerenciasEvitarAlergia.length > 0 && (
+                                <div className="mt-3 rounded-lg border border-rose-200 bg-white p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-wider text-rose-600 mb-2">Sugerencias IA de no uso</p>
+                                    <div className="space-y-1.5">
+                                        {sugerenciasEvitarAlergia.map((item, idx) => (
+                                            <div key={`${item.item}-${idx}`} className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className="text-xs font-semibold text-slate-700">{idx + 1}. {item.item}</p>
+                                                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full border ${getNivelRiesgoBadge(item.nivel)}`}>
+                                                        {item.nivel}
+                                                    </span>
+                                                </div>
+                                                {item.motivo && <p className="text-[11px] text-slate-500 mt-1">{item.motivo}</p>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[9px] text-slate-400 mt-2 italic">Referencia IA: confirmar con criterio clínico y farmacológico.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* BLOQUE NUEVA RECETA */}
                     <div className={`relative bg-slate-50 p-6 rounded-2xl border ${!cie10Valido ? 'border-red-200' : 'border-slate-200'} flex flex-col gap-4 transition-colors`}>
-                        {/* Overlay de bloqueo si no hay CIE-10 válido */}
                         {!cie10Valido && (
                             <div 
-                                className="absolute inset-0 z-30 bg-white/70 backdrop-blur-[2px] rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all"
-                                onClick={() => {
-                                    setSacudirCie10(true);
-                                    setTimeout(() => setSacudirCie10(false), 600);
-                                    refInputCie10.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    setTimeout(() => refInputCie10.current?.focus(), 400);
-                                }}
+                                className="flex items-center gap-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl cursor-pointer hover:bg-red-100 transition-colors relative z-0"
+                                onClick={enfocarDiagnosticoCie10}
                             >
-                                <div className="flex flex-col items-center gap-2 px-6 py-4 bg-red-50 border border-red-200 rounded-xl shadow-sm">
-                                    <AlertTriangle size={24} className="text-red-500"/>
-                                    <p className="text-sm font-semibold text-red-700">Diagnóstico CIE-10 requerido</p>
-                                    <p className="text-xs text-red-500">Selecciona un código CIE-10 válido del catálogo antes de recetar</p>
-                                    <span className="text-[10px] text-red-400 mt-1 flex items-center gap-1"><ChevronRight size={12}/> Haz clic aquí para ir al campo de diagnóstico</span>
-                                </div>
+                                <AlertTriangle size={16} className="text-red-500 shrink-0"/>
+                                <p className="text-[12px] font-semibold text-red-600">Selecciona un diagnóstico CIE-10 válido antes de recetar</p>
+                                <ChevronRight size={14} className="text-red-400 ml-auto shrink-0"/>
                             </div>
                         )}
                         <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-widest flex gap-2"><Zap size={16} className="text-blue-500"/> Nueva Receta</h4>
                         
                         {/* Buscador de Medicamento con Colores */}
                         <div className="relative z-20">
-                            <input className={inputStyle} placeholder="Nombre del medicamento..." value={tempMed.nombre} 
-                            onChange={e=>{
-                                const v=e.target.value; 
-                                setTempMed({...tempMed, nombre:v}); 
-                                setDosisRecomendada(''); 
-                                setIndiceMeds(-1);
-                                if(v.length>2 && cacheMeds){
-                                    const q = v.toLowerCase();
-                                    setSugerenciasMeds(
-                                        cacheMeds.filter((m) => (
-                                            `${m.nombreComercial} ${m.sustanciasActivas} ${m.grupo} ${m.laboratorio} ${m.presentacion} ${m.indicacion} ${m.numeroAcomodo}`.toLowerCase().includes(q)
-                                        )).slice(0, 20)
-                                    );
-                                    setMostrarMeds(true);
-                                } else {
-                                    setMostrarMeds(false);
-                                }
-                            }}
-                            onKeyDown={(e)=>{
-                                if(!mostrarMeds || sugerenciasMeds.length===0) return;
-                                if(e.key==='ArrowDown'){e.preventDefault(); setIndiceMeds(p=> p<sugerenciasMeds.length-1 ? p+1 : 0);}
-                                else if(e.key==='ArrowUp'){e.preventDefault(); setIndiceMeds(p=> p>0 ? p-1 : sugerenciasMeds.length-1);}
-                                else if(e.key==='Enter' && indiceMeds>=0){
-                                    e.preventDefault();
-                                    const m=sugerenciasMeds[indiceMeds];
-                                    setTempMed({nombre: m.nombreComercial, dosis: '', presentacion: m.presentacion || '', sustanciasActivas: m.sustanciasActivas || '', numeroAcomodo: m.numeroAcomodo || '', grupo: m.grupo || '', marca: m.grupo || '', nivelUtilidad: m.nivelUtilidad || null, color: m.color || ''});
-                                    setDosisRecomendada(m.dosisCatalogo || 'No hay dosis recomendada en el catálogo.');
-                                    setMedSeleccionadoDetalle(m);
-                                    setMostrarMeds(false); setIndiceMeds(-1);
-                                }
-                                else if(e.key==='Escape'){setMostrarMeds(false); setIndiceMeds(-1);}
-                            }}
-                            onBlur={()=>setTimeout(()=>{setMostrarMeds(false);setIndiceMeds(-1)},200)}/>
+                            <input
+                                disabled={!recetaHabilitada}
+                                className={`${inputStyle} ${!recetaHabilitada ? 'bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200' : isMedNameLocked ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
+                                placeholder="Nombre del medicamento..."
+                                value={tempMed.nombre}
+                                readOnly={isMedNameLocked || !recetaHabilitada}
+                                onChange={e=>{
+                                    if (isMedNameLocked || !recetaHabilitada) return;
+                                    const v=e.target.value;
+                                    setTempMed({...tempMed, nombre:v});
+                                    setDosisRecomendada('');
+                                    setIndiceMeds(-1);
+                                    if(v.length>2 && cacheMeds){
+                                        setSugerenciasMeds(
+                                            cacheMeds.filter((m) =>
+                                                matchFuzzy(`${m.nombreComercial} ${m.sustanciasActivas} ${m.grupo} ${m.laboratorio} ${m.presentacion} ${m.indicacion} ${m.numeroAcomodo}`, v)
+                                            ).slice(0, 20)
+                                        );
+                                        setMostrarMeds(true);
+                                    } else {
+                                        setMostrarMeds(false);
+                                    }
+                                }}
+                                onKeyDown={(e)=>{
+                                    if (isMedNameLocked || !recetaHabilitada) return;
+                                    if(!mostrarMeds || sugerenciasMeds.length===0) return;
+                                    if(e.key==='ArrowDown'){e.preventDefault(); setIndiceMeds(p=> p<sugerenciasMeds.length-1 ? p+1 : 0);}
+                                    else if(e.key==='ArrowUp'){e.preventDefault(); setIndiceMeds(p=> p>0 ? p-1 : sugerenciasMeds.length-1);}
+                                    else if(e.key==='Enter' && indiceMeds>=0){
+                                        e.preventDefault();
+                                        const m=sugerenciasMeds[indiceMeds];
+                                        setTempMed({nombre: m.nombreComercial, dosis: '', presentacion: m.presentacion || '', sustanciasActivas: m.sustanciasActivas || '', numeroAcomodo: m.numeroAcomodo || '', grupo: m.grupo || '', marca: m.grupo || '', nivelUtilidad: m.nivelUtilidad || null, color: m.color || ''});
+                                        setDosisRecomendada(m.dosisCatalogo || 'No hay dosis recomendada en el catálogo.');
+                                        setMedSeleccionadoDetalle(m);
+                                        setMostrarMeds(false); setIndiceMeds(-1);
+                                    }
+                                    else if(e.key==='Escape'){setMostrarMeds(false); setIndiceMeds(-1);}
+                                }}
+                                onBlur={()=>setTimeout(()=>{setMostrarMeds(false);setIndiceMeds(-1)},200)}
+                            />
+                            {isMedNameLocked && (
+                                <button
+                                    type="button"
+                                    onClick={resetMedSelection}
+                                    className="absolute right-2 top-2 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500 bg-white border border-slate-200 rounded-md hover:bg-slate-50"
+                                >
+                                    Cambiar
+                                </button>
+                            )}
                             
                             {mostrarMeds && (
-                                <div ref={refListaMeds} className="absolute top-full w-full bg-white border border-slate-200 rounded-xl shadow-2xl mt-1 max-h-64 overflow-y-auto p-1 z-50">
+                                <div ref={refListaMeds} className="absolute top-full w-full bg-white border border-slate-200 rounded-xl shadow-2xl mt-1 max-h-80 overflow-y-auto p-1 z-50">
                                     {sugerenciasMeds.map((m,i)=>{
                                         const utilidad = getMarcaColor(m.grupo || m.marca, m.nivelUtilidad);
                                         return (
@@ -1165,25 +1814,25 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             setMedSeleccionadoDetalle(m);
                                             setMostrarMeds(false); setIndiceMeds(-1);
                                         }} 
-                                        className={`p-3 text-xs cursor-pointer border-b border-slate-50 last:border-0 transition-colors border-l-4 ${utilidad.borderLeft} ${i===indiceMeds ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                                        className={`p-4 cursor-pointer border-b border-slate-100 last:border-0 transition-colors border-l-4 ${utilidad.borderLeft} ${i===indiceMeds ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
                                         >
                                             <div className="flex justify-between items-start gap-2">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="font-bold text-slate-700">{m.nombreComercial}</span>
-                                                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${utilidad.bg}`} title={`Nivel ${m.nivelUtilidad}`}></span>
-                                                        {m.controlado && <span className="text-[8px] font-bold text-amber-600 bg-amber-50 px-1 rounded">CTRL</span>}
+                                                        <span className="text-sm font-bold text-slate-800">{m.nombreComercial}</span>
+                                                        <span className={`w-3 h-3 rounded-full shrink-0 ${utilidad.bg}`} title={`Nivel ${m.nivelUtilidad}`}></span>
+                                                        {m.controlado && <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-px rounded border border-amber-100">CTRL</span>}
                                                     </div>
-                                                    <p className="text-[10px] text-slate-400 mt-0.5">{m.sustanciasActivas}</p>
-                                                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                                                        {m.presentacion && <span className="text-[9px] text-slate-500"><span className="font-semibold text-slate-400">Pres:</span> {m.presentacion}</span>}
-                                                        {m.grupo && <span className="text-[9px] text-slate-500"><span className="font-semibold text-slate-400">Grupo:</span> {m.grupo}</span>}
+                                                    <p className="text-xs text-slate-500 mt-1 font-medium">{m.sustanciasActivas}</p>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5">
+                                                        {m.presentacion && <span className="text-xs text-slate-500"><span className="font-semibold text-slate-400">Pres:</span> {m.presentacion}</span>}
+                                                        {m.grupo && <span className="text-xs text-slate-500"><span className="font-semibold text-slate-400">Grupo:</span> {m.grupo}</span>}
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
                                     )})}
-                                    {sugerenciasMeds.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Sin resultados</div>}
+                                    {sugerenciasMeds.length === 0 && <div className="p-4 text-sm text-slate-400 text-center">Sin resultados</div>}
                                 </div>
                             )}
                         </div>
@@ -1286,8 +1935,18 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                 {dosisRecomendada && (
                                     <div className="p-4 border border-indigo-100 bg-indigo-50/50 rounded-xl text-sm text-indigo-900 flex gap-3 items-start shadow-sm">
                                         <Info size={18} className="shrink-0 mt-0.5 text-indigo-500" />
-                                        <div>
-                                            <p className="text-[9px] font-bold text-indigo-400 uppercase mb-1">Dosis catálogo</p>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-start justify-between gap-3 mb-1.5">
+                                                <p className="text-[9px] font-bold text-indigo-400 uppercase">Dosis catálogo</p>
+                                                <button
+                                                    type="button"
+                                                    onClick={usarDosisCatalogo}
+                                                    disabled={!recetaHabilitada}
+                                                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+                                                >
+                                                    <Plus size={12} /> Poner en dosis a recetar
+                                                </button>
+                                            </div>
                                             <p className="font-medium leading-relaxed text-xs">{dosisRecomendada}</p>
                                         </div>
                                     </div>
@@ -1299,8 +1958,16 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                         <div className="flex flex-col gap-3 relative mt-2 border-t border-slate-200 pt-5">
                             
                             <div className="flex justify-between items-center mb-1">
-                                <label className={labelStyle}>Dosis a recetar</label>
-                                <button title="Herramienta de cálculo de dosis" onClick={() => setShowCalculadora(!showCalculadora)} className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-blue-100">
+                                <div className="flex items-center gap-2">
+                                    <label className={labelStyle}>Dosis a recetar</label>
+                                    {expediente.consulta.exploracion.antropometria?.peso && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 border border-slate-200 text-slate-500">
+                                            <Scale size={10} />
+                                            {expediente.consulta.exploracion.antropometria.peso} kg
+                                        </span>
+                                    )}
+                                </div>
+                                <button title="Herramienta de cálculo de dosis" onClick={() => setShowCalculadora(!showCalculadora)} disabled={!recetaHabilitada} className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border border-blue-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-50">
                                     <Calculator size={14} /> Calculadora de Dosis
                                 </button>
                             </div>
@@ -1313,29 +1980,30 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             <label className={labelStyle}>Peso (kg)</label>
                                             <input 
                                                 type="number" 
-                                                className={inputStyle} 
+                                                disabled={!recetaHabilitada}
+                                                className={`${inputStyle} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`} 
                                                 value={calcDatos.peso || expediente.consulta.exploracion.antropometria?.peso || ''} 
                                                 onChange={e => setCalcDatos({...calcDatos, peso: e.target.value})} 
                                             />
                                         </div>
                                         <div>
                                             <label className={labelStyle}>Dosis (mg/kg)</label>
-                                            <input type="number" className={inputStyle} value={calcDatos.dosisMgKg} onChange={e => setCalcDatos({...calcDatos, dosisMgKg: e.target.value})} />
+                                            <input type="number" disabled={!recetaHabilitada} className={`${inputStyle} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`} value={calcDatos.dosisMgKg} onChange={e => setCalcDatos({...calcDatos, dosisMgKg: e.target.value})} />
                                         </div>
                                         <div>
                                             <label className={labelStyle}>Concentración (mg)</label>
-                                            <input type="number" placeholder="Ej. 250" className={inputStyle} value={calcDatos.concentracionMg} onChange={e => setCalcDatos({...calcDatos, concentracionMg: e.target.value})} />
+                                            <input type="number" placeholder="Ej. 250" disabled={!recetaHabilitada} className={`${inputStyle} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`} value={calcDatos.concentracionMg} onChange={e => setCalcDatos({...calcDatos, concentracionMg: e.target.value})} />
                                         </div>
                                         <div>
                                             <label className={labelStyle}>Volumen (mL)</label>
-                                            <input type="number" placeholder="Ej. 5" className={inputStyle} value={calcDatos.concentracionMl} onChange={e => setCalcDatos({...calcDatos, concentracionMl: e.target.value})} />
+                                            <input type="number" placeholder="Ej. 5" disabled={!recetaHabilitada} className={`${inputStyle} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`} value={calcDatos.concentracionMl} onChange={e => setCalcDatos({...calcDatos, concentracionMl: e.target.value})} />
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3 pt-2 flex-wrap">
-                                        <button onClick={calcularDosisExacta} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-slate-800 active:scale-95 transition-all">
+                                        <button onClick={calcularDosisExacta} disabled={!recetaHabilitada} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-slate-800 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-900">
                                             Calcular
                                         </button>
-                                        <button onClick={consultarIADosis} disabled={iaCalcLoading || !tempMed.nombre} 
+                                        <button onClick={consultarIADosis} disabled={!recetaHabilitada || iaCalcLoading || !tempMed.nombre} 
                                             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all disabled:opacity-50 bg-gradient-to-r from-violet-50 to-indigo-50 border-indigo-200 text-indigo-700 hover:from-violet-100 hover:to-indigo-100 shadow-sm">
                                             {iaCalcLoading ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
                                             {iaCalcLoading ? 'Consultando...' : 'Sugerencia de dosis'}
@@ -1363,14 +2031,16 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             )}
 
                             <textarea 
-                                className={`${inputStyle} resize-none h-28`} 
+                                disabled={!recetaHabilitada}
+                                className={`${inputStyle} resize-none h-28 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`} 
                                 placeholder="Escribe la dosis final e indicaciones..." 
                                 value={tempMed.dosis} 
                                 onChange={e => setTempMed({...tempMed, dosis: e.target.value})}
+                                onKeyDown={handleDosisKeyDown}
                             />
                         </div>
 
-                        <button onClick={handleAgregarMedicamento} disabled={analizandoRiesgo} className={`mt-4 w-full py-3.5 rounded-lg font-semibold text-sm shadow-sm transition-colors flex items-center justify-center gap-2 ${analizandoRiesgo ? 'bg-slate-800 text-slate-400 cursor-wait' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                        <button onClick={handleAgregarMedicamento} disabled={!recetaHabilitada || analizandoRiesgo} className={`mt-4 w-full py-3.5 rounded-lg font-semibold text-sm shadow-sm transition-colors flex items-center justify-center gap-2 ${!recetaHabilitada ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : analizandoRiesgo ? 'bg-slate-800 text-slate-400 cursor-wait' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                             {analizandoRiesgo ? <><Activity className="animate-spin" size={16}/> Verificando alergias...</> : "Agregar a Receta"}
                         </button>
                     </div>
@@ -1393,25 +2063,26 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             placeholder="Corrige aquí la dosis e indicaciones"
                                             value={medEdicion.dosis}
                                             onChange={(e) => setMedEdicion({ ...medEdicion, dosis: e.target.value })}
+                                            onKeyDown={handleEdicionDosisKeyDown}
                                             autoFocus
                                         />
-                                        <input
-                                            className={inputStyle}
+                                            <input
+                                            className={`${inputStyle} bg-slate-100 text-slate-500 cursor-not-allowed`}
                                             placeholder="Nombre del medicamento"
                                             value={medEdicion.nombre}
-                                            onChange={(e) => setMedEdicion({ ...medEdicion, nombre: e.target.value })}
-                                        />
+                                            readOnly
+                                            />
                                         <input
-                                            className={inputStyle}
+                                                className={`${inputStyle} bg-slate-100 text-slate-500 cursor-not-allowed`}
                                             placeholder="Presentación"
                                             value={medEdicion.presentacion}
-                                            onChange={(e) => setMedEdicion({ ...medEdicion, presentacion: e.target.value })}
+                                                readOnly
                                         />
                                         <input
-                                            className={inputStyle}
+                                                className={`${inputStyle} bg-slate-100 text-slate-500 cursor-not-allowed`}
                                             placeholder="Sustancias activas"
                                             value={medEdicion.sustanciasActivas}
-                                            onChange={(e) => setMedEdicion({ ...medEdicion, sustanciasActivas: e.target.value })}
+                                                readOnly
                                         />
                                     </div>
                                     <div className="flex justify-end gap-2">
@@ -1452,6 +2123,26 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all">
+                                        {i > 0 && (
+                                            <button
+                                                type="button"
+                                                title="Mover arriba"
+                                                onClick={() => moverMedicamentoArriba(i)}
+                                                className="p-2 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                            >
+                                                <ArrowUp size={17}/>
+                                            </button>
+                                        )}
+                                        {i < ((expediente.consulta.diagnostico.tratamiento_lista?.length || 0) - 1) && (
+                                            <button
+                                                type="button"
+                                                title="Mover abajo"
+                                                onClick={() => moverMedicamentoAbajo(i)}
+                                                className="p-2 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                            >
+                                                <ArrowDown size={17}/>
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             title="Editar medicamento"
@@ -1481,26 +2172,212 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                     <textarea className={`${inputStyle} h-24 resize-none bg-white`} placeholder="Dieta, cuidados, signos de alarma..." value={expediente.consulta.diagnostico.indicaciones} onChange={e=>updateCampo('consulta.diagnostico.indicaciones',e.target.value)}/>
                 </div>
             </div>
-            
-            <div className="flex justify-end shrink-0">
-                <button onClick={() => setActiveConsulta('estudios')} className={`px-8 py-3 rounded-lg font-semibold text-sm flex items-center gap-2 transition-colors ${buttonPrimary}`}>
-                    Siguiente <ArrowLeft size={18} className="rotate-180"/>
-                </button>
-            </div>
+
         </div>
         </div>
     );
 
+    const renderProcedimientos = () => {
+        const iconoCategoria = (categoria = '') => {
+            const normalized = normalizeProcedureCategory(categoria);
+            if (normalized === 'curacion') return <Bandage size={16} />;
+            if (normalized === 'inyectable') return <Syringe size={16} />;
+            return <ClipboardList size={16} />;
+        };
+
+        return (
+            <div className="flex h-full w-full gap-6">
+                <div className="w-80 shrink-0 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+                    <div className="flex items-center gap-3 mb-3">
+                        <div className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
+                            <ClipboardList size={18} />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide">Catalogo de procedimientos</h3>
+                            <p className="text-[11px] text-slate-500">Selecciona procedimientos medicos disponibles</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        <button
+                            type="button"
+                            onClick={() => setFiltroProcedimientoCategoria('todos')}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${filtroProcedimientoCategoria === 'todos' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            Todos
+                        </button>
+                        {categoriasProcedimientosConConteo.map((categoria) => (
+                            <button
+                                key={categoria.id}
+                                type="button"
+                                onClick={() => setFiltroProcedimientoCategoria(categoria.id)}
+                                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${filtroProcedimientoCategoria === categoria.id ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                            >
+                                {categoria.label} ({categoria.count})
+                            </button>
+                        ))}
+                    </div>
+
+                    <input
+                        className={inputStyle}
+                        placeholder="Buscar procedimiento por nombre o clave"
+                        value={busquedaProcedimiento}
+                        onChange={(e) => setBusquedaProcedimiento(e.target.value)}
+                    />
+
+                    <div className="mt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-2">
+                        {catalogoProcedimientosLoading && (
+                            <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">Cargando catalogo de procedimientos...</div>
+                        )}
+
+                        {!catalogoProcedimientosLoading && procedimientosDisponiblesFiltrados.map((item) => (
+                            <div key={item.id} className="p-3 border border-slate-200 rounded-xl bg-white space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                        <p className="text-sm font-bold text-slate-800">{item.nombre}</p>
+                                        <p className="text-[11px] text-slate-500">{getProcedureCategoryLabel(item.categoria)}{item.clave ? ` • ${item.clave}` : ''}</p>
+                                    </div>
+                                    <span className="text-slate-400 mt-0.5">{iconoCategoria(item.categoria)}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 flex items-center justify-between gap-2">
+                                    <span>Duracion estimada: {item.duracionMin || 20} min</span>
+                                    {item.requiereConsentimiento && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Requiere consentimiento</span>}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => agregarProcedimientoDesdeCatalogo(item)}
+                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50"
+                                >
+                                    <Plus size={14} /> Agregar procedimiento
+                                </button>
+                            </div>
+                        ))}
+
+                        {!catalogoProcedimientosLoading && procedimientosDisponiblesFiltrados.length === 0 && (
+                            <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">No hay procedimientos disponibles para este filtro.</div>
+                        )}
+                    </div>
+                </div>
+
+                <div className={`${glassCard} flex-1`}>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                        <h3 className="font-black text-xl mb-1 text-slate-800 tracking-tight">Procedimientos medicos</h3>
+                        <p className="text-sm text-slate-500 mb-6">Planifica procedimientos derivados de la consulta y registra prioridad, estado y consentimiento.</p>
+
+                        <div className="space-y-3">
+                            {procedimientosSeleccionadosNormalizados.map((proc, index) => (
+                                <div key={`${proc.id}-${index}`} className="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-800">{proc.nombre}</p>
+                                            <p className="text-[11px] text-slate-500 mt-0.5">{getProcedureCategoryLabel(proc.categoria)}{proc.clave ? ` • ${proc.clave}` : ''}{proc.duracionMin ? ` • ${proc.duracionMin} min` : ''}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => removeProcedimientoSeleccionado(index)}
+                                            className="p-2 text-rose-400 hover:bg-rose-50 rounded-lg transition-all"
+                                            title="Eliminar procedimiento"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                                        <div>
+                                            <label className={labelStyle}>Prioridad</label>
+                                            <select
+                                                className={inputStyle}
+                                                value={proc.prioridad}
+                                                onChange={(e) => updateProcedimientoSeleccionado(index, { prioridad: e.target.value })}
+                                            >
+                                                {PROCEDURE_PRIORITY_OPTIONS.map((option) => (
+                                                    <option key={option.id} value={option.id}>{option.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelStyle}>Estado</label>
+                                            <select
+                                                className={inputStyle}
+                                                value={proc.estado}
+                                                onChange={(e) => updateProcedimientoSeleccionado(index, { estado: e.target.value })}
+                                            >
+                                                {PROCEDURE_STATUS_OPTIONS.map((option) => (
+                                                    <option key={option.id} value={option.id}>{option.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className={labelStyle}>Sitio / zona</label>
+                                            <input
+                                                className={inputStyle}
+                                                placeholder="Ej. Brazo derecho"
+                                                value={proc.sitio || ''}
+                                                onChange={(e) => updateProcedimientoSeleccionado(index, { sitio: e.target.value })}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-3">
+                                        <label className={labelStyle}>Nota clinica del procedimiento</label>
+                                        <textarea
+                                            className={`${inputStyle} h-20 resize-none`}
+                                            placeholder="Indicaciones, tecnica, hallazgos o recomendaciones"
+                                            value={proc.nota || ''}
+                                            onChange={(e) => updateProcedimientoSeleccionado(index, { nota: e.target.value })}
+                                        />
+                                    </div>
+
+                                    {proc.requiereConsentimiento && (
+                                        <label className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-800">
+                                            <input
+                                                type="checkbox"
+                                                checked={proc.consentimientoFirmado === true}
+                                                onChange={(e) => updateProcedimientoSeleccionado(index, { consentimientoFirmado: e.target.checked })}
+                                            />
+                                            Consentimiento informado firmado
+                                        </label>
+                                    )}
+                                </div>
+                            ))}
+
+                            {procedimientosSeleccionadosNormalizados.length === 0 && (
+                                <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                    Selecciona procedimientos del catalogo para construir el plan terapeutico.
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-8">
+                            <label className={labelStyle}>Notas para procedimientos</label>
+                            <textarea
+                                className={`${inputStyle} h-24`}
+                                placeholder="Observaciones generales del plan de procedimientos..."
+                                value={expediente?.consulta?.procedimientos?.notas_generales || ''}
+                                onChange={(e) => updateCampo('consulta.procedimientos.notas_generales', e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        );
+    };
+
     const renderEstudios = () => (
         <div className="flex h-full w-full gap-6">
             <div className="w-64 flex flex-col gap-3 shrink-0 bg-white p-4 rounded-2xl border border-slate-200 h-full">
-                <button onClick={()=>setActiveEstudiosTab('paquetes')} className={`p-4 rounded-lg flex flex-col items-center gap-2 text-xs font-semibold transition-colors border ${activeEstudiosTab==='paquetes'?'bg-blue-50 text-blue-700 border-blue-200':'text-slate-600 hover:bg-slate-50 border-transparent'}`}><Package size={24}/> Paquetes Lab</button>
-                <button onClick={()=>setActiveEstudiosTab('estudios')} className={`p-4 rounded-lg flex flex-col items-center gap-2 text-xs font-semibold transition-colors border ${activeEstudiosTab==='estudios'?'bg-blue-50 text-blue-700 border-blue-200':'text-slate-600 hover:bg-slate-50 border-transparent'}`}><FlaskConical size={24}/> Individual</button>
+                {estudiosTabs.map((tab) => (
+                    <button key={tab.id} onClick={() => setActiveEstudiosTab(tab.id)} className={`p-3 rounded-lg flex flex-col items-center gap-1.5 text-xs font-semibold transition-colors border text-center ${activeEstudiosTab===tab.id?'bg-blue-50 text-blue-700 border-blue-200':'text-slate-600 hover:bg-slate-50 border-transparent'}`}>
+                        {tab.icon}
+                        <span>{tab.label}</span>
+                    </button>
+                ))}
             </div>
             <div className={`${glassCard} flex-1`}>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
-                    <h3 className="font-black text-xl mb-6 text-slate-800 tracking-tight">{activeEstudiosTab==='paquetes'?'Paquetes Comunes':'Estudios Individuales'}</h3>
-                    {activeEstudiosTab==='paquetes' ? (
+                    <h3 className="font-black text-xl mb-6 text-slate-800 tracking-tight">{tituloTabEstudios}</h3>
+                    {esTabPaquete ? (
                         <div className="grid grid-cols-2 gap-4">
                             {paquetesCatalogo.map((p) => (
                                 <label key={p.id} className="flex gap-4 items-center p-4 bg-white border border-slate-100 rounded-2xl cursor-pointer hover:border-indigo-200 hover:shadow-md transition-all group">
@@ -1521,9 +2398,14 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                     </div>
                                 </label>
                             ))}
-                            {paquetesCatalogo.length === 0 && (
+                            {catalogoEstudiosLoading && (
                                 <div className="col-span-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                                    No hay paquetes configurados en el catalogo de estudios.
+                                    Cargando catalogo de paquetes...
+                                </div>
+                            )}
+                            {!catalogoEstudiosLoading && paquetesCatalogo.length === 0 && (
+                                <div className="col-span-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                    No hay paquetes configurados en el catalogo.
                                 </div>
                             )}
                         </div>
@@ -1532,7 +2414,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             <div className="space-y-3">
                                 <input
                                     className={inputStyle}
-                                    placeholder="Buscar estudio por nombre o clave"
+                                    placeholder={`Buscar en ${tituloTabEstudios.toLowerCase()} por nombre o clave`}
                                     value={busquedaEstudio}
                                     onChange={(e) => setBusquedaEstudio(e.target.value)}
                                 />
@@ -1543,10 +2425,13 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                         disabled={!String(busquedaEstudio || '').trim()}
                                         className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        <Plus size={14} /> Agregar estudio libre
+                                        <Plus size={14} /> Agregar manualmente
                                     </button>
                                 </div>
                                 <div className="max-h-60 overflow-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
+                                    {catalogoEstudiosLoading && (
+                                        <div className="px-4 py-6 text-sm text-slate-500 text-center">Cargando catalogo...</div>
+                                    )}
                                     {estudiosDisponiblesFiltrados.map((item) => (
                                         <button
                                             key={item.id}
@@ -1558,8 +2443,8 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                             {item.clave && <p className="text-[11px] text-slate-400">Clave: {item.clave}</p>}
                                         </button>
                                     ))}
-                                    {estudiosDisponiblesFiltrados.length === 0 && (
-                                        <div className="px-4 py-6 text-sm text-slate-500 text-center">Sin coincidencias de estudios disponibles.</div>
+                                    {!catalogoEstudiosLoading && estudiosDisponiblesFiltrados.length === 0 && (
+                                        <div className="px-4 py-6 text-sm text-slate-500 text-center">Sin registros disponibles en esta categoria.</div>
                                     )}
                                 </div>
                             </div>
@@ -1570,6 +2455,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                         <div>
                                             <span className="font-bold text-slate-700 text-sm">{est.nombre}</span>
                                             {est.clave && <p className="text-[11px] text-slate-400 mt-0.5">Clave: {est.clave}</p>}
+                                            {est.categoria && <p className="text-[11px] text-indigo-500 mt-0.5">{getStudyCategoryLabel(est.categoria)}</p>}
                                         </div>
                                         <button onClick={() => removeEstudioSeleccionado(i)} className="p-2 text-rose-400 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={16}/></button>
                                     </div>
@@ -1582,21 +2468,73 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             </div>
                         </div>
                     )}
-                    <div className="mt-8"><label className={labelStyle}>Notas para Laboratorio</label><textarea className={`${inputStyle} h-24`} placeholder="Indicaciones especiales..." value={expediente.consulta.estudios.notas_generales} onChange={e=>updateCampo('consulta.estudios.notas_generales',e.target.value)}/></div>
+                    <div className="mt-8"><label className={labelStyle}>Notas para estudios</label><textarea className={`${inputStyle} h-24`} placeholder="Indicaciones especiales..." value={expediente.consulta.estudios.notas_generales} onChange={e=>updateCampo('consulta.estudios.notas_generales',e.target.value)}/></div>
                 </div>
             </div>
         </div>
     );
+
+    const tabsConsulta = [
+        { id: 'padecimiento', l: 'Motivo', i: <FileText size={18} /> },
+        { id: 'exploracion', l: 'Exploración', i: <Activity size={18} /> },
+        { id: 'diagnostico', l: 'Diagnóstico', i: <CheckCircle size={18} /> },
+        { id: 'estudios', l: 'Estudios', i: <FlaskConical size={18} /> },
+        { id: 'procedimientos', l: 'Procedimientos', i: <ClipboardList size={18} /> }
+    ];
+
+    const nextConsultaMap = {
+        padecimiento: 'exploracion',
+        exploracion: 'diagnostico',
+        diagnostico: 'estudios',
+        estudios: 'procedimientos'
+    };
+
+    const nextConsultaTab = nextConsultaMap[activeConsulta] || null;
 
     return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50 relative">
         <div className="absolute inset-0 bg-slate-50 -z-10 pointer-events-none"/>
         
         {/* TABS HEADER */}
-        <div className="flex border-b border-slate-200 bg-white px-8 shrink-0 gap-6 overflow-x-auto z-20 h-16 items-center">
-            {[{id:'padecimiento',l:'Motivo',i:<FileText size={18}/>},{id:'exploracion',l:'Exploración',i:<Activity size={18}/>},{id:'diagnostico',l:'Diagnóstico',i:<CheckCircle size={18}/>},{id:'estudios',l:'Estudios',i:<FlaskConical size={18}/>}].map(t=>(
-                <button title={t.l} key={t.id} onClick={()=>setActiveConsulta(t.id)} className={`py-2 px-4 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border ${activeConsulta===t.id?'bg-blue-600 text-white border-blue-600':'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} {t.l.toUpperCase()}</button>
-            ))}
+        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-8 shrink-0 z-20 h-16 gap-4">
+            <div className="flex items-center gap-6 overflow-x-auto min-w-0">
+                {tabsConsulta.map((t) => (
+                    <button title={t.l} key={t.id} onClick={() => setActiveConsulta(t.id)} className={`py-2 px-4 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border whitespace-nowrap ${activeConsulta === t.id ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} {t.l.toUpperCase()}</button>
+                ))}
+            </div>
+
+            {activeConsulta === 'procedimientos' ? (
+                <button
+                    onClick={() => onPrintRecetaSalir?.()}
+                    className={`px-6 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
+                >
+                    <Printer size={16} /> Imprimir receta
+                </button>
+            ) : (activeConsulta === 'diagnostico' || activeConsulta === 'estudios') && nextConsultaTab ? (
+                <div className="flex items-center gap-2 shrink-0">
+                    <button
+                        onClick={() => (onPrintReceta ?? onPrintRecetaSalir)?.()}
+                        className="px-4 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 shadow-sm"
+                        title="Imprimir receta sin salir"
+                    >
+                        <Printer size={15} />
+                        <span className="hidden sm:inline">Imprimir</span>
+                    </button>
+                    <button
+                        onClick={() => setActiveConsulta(nextConsultaTab)}
+                        className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm ${buttonPrimary}`}
+                    >
+                        Siguiente <ArrowLeft size={17} className="rotate-180" />
+                    </button>
+                </div>
+            ) : nextConsultaTab ? (
+                <button
+                    onClick={() => setActiveConsulta(nextConsultaTab)}
+                    className={`px-6 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
+                >
+                    Siguiente <ArrowLeft size={18} className="rotate-180" />
+                </button>
+            ) : null}
         </div>
         
         {/* CONTENIDO PRINCIPAL */}
@@ -1604,6 +2542,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             {activeConsulta === 'padecimiento' && renderPadecimiento()}
             {activeConsulta === 'exploracion' && renderExploracion()}
             {activeConsulta === 'diagnostico' && renderDiagnostico()}
+            {activeConsulta === 'procedimientos' && renderProcedimientos()}
             {activeConsulta === 'estudios' && renderEstudios()}
         </div>
 
@@ -1615,25 +2554,58 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             </div>
         </div>
 
-        {/* --- MODAL DE RIESGO DE ALERGIA --- */}
-        {showRiskModal && (
+        {/* --- MODAL DE RIESGO DE ALERGIA / INTERACCIÓN --- */}
+        {showRiskModal && (() => {
+            const esAlergia = riskData.tipo === 'alergia_directa' || riskData.tipo === 'reaccion_cruzada';
+            const esInteraccion = riskData.tipo === 'interaccion_farmacologica';
+            const esDuplicado = riskData.tipo === 'duplicado';
+            const esAlto = riskData.nivel === 'alto';
+            const headerBg = esAlto ? 'from-red-50 to-rose-50' : esAlergia ? 'from-amber-50 to-orange-50' : esInteraccion ? 'from-blue-50 to-indigo-50' : 'from-slate-50 to-slate-100';
+            const borderColor = esAlto ? 'border-red-100' : esAlergia ? 'border-orange-100' : esInteraccion ? 'border-blue-100' : 'border-slate-200';
+            const iconColor = esAlto ? 'text-red-600' : esAlergia ? 'text-orange-500' : esInteraccion ? 'text-blue-500' : 'text-slate-500';
+            const titulo = esDuplicado ? 'Medicamento Duplicado' : esAlergia ? 'Riesgo Alérgico Detectado' : esInteraccion ? 'Interacción Farmacológica' : 'Alerta de Seguridad';
+            const subtitulo = esAlto ? 'Riesgo alto — contraindicado' : riskData.tipo === 'reaccion_cruzada' ? 'Reactividad cruzada documentada' : esInteraccion ? 'Interacción entre medicamentos' : esDuplicado ? 'Ya existe en la receta' : 'Validación de seguridad';
+            const stripColor = esAlto ? 'border-red-400 bg-red-50' : esAlergia ? 'border-orange-400 bg-orange-50' : esInteraccion ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-slate-50';
+            return (
             <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white w-full max-w-md rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
-                <div className="bg-gradient-to-r from-amber-50 to-orange-50 p-6 border-b border-orange-100 flex items-start gap-4">
-                <div className="bg-white p-3 rounded-full shadow-md text-orange-500"><AlertTriangle size={28}/></div>
-                <div><h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Alerta de Alergia</h3><p className="text-xs font-bold text-orange-600 mt-1 uppercase tracking-wider">Validación de Seguridad</p></div>
+            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
+                <div className={`bg-gradient-to-r ${headerBg} px-6 py-5 border-b ${borderColor} flex items-center gap-4`}>
+                    <div className={`bg-white p-2.5 rounded-xl shadow-sm ${iconColor}`}>{esAlto ? <ShieldAlert size={22}/> : esAlergia ? <AlertTriangle size={22}/> : esInteraccion ? <AlertTriangle size={22}/> : <AlertTriangle size={22}/>}</div>
+                    <div>
+                        <h3 className="text-base font-black text-slate-800">{titulo}</h3>
+                        <p className={`text-[11px] font-bold mt-0.5 uppercase tracking-wider ${esAlto ? 'text-red-600' : esAlergia ? 'text-orange-600' : esInteraccion ? 'text-blue-600' : 'text-slate-500'}`}>{subtitulo}</p>
+                    </div>
                 </div>
-                <div className="p-8 space-y-6">
-                    <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Medicamento</p><div className="text-xl font-black text-slate-800">{riskData.medicamento}</div></div>
-                    <div className="bg-orange-50 border-l-4 border-orange-400 p-4 rounded-r-xl"><p className="text-sm font-medium text-slate-700 leading-relaxed">"{riskData.mensaje}"</p></div>
+                <div className="px-6 py-5 space-y-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-slate-400 shrink-0"></div>
+                        <span className="text-sm font-bold text-slate-800">{riskData.medicamento}</span>
+                    </div>
+                    {riskData.mensaje && (
+                        <div className={`border-l-4 ${stripColor} p-3.5 rounded-r-lg`}>
+                            <p className="text-[13px] text-slate-700 leading-relaxed">{riskData.mensaje}</p>
+                        </div>
+                    )}
+                    {resumenAlergiasPaciente.tieneAlergias && esAlergia && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider w-full mb-1">Alergias del paciente:</span>
+                            {resumenAlergiasPaciente.items.slice(0, 6).map((item) => (
+                                <span key={item} className="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-rose-200 bg-rose-50 text-rose-700">{item}</span>
+                            ))}
+                        </div>
+                    )}
                 </div>
-                <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
-                <button onClick={()=>setShowRiskModal(false)} className="flex-1 py-3.5 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all">Cancelar</button>
-                <button onClick={ejecutarAgregado} className="flex-1 py-3.5 bg-slate-900 text-white rounded-xl font-bold text-sm shadow-xl hover:bg-black transition-all flex justify-center gap-2 items-center"><span>Autorizar Riesgo</span><ChevronRight size={16}/></button>
+                <div className="px-6 py-3.5 bg-slate-50/80 border-t border-slate-100 flex gap-3">
+                    <button onClick={()=>setShowRiskModal(false)} className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-lg font-semibold text-xs hover:bg-slate-100 transition-all">Cancelar</button>
+                    <button onClick={ejecutarAgregado} className={`flex-1 py-2.5 rounded-lg font-semibold text-xs shadow-sm transition-all flex justify-center gap-1.5 items-center ${esAlto ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}>
+                        <span>{esAlto ? 'Agregar bajo mi responsabilidad' : 'Agregar de todas formas'}</span>
+                        <ChevronRight size={13}/>
+                    </button>
                 </div>
             </div>
             </div>
-        )}
+            );
+        })()}
 
         </div>
     );

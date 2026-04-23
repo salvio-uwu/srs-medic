@@ -138,7 +138,7 @@ const PortalAcceso = () => {
     );
   }
 
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/login" replace />;
 
   const handleSalir = async () => {
     try { await logout(); navigate('/'); }

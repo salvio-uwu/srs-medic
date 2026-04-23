@@ -13,7 +13,7 @@ import {
   ZoomIn, ZoomOut, Grid3X3, Settings2, Search
 } from 'lucide-react';
 import {
-  addDoc, collection, deleteDoc, doc,
+  addDoc, collection, deleteDoc, doc, getDoc,
   onSnapshot, orderBy, query,
   serverTimestamp, updateDoc
 } from 'firebase/firestore';
@@ -39,6 +39,25 @@ const FONT_FAMILY_OPTIONS = [
 const LINE_HEIGHT_OPTIONS = [1, 1.15, 1.3, 1.45, 1.6, 1.8, 2];
 const AUTOSAVE_STORAGE_KEY = 'plantillas_documentos_autosave_v1';
 const AUTOSAVE_DEBOUNCE_MS = 700;
+
+const formatDateLongEsMx = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const dia = String(date.getDate()).padStart(2, '0');
+  const mes = date.toLocaleDateString('es-MX', { month: 'long' });
+  const anio = date.getFullYear();
+  return `${dia} de ${mes} del ${anio}`;
+};
+
+const formatIssuedTimeEsMx = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+};
 
 const loadAutosaveDraft = () => {
   if (typeof window === 'undefined') return null;
@@ -104,6 +123,14 @@ const FIELD_LIBRARY = [
   { id: 'consulta.medicamentos_html', label: 'Medicamentos detallados (HTML)' },
   { id: 'consulta.estudios_texto', label: 'Estudios solicitados (texto)' },
   { id: 'consulta.estudios_html', label: 'Estudios solicitados (HTML)' },
+  { id: 'consulta.estudios_conteo', label: 'Cantidad de estudios' },
+  { id: 'consulta.paquetes_texto', label: 'Paquetes de estudios (texto)' },
+  { id: 'consulta.estudios_notas', label: 'Notas de estudios' },
+  { id: 'consulta.procedimientos_texto', label: 'Procedimientos (texto)' },
+  { id: 'consulta.procedimientos_html', label: 'Procedimientos (HTML)' },
+  { id: 'consulta.procedimientos_conteo', label: 'Cantidad de procedimientos' },
+  { id: 'consulta.procedimientos_notas', label: 'Notas de procedimientos' },
+  { id: 'consulta.receta_contenido', label: 'Receta completa (meds+estudios+proc)' },
   { id: 'exploracion.signos.ta', label: 'TA' },
   { id: 'exploracion.signos.temp', label: 'Temperatura' },
   { id: 'exploracion.signos.fc', label: 'FC' },
@@ -113,7 +140,9 @@ const FIELD_LIBRARY = [
   { id: 'exploracion.antropometria.talla', label: 'Talla' },
   { id: 'firma.medico', label: 'Firma digital del médico' },
   { id: 'firma.linea', label: 'Línea de firma (sólida)' },
-  { id: 'fecha.hoy', label: 'Fecha actual' }
+  { id: 'fecha.hoy', label: 'Fecha actual' },
+  { id: 'fechaexpedida', label: 'Hora de expedición' },
+  { id: 'fecha.larga', label: 'Fecha larga' }
 ];
 
 const FIELD_GROUPS = [
@@ -122,9 +151,9 @@ const FIELD_GROUPS = [
   { id: 'medico', label: 'Médico', color: '#0077B6', fields: ['medico.nombre','medico.cedula','medico.cedula_profesional','medico.universidad_egreso','medico.centro_estudios','medico.sucursal','medico.especialidad'] },
   { id: 'sucursal', label: 'Sucursal / Contacto', color: '#475569', fields: ['sucursal.nombre','sucursal.horario','sucursal.quejas_sugerencias','sucursal.direccion','sucursal.domicilio','sucursal.telefono'] },
   { id: 'consultorio', label: 'Consultorio', color: '#0369a1', fields: ['consultorio.nombre','consultorio.direccion','consultorio.domicilio'] },
-  { id: 'consulta', label: 'Consulta', color: '#059669', fields: ['consulta.padecimiento','consulta.diagnostico','consulta.cie10_texto','consulta.indicaciones','consulta.tratamiento_texto','consulta.tratamiento_html','consulta.medicamentos_texto','consulta.medicamentos_html','consulta.estudios_texto','consulta.estudios_html'] },
+  { id: 'consulta', label: 'Consulta', color: '#059669', fields: ['consulta.padecimiento','consulta.diagnostico','consulta.cie10_texto','consulta.indicaciones','consulta.tratamiento_texto','consulta.tratamiento_html','consulta.medicamentos_texto','consulta.medicamentos_html','consulta.estudios_texto','consulta.estudios_html','consulta.estudios_conteo','consulta.paquetes_texto','consulta.estudios_notas','consulta.procedimientos_texto','consulta.procedimientos_html','consulta.procedimientos_conteo','consulta.procedimientos_notas','consulta.receta_contenido'] },
   { id: 'exploracion', label: 'Exploración', color: '#d97706', fields: ['exploracion.signos.ta','exploracion.signos.temp','exploracion.signos.fc','exploracion.signos.fr','exploracion.signos.spo2','exploracion.antropometria.peso','exploracion.antropometria.talla'] },
-  { id: 'firma', label: 'Firma / Fecha', color: '#dc2626', fields: ['firma.medico','firma.linea','fecha.hoy'] }
+  { id: 'firma', label: 'Firma / Fecha', color: '#dc2626', fields: ['firma.medico','firma.linea','fecha.hoy','fechaexpedida','fecha.larga'] }
 ];
 
 const PREVIEW_DATA = {
@@ -134,8 +163,14 @@ const PREVIEW_DATA = {
   medico: { nombre: 'DR. CARLOS HERNANDEZ', cedula: '15328151', cedula_profesional: '15328151', universidad_egreso: 'Centro de Estudios Universitarios Xochicalco', centro_estudios: 'Centro de Estudios Universitarios Xochicalco', sucursal: 'Huasteca', especialidad: 'Medicina General' },
   sucursal: { nombre: 'Suc. Huasteca', horario: 'Lunes a Sábado abierto 24 h. Domingo cierre a las 11:00 p.m.', quejas_sugerencias: '8182046067', direccion: 'Cuajuco 120 A Col. INFONAVIT la Huasteca, Santa Catarina, N.L.', domicilio: 'Cuajuco 120 A Col. INFONAVIT la Huasteca, Santa Catarina, N.L.', telefono: '8139025690' },
   consultorio: { nombre: 'Consultorio 3', direccion: 'C. Cuajuco 120 -A, Infonavit la Huasteca, 66354 Cdad. Santa Catarina, N.L.', domicilio: 'C. Cuajuco 120 -A, Infonavit la Huasteca, 66354 Cdad. Santa Catarina, N.L.' },
-  consulta: { padecimiento: 'Cefalea y náusea de 48 horas de evolución.', diagnostico: 'Migraña sin aura', cie10_texto: 'G43 - Migraña', indicaciones: 'Reposo, hidratación y control en 24 horas.', tratamiento_texto: '1. Paracetamol 500 mg - Tomar 1 tableta cada 8 horas por 3 días.\n2. Omeprazol 20 mg - Tomar 1 cápsula cada 24 horas por 5 días.', tratamiento_html: '<ol><li><strong>Paracetamol 500 mg</strong> - Tomar 1 tableta cada 8 horas por 3 días.</li><li><strong>Omeprazol 20 mg</strong> - Tomar 1 cápsula cada 24 horas por 5 días.</li></ol>', medicamentos_texto: '1. AMAL / ZOFRAN / ONDANSETRON 3 INYECTABLE 8mg / 4ml INTRAMUSCULAR o INTRAVENOSO\n   192 ONDANSETRON\n   DOSIS UNICA.\n2. ADALAT / CORDILAT / NIFEDIPINO 20 CAPSULAS 10mg VIA ORAL.\n   186 NIFEDIPINO\n   DOSIS UNICA.', medicamentos_html: '<div style="margin-bottom:8px;"><div><strong>1. AMAL / ZOFRAN / ONDANSETRON</strong> 3 INYECTABLE 8mg / 4ml INTRAMUSCULAR o INTRAVENOSO</div><div style="margin-left:16px;">192 ONDANSETRON</div><div style="margin-left:16px;">DOSIS UNICA.</div></div><div style="margin-bottom:8px;"><div><strong>2. ADALAT / CORDILAT / NIFEDIPINO</strong> 20 CAPSULAS 10mg VIA ORAL.</div><div style="margin-left:16px;">186 NIFEDIPINO</div><div style="margin-left:16px;">DOSIS UNICA.</div></div>', estudios_texto: 'Paquetes: BHC, QS6\n1. Hemograma\n2. Glucosa\n3. Urea', estudios_html: '<div style="margin-bottom:6px;"><strong>Paquetes:</strong> BHC, QS6</div><ol><li>Hemograma</li><li>Glucosa</li><li>Urea</li></ol>' },
-  fecha: { hoy: new Date().toLocaleDateString('es-MX') },
+  consulta: { padecimiento: 'Cefalea y náusea de 48 horas de evolución.', diagnostico: 'Migraña sin aura', cie10_texto: 'G43 - Migraña', indicaciones: 'Reposo, hidratación y control en 24 horas.', tratamiento_texto: '1. Paracetamol 500 mg - Tomar 1 tableta cada 8 horas por 3 días.\n2. Omeprazol 20 mg - Tomar 1 cápsula cada 24 horas por 5 días.', tratamiento_html: '<ol><li><strong>Paracetamol 500 mg</strong> - Tomar 1 tableta cada 8 horas por 3 días.</li><li><strong>Omeprazol 20 mg</strong> - Tomar 1 cápsula cada 24 horas por 5 días.</li></ol>', medicamentos_texto: '1. AMAL / ZOFRAN / ONDANSETRON 3 INYECTABLE 8mg / 4ml INTRAMUSCULAR o INTRAVENOSO\n   192 ONDANSETRON\n   DOSIS UNICA.\n2. ADALAT / CORDILAT / NIFEDIPINO 20 CAPSULAS 10mg VIA ORAL.\n   186 NIFEDIPINO\n   DOSIS UNICA.', medicamentos_html: '<div style="margin-bottom:8px;"><div><strong>1. AMAL / ZOFRAN / ONDANSETRON</strong> 3 INYECTABLE 8mg / 4ml INTRAMUSCULAR o INTRAVENOSO</div><div style="margin-left:16px;">192 ONDANSETRON</div><div style="margin-left:16px;">DOSIS UNICA.</div></div><div style="margin-bottom:8px;"><div><strong>2. ADALAT / CORDILAT / NIFEDIPINO</strong> 20 CAPSULAS 10mg VIA ORAL.</div><div style="margin-left:16px;">186 NIFEDIPINO</div><div style="margin-left:16px;">DOSIS UNICA.</div></div>', estudios_texto: 'Paquetes: BHC, QS6\n1. Hemograma\n2. Glucosa\n3. Urea', estudios_html: '<div style="margin-bottom:6px;"><strong>Paquetes:</strong> BHC, QS6</div><ol><li>Hemograma</li><li>Glucosa</li><li>Urea</li></ol>', estudios_conteo: '3', paquetes_texto: 'BHC, QS6', estudios_notas: 'Ayuno de 8 horas.', procedimientos_texto: '1. Curación chica (Prioridad: Urgente | Estado: Indicado | Sitio: Antebrazo)\n2. Sutura simple (Prioridad: Electivo | Estado: Programado)', procedimientos_html: '<ol><li>Curación chica <em>(Prioridad: Urgente | Estado: Indicado | Sitio: Antebrazo)</em></li><li>Sutura simple <em>(Prioridad: Electivo | Estado: Programado)</em></li></ol>', procedimientos_conteo: '2', procedimientos_notas: 'Requiere material de curación.', receta_contenido: '1. Paracetamol 500mg\n   100 PARACETAMOL\n   1 tab c/8h\n2. Amoxicilina 500mg\n   200 AMOXICILINA\n   1 cap c/8h x7d\n\n1. Biometría hemática\n2. Química sanguínea\n3. Urea\n\n1. Curación chica (Prioridad: Urgente | Sitio: Antebrazo)' },
+  fecha: {
+    hoy: new Date().toLocaleDateString('es-MX'),
+    hoy_larga: formatDateLongEsMx(new Date()),
+    expedida: formatIssuedTimeEsMx(new Date()),
+    larga: formatDateLongEsMx(new Date())
+  },
+  fechaexpedida: formatIssuedTimeEsMx(new Date()),
   firma: { medico: '[Firma digital del medico]', linea: '[Linea de firma]' }
 };
 
@@ -143,6 +178,29 @@ const makeId = (prefix = 'el') => `${prefix}_${Math.random().toString(36).slice(
 const htmlToPlain = (html = '') => String(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 const plainToHtml = (text = '') => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>');
 const resolveDeep = (obj, path) => path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : ''), obj);
+const normalizeTemplateFieldKey = (raw = '') => String(raw || '').replace(/\u00A0/g, ' ').replace(/\s+/g, '').trim();
+
+const shouldHideFieldLabel = (fieldKey = '') => {
+  const key = normalizeTemplateFieldKey(fieldKey);
+  return key === 'fecha.hoy'
+    || key === 'fecha.hoy_larga'
+    || key === 'fecha.larga'
+    || key === 'fechaexpedida'
+    || key === 'fecha.expedida';
+};
+
+const buildFieldDisplayText = (fieldKey = '', label = '', value = '') => {
+  const safeValue = String(value || '');
+  if (shouldHideFieldLabel(fieldKey)) return safeValue;
+  return `${label ? `${label}: ` : ''}${safeValue}`;
+};
+
+const buildCanvasFieldToken = (field = {}) => {
+  const key = normalizeTemplateFieldKey(field?.bind || field?.id || '');
+  if (key) return `{{${key}}}`;
+  const fallback = String(field?.label || 'campo').trim();
+  return `{{${fallback}}}`;
+};
 
 const buildSignatureLineHtml = (name = '') => {
   const label = String(name || 'Firma del medico').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -150,14 +208,14 @@ const buildSignatureLineHtml = (name = '') => {
 };
 
 const resolveTemplateText = (text = '', data = PREVIEW_DATA) => String(text).replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, keyRaw) => {
-  const key = keyRaw.trim();
+  const key = normalizeTemplateFieldKey(keyRaw);
   if (key === 'firma.linea') return '____________________________';
   if (key === 'firma.medico') return '[Firma digital del medico]';
   return resolveDeep(data, key) || '';
 });
 
 const resolveTemplateHtml = (html = '', data = PREVIEW_DATA) => String(html).replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, keyRaw) => {
-  const key = keyRaw.trim();
+  const key = normalizeTemplateFieldKey(keyRaw);
   if (key === 'firma.linea') return buildSignatureLineHtml(resolveDeep(data, 'medico.nombre') || 'Firma del medico');
   if (key === 'firma.medico') return '<span style="font-style:italic;color:#64748b;">[Firma digital del medico]</span>';
   if (key === 'consulta.tratamiento_html') return String(resolveDeep(data, key) || '');
@@ -348,6 +406,8 @@ const PlantillasDocumentos = () => {
   const [urlDialog, setUrlDialog] = useState({ open: false, mode: 'document' });
   const [urlInput, setUrlInput] = useState('');
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [duplicateCandidate, setDuplicateCandidate] = useState(null);
+  const [duplicateName, setDuplicateName] = useState('');
   const [smartGuides, setSmartGuides] = useState({ vertical: [], horizontal: [] });
 
   // Layout state
@@ -844,6 +904,42 @@ const PlantillasDocumentos = () => {
     }
   };
 
+  const hasSelectionInsideNode = (selection, node) => {
+    if (!selection || selection.rangeCount === 0 || !node) return false;
+    try {
+      return node.contains(selection.getRangeAt(0).commonAncestorContainer);
+    } catch {
+      return false;
+    }
+  };
+
+  const selectionCoversWholeNode = (selection, node) => {
+    if (!hasSelectionInsideNode(selection, node)) return false;
+    try {
+      const range = selection.getRangeAt(0);
+      if (range.collapsed) return false;
+      const fullRange = document.createRange();
+      fullRange.selectNodeContents(node);
+      return range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0
+        && range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
+    } catch {
+      return false;
+    }
+  };
+
+  const applyUniformFontSizeToNode = (node, ptValue) => {
+    const pt = Number(ptValue || DOC_BASE_FONT_PT);
+    if (!node || !Number.isFinite(pt)) return;
+    const size = `${pt}pt`;
+    node.style.fontSize = size;
+    node.querySelectorAll('*').forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      if (el.tagName === 'FONT') el.removeAttribute('size');
+      if (el.tagName === 'IMG' || el.tagName === 'SVG' || el.tagName === 'PATH' || el.tagName === 'LINE') return;
+      el.style.fontSize = size;
+    });
+  };
+
   // Rich text
   const applyRichCommand = (command, value = null) => {
     if (!selectedElement || selectedElement.type !== 'text' || !richTextEditorRef.current) return;
@@ -897,10 +993,63 @@ const PlantillasDocumentos = () => {
     const pt = Number(ptValue || DOC_BASE_FONT_PT);
     if (!documentEditorRef.current || !Number.isFinite(pt)) return;
     documentEditorRef.current.focus();
-    restoreDocumentSelection();
+    const selection = window.getSelection();
+    if (!hasSelectionInsideNode(selection, documentEditorRef.current)) {
+      restoreDocumentSelection();
+    }
+    const activeSelection = window.getSelection();
+    const shouldNormalizeWholeNode = selectionCoversWholeNode(activeSelection, documentEditorRef.current);
     document.execCommand('fontSize', false, '7');
     documentEditorRef.current.querySelectorAll('font[size="7"]').forEach((n) => { n.removeAttribute('size'); n.style.fontSize = `${pt}pt`; });
+    if (shouldNormalizeWholeNode) {
+      applyUniformFontSizeToNode(documentEditorRef.current, pt);
+    }
     updateEditorField('documentHtml', documentEditorRef.current.innerHTML);
+  };
+
+  const applyRichFontSizePt = (ptValue, options = {}) => {
+    const { forceWholeElement = false } = options;
+    const pt = Number(ptValue || DOC_BASE_FONT_PT);
+    if (!Number.isFinite(pt) || !selectedElement || selectedElement.type !== 'text') return;
+
+    const elementId = selectedElement.id;
+    const canvasNode = textElementRefs.current[elementId];
+    const targetNode = canvasNode || richTextEditorRef.current;
+    if (!targetNode) return;
+
+    targetNode.focus();
+
+    const sel = window.getSelection();
+    const hasLiveSelection = hasSelectionInsideNode(sel, targetNode);
+    if (!hasLiveSelection && canvasNode) {
+      restoreTextSelection(elementId, targetNode);
+    }
+
+    const activeSelection = window.getSelection();
+    const shouldNormalizeWholeNode = forceWholeElement || selectionCoversWholeNode(activeSelection, targetNode);
+    if (shouldNormalizeWholeNode) {
+      applyUniformFontSizeToNode(targetNode, pt);
+    } else {
+      document.execCommand('fontSize', false, '7');
+      targetNode.querySelectorAll('font[size="7"]').forEach((n) => {
+        n.removeAttribute('size');
+        n.style.fontSize = `${pt}pt`;
+      });
+    }
+
+    const html = targetNode.innerHTML;
+    textDraftHtmlRef.current[elementId] = html;
+    if (canvasNode && canvasNode.innerHTML !== html) canvasNode.innerHTML = html;
+    if (richTextEditorRef.current && richTextEditorRef.current.innerHTML !== html) richTextEditorRef.current.innerHTML = html;
+    updateSelectedElement({ contentHtml: html, content: htmlToPlain(html), fontSize: pt });
+  };
+
+  const applyActiveFontSizePt = (ptValue) => {
+    if (selectedElement?.type === 'text') {
+      applyRichFontSizePt(ptValue);
+      return;
+    }
+    applyDocumentFontSizePt(ptValue);
   };
   const applyDocumentLineHeightToSelection = (lineHeightValue) => {
     if (!documentEditorRef.current) return;
@@ -992,13 +1141,40 @@ const PlantillasDocumentos = () => {
     event.target.value = '';
   };
 
+  const buildEditorSnapshotForSave = () => {
+    const draftMap = textDraftHtmlRef.current || {};
+    const nextElements = (editor.elements || []).map((el) => {
+      if (el.type !== 'text') return el;
+      if (!Object.prototype.hasOwnProperty.call(draftMap, el.id)) return el;
+      const html = String(draftMap[el.id] ?? el.contentHtml ?? plainToHtml(el.content || ''));
+      return {
+        ...el,
+        contentHtml: html,
+        content: htmlToPlain(html)
+      };
+    });
+
+    const nextDocumentHtml = documentEditorRef.current
+      ? String(documentEditorRef.current.innerHTML || '')
+      : String(editor.documentHtml || '');
+
+    return {
+      ...editor,
+      elements: nextElements,
+      documentHtml: nextDocumentHtml
+    };
+  };
+
   // Save
   const saveTemplate = async () => {
     if (!editor.nombre.trim()) { setToast('Escribe un nombre para la plantilla.'); return; }
     setSaving(true);
     try {
-      const payload = { nombre: editor.nombre.trim(), categoria: editor.categoria.trim() || 'General', tipoDocumento: editor.tipoDocumento || 'general', orden: Number(editor.orden || 999), descripcionNatural: editor.descripcionNatural.trim(), activo: editor.activo !== false, publicada: editor.publicada !== false, schema: buildSchemaFromElements(editor.elements, editor.documentHtml || '', editor.documentFontFamily || 'Trebuchet MS', Number(editor.documentLineHeight || 1.45), editor.page || PAGE), actualizadoAt: serverTimestamp(), actualizadoPor: user?.uid || 'sistema' };
-      if (editor.id) { await updateDoc(doc(db, 'catalogo_plantillas_documentos', editor.id), payload); setToast('Plantilla actualizada.'); }
+      const editorForSave = buildEditorSnapshotForSave();
+      setEditor(editorForSave);
+
+      const payload = { nombre: editorForSave.nombre.trim(), categoria: editorForSave.categoria.trim() || 'General', tipoDocumento: editorForSave.tipoDocumento || 'general', orden: Number(editorForSave.orden || 999), descripcionNatural: editorForSave.descripcionNatural.trim(), activo: editorForSave.activo !== false, publicada: editorForSave.publicada !== false, schema: buildSchemaFromElements(editorForSave.elements, editorForSave.documentHtml || '', editorForSave.documentFontFamily || 'Trebuchet MS', Number(editorForSave.documentLineHeight || 1.45), editorForSave.page || PAGE), actualizadoAt: serverTimestamp(), actualizadoPor: user?.uid || 'sistema' };
+      if (editorForSave.id) { await updateDoc(doc(db, 'catalogo_plantillas_documentos', editorForSave.id), payload); setToast('Plantilla actualizada.'); }
       else { const ref = await addDoc(collection(db, 'catalogo_plantillas_documentos'), { ...payload, creadoAt: serverTimestamp(), creadoPor: user?.uid || 'sistema' }); setEditor((prev) => ({ ...prev, id: ref.id })); setToast('Plantilla creada.'); }
     } catch (error) { console.error(error); setToast('No se pudo guardar la plantilla.'); }
     setSaving(false);
@@ -1015,7 +1191,57 @@ const PlantillasDocumentos = () => {
     catch (error) { console.error(error); setToast('No se pudo eliminar.'); }
   };
 
+  const openDuplicate = (tpl) => {
+    setDuplicateCandidate(tpl);
+    setDuplicateName(`${tpl.nombre || 'Plantilla'} (Copia)`);
+  };
+
+  const executeDuplicate = async () => {
+    const tpl = duplicateCandidate;
+    if (!tpl?.id || !duplicateName.trim()) return;
+    try {
+      const snap = await getDoc(doc(db, 'catalogo_plantillas_documentos', tpl.id));
+      if (!snap.exists()) { setToast('No se encontró la plantilla original.'); setDuplicateCandidate(null); return; }
+      const { creadoAt, creadoPor, actualizadoAt, actualizadoPor, ...rest } = snap.data();
+      const ref = await addDoc(collection(db, 'catalogo_plantillas_documentos'), {
+        ...rest,
+        nombre: duplicateName.trim(),
+        creadoAt: serverTimestamp(),
+        creadoPor: user?.uid || 'sistema',
+        actualizadoAt: serverTimestamp(),
+        actualizadoPor: user?.uid || 'sistema',
+      });
+      setDuplicateCandidate(null);
+      setToast('Plantilla duplicada.');
+      setTimeout(() => {
+        const newTpl = templates.find(t => t.id === ref.id);
+        if (newTpl) onSelectTemplate(newTpl);
+      }, 800);
+    } catch (error) { console.error(error); setToast('No se pudo duplicar.'); setDuplicateCandidate(null); }
+  };
+
   const handleFieldClick = (fieldId) => {
+    if (selectedElement?.type === 'field' && selectedElementId) {
+      const meta = FIELD_LIBRARY.find((f) => f.id === fieldId);
+      updateSelectedElement({
+        bind: fieldId,
+        label: meta?.label || selectedElement.label
+      });
+      return;
+    }
+
+    const hasSelectionInDocumentEditor = () => {
+      const node = documentEditorRef.current;
+      const selection = window.getSelection();
+      if (!node || !selection || selection.rangeCount === 0) return false;
+      try {
+        const range = selection.getRangeAt(0);
+        return node.contains(range.commonAncestorContainer);
+      } catch {
+        return false;
+      }
+    };
+
     if (selectedElement?.type === 'text' && selectedElementId) {
       const node = textElementRefs.current[selectedElementId];
       if (node) {
@@ -1029,7 +1255,13 @@ const PlantillasDocumentos = () => {
       updateTextElementContent(selectedElementId, next);
       return;
     }
-    insertVariableInDocument(fieldId);
+
+    if (hasSelectionInDocumentEditor()) {
+      insertVariableInDocument(fieldId);
+      return;
+    }
+
+    addFieldElement(fieldId);
   };
 
   // Element type label/color
@@ -1127,7 +1359,7 @@ const PlantillasDocumentos = () => {
             <div className="h-5 w-px bg-slate-200 flex-shrink-0" />
             <label className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white text-xs font-semibold text-slate-600 cursor-pointer flex-shrink-0">
               <Type size={12} />
-              <select className="outline-none bg-transparent text-xs" defaultValue="12" onChange={(e) => applyDocumentFontSizePt(e.target.value)}>
+              <select className="outline-none bg-transparent text-xs" defaultValue="12" onChange={(e) => applyActiveFontSizePt(e.target.value)}>
                 {[8,9,10,11,12,13,14,16,18,20,24,28,32,36].map((s) => <option key={s} value={s}>{s}pt</option>)}
               </select>
             </label>
@@ -1237,6 +1469,9 @@ const PlantillasDocumentos = () => {
                         </button>
                         <button onClick={() => toggleTemplateFlag(tpl, 'publicada')} className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tpl.publicada === false ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                           {tpl.publicada === false ? 'Oculta' : 'Visible'}
+                        </button>
+                        <button onClick={() => openDuplicate(tpl)} title="Duplicar" className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700 transition-colors">
+                          <Copy size={9} className="inline" />
                         </button>
                         <button onClick={() => setDeleteCandidate(tpl)} className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-rose-100 text-rose-700">
                           <Trash2 size={9} className="inline" />
@@ -1465,7 +1700,12 @@ const PlantillasDocumentos = () => {
                           el.src ? <img src={el.src} alt="" className="w-full h-full block" style={{ objectFit: el.objectFit || 'contain', opacity: Number(el.opacity ?? 1) }} /> : <div className="w-full h-full border-2 border-dashed border-slate-300 rounded flex items-center justify-center text-xs text-slate-400 italic">Sin imagen</div>
                         ) : el.type === 'shape' ? renderShapeEl(el)
                         : el.type === 'field' ? (
-                          <span style={{ color: '#7c3aed', fontWeight: 600 }}>{'{'}{'{'}{ el.label }{'}'}{'}'}  <span className="text-slate-400 font-normal text-xs">→ {resolveDeep(PREVIEW_DATA, el.bind) || ''}</span></span>
+                          <span style={{ color: '#7c3aed', fontWeight: 600 }} title={el.label || el.bind || 'Campo'}>
+                            {buildCanvasFieldToken(el)}
+                            {!shouldHideFieldLabel(el.bind || el.id) && (
+                              <span className="text-slate-400 font-normal text-xs"> → {resolveDeep(PREVIEW_DATA, el.bind) || ''}</span>
+                            )}
+                          </span>
                         ) : (
                           <div
                             ref={(node) => {
@@ -1527,7 +1767,7 @@ const PlantillasDocumentos = () => {
                               }}>
                               {el.type === 'image' ? (el.src ? <img src={el.src} alt="" className="w-full h-full" style={{ objectFit: el.objectFit || 'contain', opacity: Number(el.opacity ?? 1) }} /> : null)
                                 : el.type === 'shape' ? renderShapeEl(el)
-                                : el.type === 'field' ? `${el.label ? `${el.label}: ` : ''}${resolveDeep(PREVIEW_DATA, el.bind) || ''}`
+                                : el.type === 'field' ? buildFieldDisplayText(el.bind, el.label, resolveDeep(PREVIEW_DATA, el.bind) || '')
                                 : <div dangerouslySetInnerHTML={{ __html: resolveTemplateHtml(el.contentHtml || plainToHtml(el.content || ''), PREVIEW_DATA) }} />}
                             </div>
                             );
@@ -1565,7 +1805,7 @@ const PlantillasDocumentos = () => {
                         }}>
                         {el.type === 'image' ? (el.src ? <img src={el.src} alt="" className="w-full h-full" style={{ objectFit: el.objectFit || 'contain', opacity: Number(el.opacity ?? 1) }} /> : null)
                           : el.type === 'shape' ? renderShapeEl(el)
-                          : el.type === 'field' ? `${el.label ? `${el.label}: ` : ''}${resolveDeep(PREVIEW_DATA, el.bind) || ''}`
+                          : el.type === 'field' ? buildFieldDisplayText(el.bind, el.label, resolveDeep(PREVIEW_DATA, el.bind) || '')
                           : <div dangerouslySetInnerHTML={{ __html: resolveTemplateHtml(el.contentHtml || plainToHtml(el.content || ''), PREVIEW_DATA) }} />}
                       </div>
                       );
@@ -1737,7 +1977,7 @@ const PlantillasDocumentos = () => {
                       <TBtn icon={<List size={12} />} onClick={() => applyRichCommand('insertUnorderedList')} title="Lista" />
                       <label className="inline-flex items-center gap-1 border border-slate-200 rounded px-1.5 py-0.5 bg-white text-[10px] font-semibold text-slate-600 cursor-pointer">
                         <Type size={11} />
-                        <select className="outline-none bg-transparent text-[10px]" value={Number(selectedElement.fontSize || 12)} onChange={(e) => updateSelectedElement({ fontSize: Number(e.target.value) })}>
+                        <select className="outline-none bg-transparent text-[10px]" value={Number(selectedElement.fontSize || 12)} onChange={(e) => applyRichFontSizePt(Number(e.target.value), { forceWholeElement: true })}>
                           {[8,9,10,11,12,13,14,16,18,20,24,28,32].map((s) => <option key={s} value={s}>{s}px</option>)}
                         </select>
                       </label>
@@ -1760,7 +2000,13 @@ const PlantillasDocumentos = () => {
                     <FieldNum label="Ancho" value={selectedElement.w} onChange={(v) => updateSelectedElement({ w: v })} />
                     <FieldNum label="Alto" value={selectedElement.h} onChange={(v) => updateSelectedElement({ h: v })} />
                     {selectedElement.type !== 'image' && selectedElement.type !== 'shape' && (
-                      <FieldNum label="Fuente (px)" value={selectedElement.fontSize} onChange={(v) => updateSelectedElement({ fontSize: v })} />
+                      <FieldNum label="Fuente (px)" value={selectedElement.fontSize} onChange={(v) => {
+                        if (selectedElement.type === 'text') {
+                          applyRichFontSizePt(v, { forceWholeElement: true });
+                          return;
+                        }
+                        updateSelectedElement({ fontSize: v });
+                      }} />
                     )}
                     <FieldNum label="Capa (z)" value={selectedElement.zIndex || 1} onChange={(v) => updateSelectedElement({ zIndex: v })} />
                   </div>
@@ -1846,6 +2092,35 @@ const PlantillasDocumentos = () => {
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setDeleteCandidate(null)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">Cancelar</button>
               <button onClick={async () => { await removeTemplate(deleteCandidate); setDeleteCandidate(null); }} className="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700">Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {duplicateCandidate && (
+        <div className="fixed inset-0 z-[180] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl border border-slate-200 shadow-2xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center">
+                <Copy size={18} className="text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-800">Duplicar plantilla</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">Se creará una copia de <span className="font-bold text-slate-600">{duplicateCandidate?.nombre}</span></p>
+              </div>
+            </div>
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Nombre de la copia</label>
+            <input
+              className="mt-1.5 w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 bg-slate-50"
+              value={duplicateName}
+              onChange={(e) => setDuplicateName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && executeDuplicate()}
+              autoFocus
+              placeholder="Nombre..."
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setDuplicateCandidate(null)} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">Cancelar</button>
+              <button onClick={executeDuplicate} disabled={!duplicateName.trim()} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 shadow-sm">Duplicar</button>
             </div>
           </div>
         </div>

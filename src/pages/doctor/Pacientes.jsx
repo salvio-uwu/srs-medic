@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { User, Search, Plus, Phone, MapPin, Edit, Trash2, ArrowLeft } from 'lucide-react';
 import AvatarPaciente from '../../components/AvatarPaciente';
 import { db } from "../../config/firebase";
@@ -16,7 +16,9 @@ const Pacientes = () => {
   const { user } = useAuth();
 
   const [pacientes, setPacientes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [hasLoadedPatients, setHasLoadedPatients] = useState(false);
+  const [searchAttempted, setSearchAttempted] = useState(false);
   const [busqueda, setBusqueda] = useState('');
 
   const [filtroSexo, setFiltroSexo] = useState('todos');
@@ -31,23 +33,37 @@ const Pacientes = () => {
   const [showModal, setShowModal] = useState(false);
   const [pacienteAEditar, setPacienteAEditar] = useState(null);
 
+  const sortPacientes = (rows = []) => [...rows].sort((a, b) => {
+    const na = String(a.nombreCompleto || a.nombre || '').trim();
+    const nb = String(b.nombreCompleto || b.nombre || '').trim();
+    return na.localeCompare(nb, 'es', { sensitivity: 'base' });
+  });
+
   const fetchPacientes = async () => {
     setLoading(true);
     try {
       const snapshot = await getDocs(collection(db, "pacientes"));
-      const docs = snapshot.docs
-        .map((docRef) => ({ id: docRef.id, ...docRef.data() }))
-        .sort((a, b) => {
-          const na = String(a.nombreCompleto || a.nombre || '').trim();
-          const nb = String(b.nombreCompleto || b.nombre || '').trim();
-          return na.localeCompare(nb, 'es', { sensitivity: 'base' });
-        });
+      const docs = sortPacientes(snapshot.docs.map((docRef) => ({ id: docRef.id, ...docRef.data() })));
       setPacientes(docs);
+      setHasLoadedPatients(true);
     } catch (error) { console.error("Error cargando pacientes:", error); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchPacientes(); }, []);
+  const handleBuscarPacientes = async () => {
+    const term = busqueda.trim();
+    setSearchAttempted(true);
+
+    if (term.length < 2) return;
+    if (!hasLoadedPatients) await fetchPacientes();
+  };
+
+  const handleBusquedaKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await handleBuscarPacientes();
+    }
+  };
 
   const isAdmin = useMemo(() => {
     const rol = String(user?.rol || '').toLowerCase();
@@ -68,8 +84,17 @@ const Pacientes = () => {
     return buildPatientHumanId(nombreCompleto, paciente.fechaNacimiento);
   };
 
-  const handleGuardado = () => {
-    fetchPacientes();
+  const handleGuardado = (pacienteGuardado) => {
+    if (hasLoadedPatients && pacienteGuardado?.id) {
+      setPacientes((prev) => {
+        const exists = prev.some((row) => row.id === pacienteGuardado.id);
+        const merged = exists
+          ? prev.map((row) => (row.id === pacienteGuardado.id ? { ...row, ...pacienteGuardado } : row))
+          : [...prev, pacienteGuardado];
+        return sortPacientes(merged);
+      });
+    }
+
     setShowModal(false);
     setPacienteAEditar(null);
   };
@@ -83,7 +108,7 @@ const Pacientes = () => {
     if(window.confirm(`¿Seguro que deseas eliminar el expediente de ${nombre}? Esta acción no se puede deshacer.`)) {
         try {
             await deleteDoc(doc(db, "pacientes", id));
-            fetchPacientes();
+            setPacientes((prev) => prev.filter((row) => row.id !== id));
         } catch (error) { alert(error.message); }
     }
   };
@@ -116,6 +141,8 @@ const Pacientes = () => {
   const pacientesFiltrados = useMemo(() => {
     const term = busqueda.trim().toLowerCase();
 
+    if (!searchAttempted || term.length < 2) return [];
+
     return pacientes.filter((p) => {
       const nombre = `${p.nombre || ''} ${p.apellidoPaterno || ''} ${p.apellidoMaterno || ''}`.trim();
       const telefono = String(p.telefonoMovil || p.telefono || '').toLowerCase();
@@ -126,7 +153,7 @@ const Pacientes = () => {
       const idPaciente = obtenerIdPaciente(p).toLowerCase();
       const fechaRegistro = obtenerFechaRegistro(p);
 
-      const coincideBusqueda = !term ||
+      const coincideBusqueda =
         nombre.toLowerCase().includes(term) ||
         telefono.includes(term) ||
         ubicacion.toLowerCase().includes(term) ||
@@ -162,7 +189,7 @@ const Pacientes = () => {
       const nb = `${b.nombre || ''} ${b.apellidoPaterno || ''}`.trim();
       return na.localeCompare(nb, 'es');
     });
-  }, [pacientes, busqueda, filtroSexo, filtroUbicacion, filtroGrupoSanguineo, soloConTelefono, soloConCorreo, filtroIdPaciente, filtroFechaDesde, filtroFechaHasta, isAdmin]);
+  }, [pacientes, busqueda, filtroSexo, filtroUbicacion, filtroGrupoSanguineo, soloConTelefono, soloConCorreo, filtroIdPaciente, filtroFechaDesde, filtroFechaHasta, isAdmin, searchAttempted]);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-10">
@@ -193,7 +220,7 @@ const Pacientes = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
             <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
               <p className="text-[11px] uppercase font-bold tracking-wider text-slate-500">Total</p>
-              <p className="text-xl font-bold text-slate-800">{pacientes.length}</p>
+              <p className="text-xl font-bold text-slate-800">{hasLoadedPatients ? pacientes.length : 0}</p>
             </div>
             <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
               <p className="text-[11px] uppercase font-bold tracking-wider text-slate-500">Filtrados</p>
@@ -201,27 +228,39 @@ const Pacientes = () => {
             </div>
             <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
               <p className="text-[11px] uppercase font-bold tracking-wider text-slate-500">Con teléfono</p>
-              <p className="text-xl font-bold text-slate-800">{pacientes.filter((p) => Boolean(String(p.telefonoMovil || p.telefono || '').trim())).length}</p>
+              <p className="text-xl font-bold text-slate-800">{hasLoadedPatients ? pacientes.filter((p) => Boolean(String(p.telefonoMovil || p.telefono || '').trim())).length : 0}</p>
             </div>
             <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
               <p className="text-[11px] uppercase font-bold tracking-wider text-slate-500">Ubicaciones</p>
-              <p className="text-xl font-bold text-slate-800">{ubicacionesDisponibles.length}</p>
+              <p className="text-xl font-bold text-slate-800">{hasLoadedPatients ? ubicacionesDisponibles.length : 0}</p>
             </div>
           </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5 shadow-sm space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             <div className="relative xl:col-span-2">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
               <input
                 type="text"
-                placeholder="Buscar por nombre, teléfono o ubicación..."
+                placeholder="Buscar por nombre, teléfono o ID (mínimo 2 letras)..."
                 className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
                 value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
+                onChange={(e) => {
+                  const nextValue = e.target.value;
+                  setBusqueda(nextValue);
+                  if (!nextValue.trim()) setSearchAttempted(false);
+                }}
+                onKeyDown={handleBusquedaKeyDown}
               />
             </div>
+
+            <button
+              onClick={handleBuscarPacientes}
+              className="w-full border border-blue-200 bg-blue-50 text-blue-700 rounded-xl px-3 py-2.5 text-sm font-bold hover:bg-blue-100 transition-colors"
+            >
+              Buscar
+            </button>
 
             <select
               className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm bg-white"
@@ -312,6 +351,7 @@ const Pacientes = () => {
                 setFiltroFechaHasta('');
                 setSoloConTelefono(false);
                 setSoloConCorreo(false);
+                setSearchAttempted(false);
               }}
               className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
             >
@@ -339,13 +379,19 @@ const Pacientes = () => {
                   </tr>
                 )}
 
-                {!loading && pacientesFiltrados.length === 0 && (
+                {!loading && (!searchAttempted || busqueda.trim().length < 2) && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-slate-400">Escribe al menos 2 caracteres y presiona Buscar para consultar pacientes.</td>
+                  </tr>
+                )}
+
+                {!loading && searchAttempted && busqueda.trim().length >= 2 && pacientesFiltrados.length === 0 && (
                   <tr>
                     <td colSpan={7} className="px-4 py-10 text-center text-slate-400">No hay resultados con los filtros actuales.</td>
                   </tr>
                 )}
 
-                {!loading && pacientesFiltrados.map((paciente) => {
+                {!loading && searchAttempted && busqueda.trim().length >= 2 && pacientesFiltrados.map((paciente) => {
                   const nombreCompleto = `${paciente.nombre || ''} ${paciente.apellidoPaterno || ''} ${paciente.apellidoMaterno || ''}`.replace(/\s+/g, ' ').trim();
                   const idPaciente = obtenerIdPaciente(paciente);
                   return (

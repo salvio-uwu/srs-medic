@@ -60,8 +60,10 @@ const buildChecks = (expediente = {}, context = {}) => {
       pass:
         (Array.isArray(expediente?.antecedentes?.alergias?.lista) &&
           expediente.antecedentes.alergias.lista.length > 0) ||
+        hasValue(expediente?.antecedentes?.alergias?.otros) ||
         hasValue(expediente?.antecedentes?.alergias?.otras) ||
-        hasValue(expediente?.px_info?.alergias_base)
+        hasValue(expediente?.px_info?.alergias_base) ||
+        expediente?.antecedentes?.alergias?.preguntados_y_negados === true
     },
     {
       id: 'grupo_sanguineo',

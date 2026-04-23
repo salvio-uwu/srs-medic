@@ -3,12 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Building2, Compass, HeartPulse, MessageCircle, Shield, Stethoscope, Users, X,
   LayoutDashboard, Package, UserCog, Eye, Tag, FileText, BarChart3, ClipboardList, Activity,
-  CalendarDays, Syringe, Clipboard, Crown, DollarSign, SprayCan, ChevronRight
+  CalendarDays, Syringe, Clipboard, Crown, DollarSign, SprayCan, ChevronRight, BookOpen
 } from 'lucide-react';
 import { db } from './config/firebase';
 import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import Login from './pages/auth/Login';
-import PortalAcceso from './pages/auth/PortalAcceso';
 import ChatPanel from './components/ChatPanel';
 import { useAuth } from './context/AuthContext';
 import { hasPermission } from './services/permissionService';
@@ -38,9 +37,14 @@ import RegistroLimpiezaManual from './pages/intendencia/RegistroLimpiezaManual';
 // Módulos Enfermería
 import AgendaEnfermeria from './pages/enfermeria/AgendaEnfermeria'; 
 import Triage from './pages/enfermeria/Triage';
+import AntecedentesRapidos from './pages/enfermeria/AntecedentesRapidos';
 import HojaEnfermeria from './pages/enfermeria/HojaEnfermeria'; 
 import DashboardJefaEnfermeria from './pages/enfermeria/DashboardJefaEnfermeria';
 import RegistrosEnfermeriaView from './pages/enfermeria/RegistrosEnfermeriaView';
+import CapacitacionEnfermeria from './pages/enfermeria/CapacitacionEnfermeria';
+import BitacoraCarroRojo from './pages/enfermeria/BitacoraCarroRojo';
+import CaducidadesEnfermeria from './pages/enfermeria/CaducidadesEnfermeria';
+import OrdenServicioEnfermeria from './pages/enfermeria/OrdenServicioEnfermeria';
 
 // Módulos Recursos Humanos
 import DashboardRH from './pages/rh/DashboardRH';
@@ -60,12 +64,143 @@ const GlobalChatLauncher = () => {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [showLauncherMenu, setShowLauncherMenu] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [hasUnread, setHasUnread] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const initCanalesRef = useRef(false);
   const initPrivadosRef = useRef(false);
   const launcherRef = useRef(null);
+  const audioCtxRef = useRef(null);
 
-  const rutasSinChat = ['/', '/portal'];
+  // Desbloquear AudioContext al primer gesto del usuario
+  useEffect(() => {
+    const unlock = () => {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      // Una vez desbloqueado, eliminar listeners
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('click', unlock);
+    window.addEventListener('touchstart', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  // Sonido de notificación suave (ding) usando Web Audio API
+  const playNotificationSound = useRef(async () => {
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') await ctx.resume();
+
+      const now = ctx.currentTime;
+
+      // Tono 1 – nota aguda suave
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(880, now);
+      gain1.gain.setValueAtTime(0.22, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc1.connect(gain1).connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.4);
+
+      // Tono 2 – armónico complementario
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(1320, now + 0.1);
+      gain2.gain.setValueAtTime(0.13, now + 0.1);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.5);
+    } catch (_) { /* silent fail */ }
+  }).current;
+
+  // ── Draggable position ──
+  const STORAGE_KEY = 'launcher_corner';
+  const [corner, setCorner] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEY) || 'bottom-right'; } catch { return 'bottom-right'; }
+  });
+  const [dragPos, setDragPos] = useState(null); // {x, y} while dragging
+  const dragRef = useRef({ active: false, startX: 0, startY: 0, moved: false });
+
+  const cornerStyle = dragPos
+    ? { left: dragPos.x - 26, top: dragPos.y - 26, alignItems: 'flex-end' }
+    : ({
+        'bottom-right': { right: 16, bottom: 16, alignItems: 'flex-end' },
+        'bottom-left':  { left: 16, bottom: 16, alignItems: 'flex-start' },
+        'top-right':    { right: 16, top: 16, alignItems: 'flex-end' },
+        'top-left':     { left: 16, top: 16, alignItems: 'flex-start' },
+      }[corner] || { right: 16, bottom: 16, alignItems: 'flex-end' });
+
+  const shortcutsPosition = (() => {
+    const isRight = corner.includes('right');
+    const isBottom = corner.includes('bottom');
+    const pos = {};
+    if (isRight) pos.right = 58; else pos.left = 58;
+    if (isBottom) pos.bottom = 62; else pos.top = 62;
+    return pos;
+  })();
+
+  const handleBtnPointerDown = (e) => {
+    const t = e.touches ? e.touches[0] : e;
+    dragRef.current = { active: true, startX: t.clientX, startY: t.clientY, moved: false };
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragRef.current.active) return;
+      const t = e.touches ? e.touches[0] : e;
+      const dx = Math.abs(t.clientX - dragRef.current.startX);
+      const dy = Math.abs(t.clientY - dragRef.current.startY);
+      if (dx > 6 || dy > 6) {
+        dragRef.current.moved = true;
+        setDragPos({ x: t.clientX, y: t.clientY });
+        // close menus during drag
+        setShowLauncherMenu(false);
+        setShowShortcuts(false);
+      }
+    };
+    const onEnd = (e) => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      if (!dragRef.current.moved) { setDragPos(null); return; }
+      const t = e.changedTouches ? e.changedTouches[0] : e;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const isRight = t.clientX > vw / 2;
+      const isBottom = t.clientY > vh / 2;
+      const newCorner = `${isBottom ? 'bottom' : 'top'}-${isRight ? 'right' : 'left'}`;
+      setDragPos(null);
+      setCorner(newCorner);
+      try { localStorage.setItem(STORAGE_KEY, newCorner); } catch {}
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, []);
+
+  const rutasSinChat = ['/', '/login', '/portal'];
   const mostrarChat = Boolean(user?.uid) && !rutasSinChat.includes(location.pathname);
 
   useEffect(() => {
@@ -96,6 +231,8 @@ const GlobalChatLauncher = () => {
     { id: 'enfermeria.triage', label: 'Triage', path: '/enfermeria/triage', group: 'Enfermeria', permission: 'enfermeria.triage', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: Syringe },
     { id: 'enfermeria.hoja', label: 'Hoja de enfermería', path: '/enfermeria/hoja-enfermeria', group: 'Enfermeria', permission: 'enfermeria.hoja', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: FileText },
     { id: 'enfermeria.jefatura', label: 'Jefatura', path: '/enfermeria/jefatura', group: 'Enfermeria', permission: 'enfermeria.jefatura', fallbackRoles: ['jefa_enfermeria', 'jefa'], icon: Crown },
+    { id: 'enfermeria.capacitacion', label: 'Capacitación', path: '/enfermeria/capacitacion', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'], icon: BookOpen },
+    { id: 'enfermeria.caducidades', label: 'Caducidades', path: '/enfermeria/caducidades', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'], icon: Package },
     { id: 'shared.agenda', label: 'Agenda', path: '/agenda', group: 'General', permission: 'shared.agenda', fallbackRoles: ['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa'], icon: CalendarDays },
     { id: 'shared.pacientes', label: 'Pacientes', path: '/pacientes', group: 'General', permission: 'shared.pacientes', fallbackRoles: ['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion'], icon: Users },
   ]), []);
@@ -185,12 +322,15 @@ const GlobalChatLauncher = () => {
         initCanalesRef.current = true;
         return;
       }
-      const hayNuevos = snap.docChanges().some((change) => {
+      const nuevos = snap.docChanges().filter((change) => {
         if (change.type !== 'added' && change.type !== 'modified') return false;
         const data = change.doc.data();
         return data?.ultimoRemitenteId && data.ultimoRemitenteId !== user.uid;
-      });
-      if (hayNuevos) setHasUnread(true);
+      }).length;
+      if (nuevos > 0) {
+        setUnreadCount((prev) => prev + nuevos);
+        playNotificationSound();
+      }
     });
 
     const qPrivados = query(
@@ -203,12 +343,15 @@ const GlobalChatLauncher = () => {
         initPrivadosRef.current = true;
         return;
       }
-      const hayNuevos = snap.docChanges().some((change) => {
+      const nuevos = snap.docChanges().filter((change) => {
         if (change.type !== 'added' && change.type !== 'modified') return false;
         const data = change.doc.data();
         return data?.ultimoRemitenteId && data.ultimoRemitenteId !== user.uid;
-      });
-      if (hayNuevos) setHasUnread(true);
+      }).length;
+      if (nuevos > 0) {
+        setUnreadCount((prev) => prev + nuevos);
+        playNotificationSound();
+      }
     });
 
     return () => {
@@ -218,7 +361,7 @@ const GlobalChatLauncher = () => {
   }, [mostrarChat, user?.uid, isChatOpen]);
 
   useEffect(() => {
-    if (isChatOpen) setHasUnread(false);
+    if (isChatOpen) setUnreadCount(0);
   }, [isChatOpen]);
 
   if (!mostrarChat) return null;
@@ -229,20 +372,20 @@ const GlobalChatLauncher = () => {
         ref={launcherRef}
         style={{
           position: 'fixed',
-          right: 16,
-          bottom: 16,
           zIndex: 90,
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'flex-end',
-          gap: 10
+          ...cornerStyle,
+          gap: 10,
+          transition: dragPos ? 'none' : 'all .3s cubic-bezier(.4,0,.2,1)',
+          userSelect: 'none',
         }}
       >
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'flex-end',
+            alignItems: corner.includes('right') ? 'flex-end' : 'flex-start',
             gap: 10,
             pointerEvents: showLauncherMenu ? 'auto' : 'none'
           }}
@@ -277,7 +420,7 @@ const GlobalChatLauncher = () => {
             <button
               type="button"
               onClick={() => {
-                setHasUnread(false);
+                setUnreadCount(0);
                 setShowShortcuts(false);
                 setShowLauncherMenu(false);
                 setIsChatOpen(true);
@@ -287,34 +430,45 @@ const GlobalChatLauncher = () => {
                 width: 46,
                 height: 46,
                 borderRadius: 13,
-                border: '1px solid #d9e2ec',
-                background: '#ffffff',
+                border: unreadCount > 0 ? '1px solid #c4b5fd' : '1px solid #d9e2ec',
+                background: unreadCount > 0 ? 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)' : '#ffffff',
                 color: '#7c3aed',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                boxShadow: '0 8px 16px rgba(15,23,42,.12)',
+                boxShadow: unreadCount > 0 ? '0 8px 20px rgba(124,58,237,.18)' : '0 8px 16px rgba(15,23,42,.12)',
                 cursor: 'pointer',
                 position: 'relative',
                 transform: showLauncherMenu ? 'translateY(0) scale(1)' : 'translateY(12px) scale(.92)',
                 opacity: showLauncherMenu ? 1 : 0,
-                transition: 'all .22s ease'
+                transition: 'all .22s ease',
+                animation: unreadCount > 0 ? 'pulse-msg 2s infinite' : 'none'
               }}
             >
               <MessageCircle size={19} />
-              {hasUnread && (
+              {unreadCount > 0 && (
                 <span
                   style={{
                     position: 'absolute',
-                    top: 7,
-                    right: 7,
-                    width: 9,
-                    height: 9,
+                    top: -4,
+                    right: -4,
+                    minWidth: 18,
+                    height: 18,
                     borderRadius: '999px',
                     background: '#ef4444',
-                    border: '2px solid #ffffff'
+                    border: '2px solid #ffffff',
+                    color: '#ffffff',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0 4px',
+                    lineHeight: 1
                   }}
-                />
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
               )}
             </button>
           )}
@@ -324,8 +478,7 @@ const GlobalChatLauncher = () => {
           <div
             style={{
               position: 'absolute',
-              right: 58,
-              bottom: 62,
+              ...shortcutsPosition,
               width: 280,
               maxHeight: 480,
               overflowY: 'auto',
@@ -422,14 +575,17 @@ const GlobalChatLauncher = () => {
 
         <button
           type="button"
+          onMouseDown={handleBtnPointerDown}
+          onTouchStart={handleBtnPointerDown}
           onClick={() => {
+            if (dragRef.current.moved) { dragRef.current.moved = false; return; }
             setShowLauncherMenu((prev) => {
               const next = !prev;
               if (!next) setShowShortcuts(false);
               return next;
             });
           }}
-          title="Centro rapido"
+          title="Centro rapido · Arrastra para mover"
           style={{
             width: 52,
             height: 52,
@@ -440,12 +596,40 @@ const GlobalChatLauncher = () => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 10px 20px rgba(15,23,42,.14)',
-            cursor: 'pointer',
-            transition: 'all .2s ease'
+            boxShadow: dragPos ? '0 14px 32px rgba(15,23,42,.25)' : '0 10px 20px rgba(15,23,42,.14)',
+            cursor: dragPos ? 'grabbing' : 'grab',
+            transition: dragPos ? 'none' : 'all .2s ease',
+            touchAction: 'none',
+            transform: dragPos ? 'scale(1.1)' : 'scale(1)',
+            opacity: dragPos ? 0.85 : 1,
           }}
         >
           {showLauncherMenu ? <X size={20} /> : <Compass size={21} />}
+          {!showLauncherMenu && unreadCount > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -5,
+                right: -5,
+                minWidth: 20,
+                height: 20,
+                borderRadius: '999px',
+                background: '#ef4444',
+                border: '2px solid #ffffff',
+                color: '#ffffff',
+                fontSize: 11,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '0 5px',
+                lineHeight: 1,
+                animation: 'bounce-badge .4s ease'
+              }}
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </button>
       </div>
       <ChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
@@ -454,17 +638,24 @@ const GlobalChatLauncher = () => {
 };
 
 function App() {
+  const GuestRoute = ({ children }) => {
+    const { user, loading } = useAuth();
+    if (loading) return null;
+    if (user) return <Navigate to="/portal" replace />;
+    return children;
+  };
+
   const RequireAuth = ({ children }) => {
     const { user, loading } = useAuth();
     if (loading) return null;
-    if (!user) return <Navigate to="/" replace />;
+    if (!user) return <Navigate to="/login" replace />;
     return children;
   };
 
   const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
     const { user, loading } = useAuth();
     if (loading) return null;
-    if (!user) return <Navigate to="/" replace />;
+    if (!user) return <Navigate to="/login" replace />;
     if (!hasPermission(user, permissionId, fallbackRoles)) return <Navigate to="/portal" replace />;
     return children;
   };
@@ -474,7 +665,8 @@ function App() {
       <GlobalChatLauncher />
       <Routes>
         <Route path="/" element={<Login />} />
-        <Route path="/portal" element={<RequireAuth><PortalAcceso /></RequireAuth>} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/portal" element={<Navigate to="/" replace />} />
 
         {/* --- RUTAS ADMINISTRADOR (layout compartido) --- */}
         <Route path="/admin" element={<RequireAuth><AdminLayout /></RequireAuth>}>
@@ -515,8 +707,14 @@ function App() {
         <Route path="/enfermeria/dashboard" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AgendaEnfermeria /></PermissionRoute>} /> 
         <Route path="/enfermeria/jefatura" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><DashboardJefaEnfermeria /></PermissionRoute>} /> 
         <Route path="/enfermeria/registros" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><RegistrosEnfermeriaView /></PermissionRoute>} />
+        <Route path="/enfermeria/carro-rojo" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><BitacoraCarroRojo /></PermissionRoute>} />
         <Route path="/enfermeria/triage" element={<PermissionRoute permissionId="enfermeria.triage" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><Triage /></PermissionRoute>} />
+        <Route path="/enfermeria/antecedentes" element={<PermissionRoute permissionId="enfermeria.triage" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AntecedentesRapidos /></PermissionRoute>} />
         <Route path="/enfermeria/hoja-enfermeria" element={<PermissionRoute permissionId="enfermeria.hoja" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><HojaEnfermeria /></PermissionRoute>} />
+        <Route path="/enfermeria/capacitacion" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CapacitacionEnfermeria /></PermissionRoute>} />
+        <Route path="/enfermeria/caducidades" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CaducidadesEnfermeria /></PermissionRoute>} />
+        <Route path="/enfermeria/expediente" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><ExpedienteClinico /></PermissionRoute>} />
+        <Route path="/enfermeria/orden-servicio" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo']}><OrdenServicioEnfermeria /></PermissionRoute>} />
 
         {/* --- RUTAS COMPARTIDAS --- */}
         <Route path="/agenda" element={<PermissionRoute permissionId="shared.agenda" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />

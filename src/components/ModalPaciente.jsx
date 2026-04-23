@@ -1,14 +1,49 @@
 // src/components/ModalPaciente.jsx
-import React, { useState, useEffect } from 'react';
-import { X, Save, User, MapPin, Activity, Layers, Calendar, Phone, Mail, FileText, Briefcase, Shield } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Save, User, MapPin, Activity, Layers, Calendar, Phone, Mail, FileText, Briefcase, Shield, AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import AvatarPaciente from './AvatarPaciente';
 import { db } from '../config/firebase';
-import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, getDocs, limit, query, where } from 'firebase/firestore';
 import { buildPatientHumanId } from '../utils/patientId';
+
+const normalizeText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
+const normalizeUpper = (value = '') => normalizeText(value).toUpperCase();
+const normalizeDigits = (value = '') => String(value || '').replace(/\D/g, '');
+const normalizeDateIso = (value = '') => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const parsed = new Date(`${raw}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return '';
+    const y = String(parsed.getFullYear());
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
+
+const buildPatientName = (row = {}) => {
+    const fallback = `${row.nombre || ''} ${row.apellidoPaterno || ''} ${row.apellidoMaterno || ''}`;
+    return normalizeText(row.nombreCompleto || fallback);
+};
+
+const summarizeMatchNames = (rows = []) => rows
+    .slice(0, 2)
+    .map((row) => buildPatientName(row))
+    .filter(Boolean)
+    .join(', ');
+
+const buildDuplicateFingerprint = (...groups) => groups
+    .flat()
+    .map((row) => String(row?.id || '').trim())
+    .filter(Boolean)
+    .sort()
+    .join('|');
 
 const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
   const [activeTab, setActiveTab] = useState('ficha'); // 'ficha' | 'interes'
   const [loading, setLoading] = useState(false);
+    const [toast, setToast] = useState({ show: false, msg: '', type: 'error' });
+    const [duplicateBypass, setDuplicateBypass] = useState({ fingerprint: '', expiresAt: 0 });
+    const toastTimerRef = useRef(null);
 
   // Estado inicial
   const initialState = {
@@ -38,19 +73,183 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
     }
   }, [pacienteAEditar]);
 
+    useEffect(() => () => {
+        if (toastTimerRef.current) {
+            clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        setDuplicateBypass({ fingerprint: '', expiresAt: 0 });
+    }, [formData.nombre, formData.apellidoPaterno, formData.apellidoMaterno, formData.fechaNacimiento, formData.telefonoMovil, formData.curp]);
+
+    const showToast = (msg, type = 'error', duration = 5000) => {
+        if (toastTimerRef.current) {
+            clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
+        }
+
+        setToast({ show: true, msg, type });
+
+        toastTimerRef.current = setTimeout(() => {
+            setToast({ show: false, msg: '', type: 'error' });
+            toastTimerRef.current = null;
+        }, duration);
+    };
+
+    const buscarPosiblesDuplicados = async ({ nombreCompleto, fechaNacimiento, curp, idPaciente, telefonoMovil, excludeDocId = '' }) => {
+        const pacientesRef = collection(db, 'pacientes');
+        const rowsById = new Map();
+
+        const pushSnapRows = (snap) => {
+            snap.docs.forEach((docSnap) => {
+                if (docSnap.id === excludeDocId) return;
+                rowsById.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+            });
+        };
+
+        const normalizedCurp = normalizeUpper(curp);
+        const normalizedNombre = normalizeUpper(nombreCompleto);
+        const normalizedFecha = normalizeDateIso(fechaNacimiento);
+        const normalizedIdPaciente = normalizeUpper(idPaciente);
+        const normalizedTelefono = normalizeDigits(telefonoMovil);
+
+        if (normalizedCurp) {
+            const curpSnap = await getDocs(query(pacientesRef, where('curp', '==', normalizedCurp), limit(8)));
+            pushSnapRows(curpSnap);
+        }
+
+        if (normalizeText(nombreCompleto)) {
+            const nombreSnap = await getDocs(query(pacientesRef, where('nombreCompleto', '==', normalizeText(nombreCompleto)), limit(15)));
+            pushSnapRows(nombreSnap);
+        }
+
+        if (normalizedIdPaciente) {
+            const idSnap = await getDocs(query(pacientesRef, where('idPaciente', '==', normalizedIdPaciente), limit(8)));
+            pushSnapRows(idSnap);
+
+            const idMigradoSnap = await getDocs(query(pacientesRef, where('idPacienteMigrado', '==', normalizedIdPaciente), limit(8)));
+            pushSnapRows(idMigradoSnap);
+        }
+
+        const rows = Array.from(rowsById.values());
+
+        const curpMatches = rows.filter((row) => {
+            const rowCurp = normalizeUpper(row.curp);
+            return normalizedCurp && rowCurp && rowCurp === normalizedCurp;
+        });
+
+        const nameBirthMatches = rows.filter((row) => {
+            const rowNombre = normalizeUpper(buildPatientName(row));
+            const rowFecha = normalizeDateIso(row.fechaNacimiento);
+            return normalizedNombre && normalizedFecha && rowNombre === normalizedNombre && rowFecha === normalizedFecha;
+        });
+
+        const idMatches = rows.filter((row) => {
+            const rowId = normalizeUpper(row.idPaciente || row.idPacienteMigrado || '');
+            return normalizedIdPaciente && rowId === normalizedIdPaciente;
+        });
+
+        const phoneNameMatches = rows.filter((row) => {
+            const rowNombre = normalizeUpper(buildPatientName(row));
+            const rowTelefono = normalizeDigits(row.telefonoMovil || row.telefono || '');
+            return normalizedNombre && normalizedTelefono && rowNombre === normalizedNombre && rowTelefono === normalizedTelefono;
+        });
+
+        return {
+            curpMatches,
+            nameBirthMatches,
+            idMatches,
+            phoneNameMatches
+        };
+    };
+
   const handleGuardar = async (e) => {
     e.preventDefault();
-    if (!formData.nombre || !formData.apellidoPaterno) return alert("Nombre y Apellido son obligatorios");
+    if (!formData.nombre || !formData.apellidoPaterno) {
+        showToast('Nombre y apellido paterno son obligatorios.', 'error');
+        return;
+    }
+        if (!pacienteAEditar && !normalizeDateIso(formData.fechaNacimiento)) {
+            showToast('La fecha de nacimiento es obligatoria para crear un paciente nuevo.', 'error');
+            return;
+        }
     
     setLoading(true);
     try {
       const nombreCompleto = `${formData.nombre} ${formData.apellidoPaterno} ${formData.apellidoMaterno || ''}`.trim();
             const fechaReferencia = formData.fechaNacimiento || pacienteAEditar?.fechaNacimiento || null;
             const idPaciente = buildPatientHumanId(nombreCompleto, fechaReferencia);
+            const curpNormalizada = normalizeUpper(formData.curp);
+
+            const duplicates = await buscarPosiblesDuplicados({
+                nombreCompleto,
+                fechaNacimiento: fechaReferencia,
+                curp: curpNormalizada,
+                idPaciente,
+                telefonoMovil: formData.telefonoMovil,
+                excludeDocId: pacienteAEditar?.id || ''
+            });
+
+            if (!pacienteAEditar && duplicates.curpMatches.length > 0) {
+                const nombres = summarizeMatchNames(duplicates.curpMatches);
+                showToast(
+                    `CURP duplicada detectada${nombres ? ` con: ${nombres}` : ''}. Abre el expediente existente para actualizarlo.`,
+                    'error',
+                    7000
+                );
+                return;
+            }
+
+            if (!pacienteAEditar) {
+                const softMatchRows = [
+                    ...duplicates.nameBirthMatches,
+                    ...duplicates.idMatches,
+                    ...duplicates.phoneNameMatches
+                ];
+
+                if (softMatchRows.length > 0) {
+                    const fingerprint = buildDuplicateFingerprint(
+                        duplicates.nameBirthMatches,
+                        duplicates.idMatches,
+                        duplicates.phoneNameMatches
+                    );
+
+                    const now = Date.now();
+                    const bypassActivo =
+                        duplicateBypass.fingerprint === fingerprint &&
+                        duplicateBypass.expiresAt > now;
+
+                    if (!bypassActivo) {
+                        const razones = [];
+                        if (duplicates.nameBirthMatches.length > 0) razones.push('mismo nombre y fecha');
+                        if (duplicates.idMatches.length > 0) razones.push('idPaciente repetido');
+                        if (duplicates.phoneNameMatches.length > 0) razones.push('mismo nombre y teléfono');
+
+                        const nombres = summarizeMatchNames(softMatchRows);
+
+                        setDuplicateBypass({
+                            fingerprint,
+                            expiresAt: now + 12000
+                        });
+
+                        showToast(
+                            `Posible duplicado (${razones.join(', ')}). ${nombres ? `Coincide con: ${nombres}. ` : ''}Presiona Guardar otra vez en 12s solo si confirmas homónimo.`,
+                            'warning',
+                            9000
+                        );
+                        return;
+                    }
+                }
+            }
+
       const datosFinales = { 
-        ...formData, 
+                ...formData,
         nombreCompleto,
                 idPaciente,
+                curp: curpNormalizada,
+                fechaNacimiento: normalizeDateIso(formData.fechaNacimiento) || '',
         fechaActualizacion: new Date().toISOString()
       };
 
@@ -68,6 +267,8 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
         docId = docRef.id;
       }
 
+            setDuplicateBypass({ fingerprint: '', expiresAt: 0 });
+
       // Notificamos al padre (Agenda o Pacientes)
       if (onPacienteCreado) {
         onPacienteCreado({ id: docId, ...datosFinales });
@@ -77,13 +278,34 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
 
     } catch (error) {
       console.error(error);
-      alert("Error al guardar: " + error.message);
+            showToast(`Error al guardar: ${error.message}`, 'error', 6500);
+        } finally {
+            setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            {toast.show && (
+                <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[180] flex items-center gap-3 px-5 py-3 rounded-xl border shadow-lg backdrop-blur-sm max-w-[92vw] ${
+                    toast.type === 'error'
+                        ? 'bg-rose-50/95 border-rose-200 text-rose-700'
+                        : toast.type === 'warning'
+                            ? 'bg-amber-50/95 border-amber-200 text-amber-800'
+                            : 'bg-emerald-50/95 border-emerald-200 text-emerald-700'
+                }`}>
+                    {toast.type === 'error' ? <AlertCircle size={20} /> : toast.type === 'warning' ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />}
+                    <span className="text-sm font-semibold leading-snug">{toast.msg}</span>
+                    <button
+                        onClick={() => setToast({ show: false, msg: '', type: 'error' })}
+                        className="ml-1 p-1 rounded-md hover:bg-black/5 transition-colors"
+                        aria-label="Cerrar notificación"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
        {/* Backdrop */}
        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
        
@@ -97,7 +319,7 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                         {pacienteAEditar ? 'Editar Expediente' : 'Nuevo Paciente'}
                     </h2>
                     <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">
-                        {pacienteAEditar ? `ID: ${pacienteAEditar.id.slice(0,8)}...` : 'Ingresar datos del paciente'}
+                        {pacienteAEditar ? `ID: ${pacienteAEditar.idPaciente || pacienteAEditar.idPacienteMigrado || pacienteAEditar.id.slice(0,8) + '...'}` : 'Ingresar datos del paciente'}
                     </p>
                 </div>
                 <button onClick={onClose} className="p-2 hover:bg-red-50 rounded-full text-slate-400 hover:text-red-500 transition-colors">
@@ -145,7 +367,25 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                             <div><label className="label-style">Apellido Materno</label><input type="text" className="input-style" value={formData.apellidoMaterno} onChange={e => setFormData({...formData, apellidoMaterno: e.target.value})} /></div>
 
                             <div className="grid grid-cols-2 gap-3">
-                                <div><label className="label-style">Nacimiento</label><input type="date" className="input-style text-slate-500" value={formData.fechaNacimiento} onChange={e => setFormData({...formData, fechaNacimiento: e.target.value})} /></div>
+                                <div>
+                                    <label className="label-style">Nacimiento {!pacienteAEditar ? '*' : ''}</label>
+                                    <input type="date" required={!pacienteAEditar} className="input-style text-slate-500" value={formData.fechaNacimiento} onChange={e => setFormData({...formData, fechaNacimiento: e.target.value})} />
+                                    {formData.fechaNacimiento && (() => {
+                                        const d = new Date(formData.fechaNacimiento + 'T00:00:00');
+                                        if (isNaN(d.getTime())) return null;
+                                        const hoy = new Date();
+                                        let years = hoy.getFullYear() - d.getFullYear();
+                                        let months = hoy.getMonth() - d.getMonth();
+                                        if (hoy.getDate() < d.getDate()) months -= 1;
+                                        if (months < 0) { years -= 1; months += 12; }
+                                        if (years < 0) return null;
+                                        return (
+                                            <p className="text-[11px] font-semibold text-blue-600 mt-1">
+                                                {years > 0 ? `${years} año${years !== 1 ? 's' : ''}` : ''}{years > 0 && months > 0 ? ', ' : ''}{months > 0 ? `${months} mes${months !== 1 ? 'es' : ''}` : ''}{years === 0 && months === 0 ? 'Recién nacido' : ''}
+                                            </p>
+                                        );
+                                    })()}
+                                </div>
                                 <div>
                                     <label className="label-style">Sexo</label>
                                     <select className="input-style" value={formData.sexo} onChange={e => setFormData({...formData, sexo: e.target.value})}>
@@ -203,7 +443,7 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                                 <div><label className="label-style">Escolaridad</label><select className="input-style" value={formData.escolaridad} onChange={e => setFormData({...formData, escolaridad: e.target.value})}><option value="">Seleccione</option><option>Primaria</option><option>Secundaria</option><option>Bachillerato</option><option>Licenciatura</option><option>Posgrado</option></select></div>
                                 <div><label className="label-style">Lengua Indígena</label><input type="text" className="input-style" value={formData.lengua} onChange={e => setFormData({...formData, lengua: e.target.value})} /></div>
-                                <div className="col-span-2"><label className="label-style">CURP</label><input type="text" className="input-style font-mono uppercase tracking-widest" maxLength="18" value={formData.curp} onChange={e => setFormData({...formData, curp: e.target.value})} /></div>
+                                <div className="col-span-2"><label className="label-style">CURP</label><input type="text" className="input-style font-mono uppercase tracking-widest" maxLength="18" value={formData.curp} onChange={e => setFormData({...formData, curp: normalizeUpper(e.target.value)})} /></div>
                              </div>
                         </div>
 

@@ -14,8 +14,9 @@ import {
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import DocumentoHistoriaPDF from './pdf/DocumentoHistoriaPDF';
+import { uploadDocumentoPDF } from '../services/documentStorageService';
 
-const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doctor, expedienteActual }) => {
+const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doctor, expedienteActual, pacienteId, onDocumentGenerated }) => {
   const [activeTab, setActiveTab] = useState('antecedentes');
   const [busqueda, setBusqueda] = useState('');
   const [activePanel, setActivePanel] = useState('historia');
@@ -143,6 +144,33 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+      // Subir al expediente del paciente
+      let archivoUrl = '';
+      let archivoPath = '';
+      if (pacienteId) {
+        try {
+          const result = await uploadDocumentoPDF({
+            pacienteId,
+            pdfBlob: blob,
+            nombre: 'Historia Clinica',
+            tipo: 'documento'
+          });
+          archivoUrl = result.url;
+          archivoPath = result.storagePath;
+        } catch (uploadErr) {
+          console.warn('No se pudo subir Historia Clinica al expediente:', uploadErr);
+        }
+      }
+
+      onDocumentGenerated?.({
+        tipo: 'documento',
+        nombre: 'Historia Clinica',
+        formato: 'pdf_determinista',
+        origen: 'historia_clinica',
+        archivoUrl,
+        archivoPath
+      });
     } catch (error) {
       console.error('Error descargando PDF', error);
     }

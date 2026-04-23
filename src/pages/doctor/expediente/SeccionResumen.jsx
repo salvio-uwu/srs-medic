@@ -4,7 +4,7 @@ import { httpsCallable } from 'firebase/functions';
 import { 
   History, Activity, Clock, FileText, Calendar, 
   Stethoscope, ChevronRight, X, Pill, TrendingUp, CheckCircle,
-  Sparkles, Brain 
+    Sparkles, Download, Printer
 } from 'lucide-react';
 import { db } from '../../../config/firebase'; 
 import { functions } from '../../../config/firebase';
@@ -22,22 +22,28 @@ import {
   ResponsiveContainer, ScatterChart, Scatter, ReferenceLine 
 } from 'recharts';
 
-const legacyHtmlModules = import.meta.glob('../../../../historialmedico/*.html', {
-    query: '?url',
-    import: 'default'
-});
+// historialmedico/ fue eliminado — glob deshabilitado
+const legacyHtmlModules = {};
 const AUDIT_COLLECTION = 'auditoria_historial_migrado';
 
-const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
+const SeccionResumen = ({
+    expediente,
+    updateCampo,
+    pacienteId,
+    historialRefreshKey = 0,
+    eventosDocumentalesSesion = [],
+    onNextStep,
+    onImprimirReceta,
+    onCargarConsultaHistorica
+}) => {
   // --- ESTADOS ---
   const [activeResumenTab, setActiveResumenTab] = useState('consulta_previa');
   const [historial, setHistorial] = useState([]);
-  const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
   const [consultaSeleccionada, setConsultaSeleccionada] = useState(null);
 
   // --- ESTADOS IA ---
   const [analizando, setAnalizando] = useState(false);
-  const [resumenIA, setResumenIA] = useState(null);
   const [tendenciasIA, setTendenciasIA] = useState(null);
     const [homologando, setHomologando] = useState(false);
     const [homologationRows, setHomologationRows] = useState([]);
@@ -171,9 +177,18 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
 
   // --- CARGA DE DATOS ---
     useEffect(() => {
+    let cancelled = false;
+
     const fetchHistorial = async () => {
-        if (!pacienteId) return;
-        setLoading(true);
+        if (!pacienteId) {
+            if (!cancelled) {
+                setHistorial([]);
+                setLoading(false);
+            }
+            return;
+        }
+
+        if (!cancelled) setLoading(true);
         try {
             const q = query(
                 collection(db, "historial_clinico"),
@@ -183,11 +198,6 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
             const snap = await getDocs(q);
             
             const docsList = [];
-            const dataPeso = [];
-            const dataTalla = [];
-            const dataIMC = [];
-            const dataPesoTalla = [];
-            const dataTA = [];
 
             snap.docs.forEach(d => {
                 const data = d.data();
@@ -201,46 +211,76 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                     fechaFormato: fechaObj.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }),
                     horaFormato: fechaObj.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
                 });
-
-                const vitales = data.consulta?.exploracion?.signos || {};
-                const antropo = data.consulta?.exploracion?.antropometria || {};
-                
-                if (expediente?.px_info?.fecha_nacimiento) {
-                    const edadAlMomento = calcularEdadEnFecha(expediente.px_info.fecha_nacimiento, fechaObj);
-                    const fechaCorta = fechaObj.toLocaleDateString('es-MX');
-
-                    if (antropo.peso) dataPeso.push({ x: edadAlMomento, y: parseFloat(antropo.peso), fecha: fechaCorta });
-                    if (antropo.talla) dataTalla.push({ x: edadAlMomento, y: parseFloat(antropo.talla), fecha: fechaCorta });
-                    if (antropo.imc) dataIMC.push({ x: edadAlMomento, y: parseFloat(antropo.imc), fecha: fechaCorta });
-                    if (antropo.peso && antropo.talla) dataPesoTalla.push({ x: parseFloat(antropo.talla), y: parseFloat(antropo.peso), fecha: fechaCorta });
-                    
-                    if (vitales.ta && vitales.ta.includes('/')) {
-                        const [sis, dias] = vitales.ta.split('/');
-                        dataTA.push({ fecha: fechaCorta, sistolica: parseInt(sis), diastolica: parseInt(dias) });
-                    }
-                }
             });
 
-            setHistorial([...docsList].reverse());
-
-            const legacyGraph = buildLegacyGraphData(homologationRows, expediente?.px_info?.fecha_nacimiento);
-            
-            setDatosGraficas({
-                pesoEdad: [...dataPeso, ...legacyGraph.dataPeso],
-                tallaEdad: [...dataTalla, ...legacyGraph.dataTalla],
-                imcEdad: [...dataIMC, ...legacyGraph.dataIMC],
-                pesoTalla: [...dataPesoTalla, ...legacyGraph.dataPesoTalla],
-                tensionArterial: [...dataTA, ...legacyGraph.dataTA]
-            });
+            if (!cancelled) {
+                setHistorial([...docsList].reverse());
+            }
 
         } catch (error) {
             console.error("Error cargando historial:", error);
+            if (!cancelled) setHistorial([]);
         }
-        setLoading(false);
+
+        if (!cancelled) setLoading(false);
     };
 
     fetchHistorial();
-    }, [pacienteId, expediente?.px_info?.fecha_nacimiento, homologationRows]);
+
+    return () => {
+        cancelled = true;
+    };
+    }, [pacienteId, historialRefreshKey]);
+
+    useEffect(() => {
+        const dataPeso = [];
+        const dataTalla = [];
+        const dataIMC = [];
+        const dataPesoTalla = [];
+        const dataTA = [];
+
+        const fechaNacimiento = expediente?.px_info?.fecha_nacimiento;
+
+        if (fechaNacimiento) {
+            historial.forEach((item) => {
+                const fechaObj = item?.fecha?.toDate ? item.fecha.toDate() : new Date(item.fechaOrden || Date.now());
+                if (Number.isNaN(fechaObj.getTime())) return;
+
+                const vitales = item.consulta?.exploracion?.signos || {};
+                const antropo = item.consulta?.exploracion?.antropometria || {};
+                const edadAlMomento = calcularEdadEnFecha(fechaNacimiento, fechaObj);
+                const fechaCorta = fechaObj.toLocaleDateString('es-MX');
+
+                const peso = Number.parseFloat(antropo.peso);
+                const talla = Number.parseFloat(antropo.talla);
+                const imc = Number.parseFloat(antropo.imc);
+
+                if (Number.isFinite(peso)) dataPeso.push({ x: edadAlMomento, y: peso, fecha: fechaCorta });
+                if (Number.isFinite(talla)) dataTalla.push({ x: edadAlMomento, y: talla, fecha: fechaCorta });
+                if (Number.isFinite(imc)) dataIMC.push({ x: edadAlMomento, y: imc, fecha: fechaCorta });
+                if (Number.isFinite(peso) && Number.isFinite(talla)) dataPesoTalla.push({ x: talla, y: peso, fecha: fechaCorta });
+
+                if (vitales.ta && vitales.ta.includes('/')) {
+                    const [sis, dias] = vitales.ta.split('/');
+                    const sistolica = Number.parseInt(sis, 10);
+                    const diastolica = Number.parseInt(dias, 10);
+                    if (Number.isFinite(sistolica) && Number.isFinite(diastolica)) {
+                        dataTA.push({ fecha: fechaCorta, sistolica, diastolica });
+                    }
+                }
+            });
+        }
+
+        const legacyGraph = buildLegacyGraphData(homologationRows, fechaNacimiento);
+
+        setDatosGraficas({
+            pesoEdad: [...dataPeso, ...legacyGraph.dataPeso],
+            tallaEdad: [...dataTalla, ...legacyGraph.dataTalla],
+            imcEdad: [...dataIMC, ...legacyGraph.dataIMC],
+            pesoTalla: [...dataPesoTalla, ...legacyGraph.dataPesoTalla],
+            tensionArterial: [...dataTA, ...legacyGraph.dataTA]
+        });
+    }, [historial, homologationRows, expediente?.px_info?.fecha_nacimiento]);
 
     useEffect(() => {
         let cancelled = false;
@@ -284,17 +324,63 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     }, [pacienteId]);
 
     const buildUnifiedTimeline = () => {
-        const platformRows = historial.map((item) => ({
-            id: `platform_${item.id}`,
-            sourceId: item.id,
-            kind: 'platform',
-            fechaOrden: Number(item.fechaOrden || 0),
-            fechaFormato: item.fechaFormato,
-            origen: 'plataforma',
-            titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
-            descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
-            confianza: 'alta'
-        }));
+        const platformRows = historial.flatMap((item) => {
+            const fechaOrden = Number(item.fechaOrden || 0);
+            const baseRow = {
+                id: `platform_${item.id}`,
+                sourceId: item.id,
+                kind: 'platform',
+                fechaOrden,
+                fechaFormato: item.fechaFormato,
+                horaFormato: item.horaFormato,
+                origen: 'plataforma',
+                tipoNota: item.tipoNota || 'Consulta General',
+                titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
+                descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
+                confianza: 'alta'
+            };
+
+            const recetasEventos = Array.isArray(item.recetasGeneradas) ? item.recetasGeneradas : [];
+            const documentosEventos = Array.isArray(item.documentosGenerados) ? item.documentosGenerados : [];
+
+            const recetaRows = recetasEventos.map((receta, idx) => ({
+                id: `platform_receta_${item.id}_${idx}`,
+                sourceId: item.id,
+                kind: 'platform-receta',
+                fechaOrden,
+                fechaFormato: item.fechaFormato,
+                horaFormato: item.horaFormato,
+                origen: 'plataforma',
+                tipoNota: 'Receta',
+                titulo: receta?.nombre || 'Receta generada',
+                descripcion: [
+                    receta?.totalMedicamentos ? `${receta.totalMedicamentos} medicamentos` : '',
+                    receta?.formato ? `Formato: ${receta.formato}` : ''
+                ].filter(Boolean).join(' • ') || 'Receta guardada en historial clínico',
+                confianza: 'alta',
+                archivoUrl: receta?.archivoUrl || ''
+            }));
+
+            const documentoRows = documentosEventos.map((docEvent, idx) => ({
+                id: `platform_doc_${item.id}_${idx}`,
+                sourceId: item.id,
+                kind: 'platform-document',
+                fechaOrden,
+                fechaFormato: item.fechaFormato,
+                horaFormato: item.horaFormato,
+                origen: 'plataforma',
+                tipoNota: 'Documento',
+                titulo: docEvent?.nombre || 'Documento generado',
+                descripcion: [
+                    docEvent?.formato ? `Formato: ${docEvent.formato}` : '',
+                    docEvent?.origen ? `Origen: ${docEvent.origen}` : ''
+                ].filter(Boolean).join(' • ') || 'Documento guardado en historial clínico',
+                confianza: 'alta',
+                archivoUrl: docEvent?.archivoUrl || ''
+            }));
+
+            return [baseRow, ...recetaRows, ...documentoRows];
+        });
 
                 const legacyRows = homologationRows.flatMap((row) => {
             const normalized = row.normalized || {};
@@ -330,7 +416,28 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                         });
         });
 
-        return [...platformRows, ...legacyRows].sort((a, b) => b.fechaOrden - a.fechaOrden);
+        // --- Documentos de la sesión actual (aún no guardados en Firestore) ---
+        const sesionRows = eventosDocumentalesSesion.map((evt, idx) => {
+            const generadoDate = evt.generadoAt ? new Date(evt.generadoAt) : new Date();
+            return {
+                id: `sesion_${evt.id || idx}`,
+                kind: evt.tipo === 'receta' ? 'platform-receta' : 'platform-document',
+                fechaOrden: generadoDate.getTime(),
+                fechaFormato: generadoDate.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }),
+                horaFormato: generadoDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+                origen: 'sesion_actual',
+                tipoNota: evt.tipo === 'receta' ? 'Receta' : 'Documento',
+                titulo: evt.nombre || (evt.tipo === 'receta' ? 'Receta generada' : 'Documento generado'),
+                descripcion: [
+                    evt.formato ? `Formato: ${evt.formato}` : '',
+                    'Consulta en curso'
+                ].filter(Boolean).join(' • '),
+                confianza: 'alta',
+                archivoUrl: evt.archivoUrl || ''
+            };
+        });
+
+        return [...sesionRows, ...platformRows, ...legacyRows].sort((a, b) => b.fechaOrden - a.fechaOrden);
     };
 
     const ejecutarHomologacionIA = async () => {
@@ -459,44 +566,6 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
   // FUNCIONES INTELIGENCIA ARTIFICIAL (CORREGIDAS)
   // ==========================================
 
-  // 1. Resumen Evolutivo
-  const generarResumenClinico = async () => {
-    if (historial.length === 0) return alert("No hay historial suficiente.");
-    setAnalizando(true);
-    try {
-      const contexto = historial.slice(0, 10).map(c => ({
-        fecha: c.fechaFormato,
-        motivo: c.consulta?.padecimiento,
-        diagnostico: c.consulta?.diagnostico?.enfermedad_actual,
-        tratamiento: c.consulta?.diagnostico?.tratamiento_lista?.map(t => t.nombre).join(', ')
-      }));
-
-      // PROMPT AJUSTADO: Cero formato chat, tono clínico puro.
-      const prompt = `
-        Actúa como un médico especialista redactando una nota de evolución clínica formal.
-        
-        Datos del historial cronológico:
-        ${JSON.stringify(contexto)}
-
-        INSTRUCCIONES ESTRICTAS:
-        1. NO uses saludos, ni introducciones, ni despedidas.
-        2. NO uses asteriscos (**), ni negritas, ni formato Markdown. Solo texto plano.
-        3. NO uses etiquetas como "Resumen:" o "Conclusión:".
-        4. Redacta en un solo párrafo cohesivo o dos breves.
-        5. Usa lenguaje médico técnico, impersonal y directo.
-        
-        Objetivo de la nota: Sintetizar la evolución del paciente, adherencia terapéutica y recurrencia de patologías.
-      `;
-
-      const askGemini = httpsCallable(functions, 'askGemini');
-      const response = await askGemini({ prompt });
-      const rawText = response?.data?.result || '';
-      setResumenIA(limpiarTextoIA(rawText));
-
-    } catch (e) { console.error(e); alert("Error al conectar con IA"); }
-    setAnalizando(false);
-  };
-
   // 2. Análisis de Tendencias
   const analizarTendencias = async () => {
     if (datosGraficas.pesoEdad.length < 2) return alert("Se necesitan más datos para analizar tendencias.");
@@ -539,77 +608,44 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
     <div className="flex-1 flex flex-col h-full w-full overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 relative">
       
       {/* TABS SUPERIORES */}
-            <div className="flex border-b border-slate-200 bg-white px-6 shrink-0 gap-4 overflow-x-auto w-full">
+            <div className="flex border-b border-slate-200 bg-white px-6 shrink-0 gap-4 overflow-x-auto w-full items-center">
                 <button onClick={() => setActiveResumenTab('consulta_previa')} className={`py-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-blue-700'}`}>
             <History size={16} /> LÍNEA DE TIEMPO
         </button>
                 <button onClick={() => setActiveResumenTab('graficas')} className={`py-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeResumenTab === 'graficas' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-blue-700'}`}>
             <TrendingUp size={16} /> GRÁFICAS EVOLUTIVAS
         </button>
+                {onNextStep && (
+                  <button 
+                    onClick={onNextStep}
+                    className="group ml-auto flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-violet-600 to-violet-700 hover:from-violet-700 hover:to-violet-800 text-white rounded-full font-bold text-xs shadow-md shadow-violet-600/25 transition-all active:scale-[0.97] shrink-0"
+                  >
+                    Historial
+                    <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                )}
       </div>
 
       {/* ÁREA DE TRABAJO */}
-      <div className="flex-1 p-6 overflow-hidden bg-slate-50/30 w-full flex flex-col">
+            <div className="flex-1 p-6 overflow-hidden bg-slate-50/30 w-full flex flex-col">
         
         {/* --- VISTA 1: HISTORIAL --- */}
         {activeResumenTab === 'consulta_previa' && (
           <div className="flex h-full w-full gap-6">
             
             <div className="flex-[3] flex flex-col h-full">
-                {/* --- BLOQUE IA (RESUMEN CLÍNICO) --- */}
-                <div className="mb-4 bg-white border border-slate-200 p-5 rounded-2xl flex flex-col gap-3 shadow-sm">
-                    <div className="flex justify-between items-start">
-                        <h5 className="text-[11px] font-semibold text-slate-500 uppercase flex items-center gap-2">
-                            <Brain size={14} className="text-indigo-500"/> Análisis Evolutivo
-                        </h5>
-                        <div className="flex items-center gap-2">
-                            <button title="Generar resumen clínico con IA" onClick={generarResumenClinico} disabled={analizando} className="bg-blue-50 text-blue-700 border border-blue-100 px-4 py-1.5 rounded-lg text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center gap-2">
-                                {analizando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
-                                {analizando ? "Procesando..." : "Generar Nota de Resumen"}
-                            </button>
-                            <button title="Homologar documentos migrados por ID único" onClick={ejecutarHomologacionIA} disabled={homologando} className="bg-white text-slate-700 border border-slate-200 px-4 py-1.5 rounded-lg text-xs font-semibold hover:border-blue-200 hover:text-blue-700 transition-colors flex items-center gap-2">
-                                {homologando ? <Sparkles className="animate-spin" size={12}/> : <Sparkles size={12}/>}
-                                {homologando ? 'Homologando...' : 'Homologar legacy'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {homologationMsg.text && (
-                      <div className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-                        homologationMsg.type === 'ok'
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                          : homologationMsg.type === 'error'
-                            ? 'bg-rose-50 border-rose-200 text-rose-700'
-                            : 'bg-amber-50 border-amber-200 text-amber-700'
-                      }`}>
-                        {homologationMsg.text}
-                      </div>
-                    )}
-                    
-                    {resumenIA ? (
-                        <div className="text-sm text-slate-700 leading-relaxed font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">
-                            {/* Renderizamos texto limpio */}
-                            {resumenIA}
-                        </div>
-                    ) : (
-                        <p className="text-xs text-slate-400 italic pl-1">
-                            Solicita un análisis para ver un resumen clínico profesional de la evolución del paciente.
-                        </p>
-                    )}
-                </div>
-
                 <div className={sectionClass}>
                     {/* ... (Resto del código del timeline se mantiene igual) ... */}
                     <div className="flex items-center justify-between mb-4 shrink-0">
                         <div className="flex items-center gap-3">
                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl"><History size={20}/></div>
                             <div>
-                                <h3 className="font-bold text-slate-800 text-lg leading-none">Historial de Consultas</h3>
-                                <p className="text-xs text-slate-400 mt-1">Clic en una tarjeta para ver detalles</p>
+                                <h3 className="font-bold text-slate-800 text-lg leading-none">Historial Clínico</h3>
+                                <p className="text-xs text-slate-400 mt-1">Consultas, recetas y documentos generados</p>
                             </div>
                         </div>
                         <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm flex items-center gap-2">
-                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total Visitas:</span>
+                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total eventos:</span>
                              <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black shadow-md shadow-blue-200">
                                 {unifiedTimeline.length}
                              </span>
@@ -633,8 +669,8 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                                         >
                                             <div className="flex justify-between items-start mb-2">
                                                 <div>
-                                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wide ${item.origen === 'legacy' ? 'text-amber-700 bg-amber-100' : 'text-blue-600 bg-blue-50'}`}>
-                                                    {item.origen === 'legacy' ? 'Legacy' : (item.tipoNota || 'Consulta General')}
+                                                                                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wide ${item.origen === 'sesion_actual' ? 'text-violet-700 bg-violet-100 animate-pulse' : item.origen === 'legacy' ? 'text-amber-700 bg-amber-100' : item.kind === 'platform-document' ? 'text-indigo-700 bg-indigo-100' : item.kind === 'platform-receta' ? 'text-emerald-700 bg-emerald-100' : 'text-blue-600 bg-blue-50'}`}>
+                                                    {item.origen === 'sesion_actual' ? `${item.tipoNota} • Sesión actual` : item.origen === 'legacy' ? 'Legacy' : (item.tipoNota || 'Consulta General')}
                                                   </span>
                                                   <h4 className="text-sm font-bold text-slate-800 mt-1">{item.fechaFormato || 'Sin fecha'} <span className="text-slate-400 font-normal text-xs">{item.horaFormato ? `• ${item.horaFormato}` : ''}</span></h4>
                                                 </div>
@@ -653,6 +689,17 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
                                                                                                     >
                                                                                                         Abrir documento legacy
                                                                                                     </button>
+                                                                                                )}
+                                                                                                {(item.kind === 'platform-receta' || item.kind === 'platform-document') && item.archivoUrl && (
+                                                                                                    <a
+                                                                                                        href={item.archivoUrl}
+                                                                                                        target="_blank"
+                                                                                                        rel="noopener noreferrer"
+                                                                                                        onClick={(event) => event.stopPropagation()}
+                                                                                                        className={`mt-2 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold ${item.kind === 'platform-receta' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}
+                                                                                                    >
+                                                                                                        <Download size={12} /> Ver documento PDF
+                                                                                                    </a>
                                                                                                 )}
                                             </div>
                                         </div>
@@ -821,38 +868,324 @@ const SeccionResumen = ({ expediente, updateCampo, pacienteId }) => {
       </div>
 
       {/* --- MODAL DETALLE CONSULTA --- */}
-            {consultaSeleccionada && (
-                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-6">
-                        <div className="bg-white w-full max-w-2xl max-h-[90%] rounded-2xl shadow-lg flex flex-col overflow-hidden">
+            {consultaSeleccionada && (() => {
+                const cs = consultaSeleccionada;
+                const signos = cs.consulta?.exploracion?.signos || {};
+                const antropo = cs.consulta?.exploracion?.antropometria || {};
+                const fisica = cs.consulta?.exploracion?.fisica || {};
+                const diag = cs.consulta?.diagnostico || {};
+                const estudios = cs.consulta?.estudios || {};
+                const procedimientos = cs.consulta?.procedimientos || {};
+                const antecedentes = cs.antecedentes || {};
+                const vitalesGrid = [
+                    {l:'Peso', v: antropo.peso || signos.peso, u:'kg'},
+                    {l:'Talla', v: antropo.talla || signos.talla, u:'m'},
+                    {l:'IMC', v: antropo.imc || signos.imc, u:''},
+                    {l:'Temp', v: signos.temp, u:'°C'},
+                    {l:'T/A', v: signos.ta, u:''},
+                    {l:'F.C.', v: signos.fc, u:'lpm'},
+                    {l:'F.R.', v: signos.fr, u:'rpm'},
+                    {l:'SpO2', v: signos.spo2, u:'%'},
+                ];
+                const tieneExploracionFisica = Object.values(fisica).some(v => v);
+                const tieneEstudios = (estudios.estudios_seleccionados?.length > 0) || (estudios.paquetes_seleccionados?.length > 0) || estudios.notas_generales;
+                const tieneProcedimientos = (procedimientos.seleccionados?.length > 0) || procedimientos.notas_generales;
+                const tieneAlergias = antecedentes.alergias?.lista?.length > 0 || antecedentes.alergias?.otros || antecedentes.alergias?.preguntados_y_negados;
+                const tieneCie10 = Array.isArray(diag.cie10) && diag.cie10.length > 0;
+                const tieneColesterol = cs.consulta?.exploracion?.colesterol && Object.values(cs.consulta.exploracion.colesterol).some(v => v);
+                const tieneGlucosa = cs.consulta?.exploracion?.glucosa?.lista?.length > 0;
+
+                return (
+                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-4xl max-h-[92%] rounded-2xl shadow-lg flex flex-col overflow-hidden">
                 <div className="px-8 py-5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
                     <div>
-                        <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{consultaSeleccionada.tipoNota}</h2>
-                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2"><Calendar size={14}/> {consultaSeleccionada.fechaFormato} <span className="w-1 h-1 bg-slate-300 rounded-full"></span> <Clock size={14}/> {consultaSeleccionada.horaFormato}</p>
+                        <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{cs.tipoNota || 'Consulta General'}</h2>
+                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2"><Calendar size={14}/> {cs.fechaFormato} <span className="w-1 h-1 bg-slate-300 rounded-full"></span> <Clock size={14}/> {cs.horaFormato}</p>
                     </div>
-                    <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200"><X size={24}/></button>
+                    <div className="flex items-center gap-2">
+                        {onCargarConsultaHistorica && (
+                            <button
+                                onClick={() => {
+                                    onCargarConsultaHistorica(cs);
+                                    setConsultaSeleccionada(null);
+                                }}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
+                                title="Carga esta consulta en el expediente actual sin generar una nueva visita"
+                            >
+                                <CheckCircle size={14}/> Cargar consulta
+                            </button>
+                        )}
+                        {onImprimirReceta && diag.tratamiento_lista?.length > 0 && (
+                            <button
+                                onClick={() => {
+                                    onImprimirReceta(cs);
+                                    setConsultaSeleccionada(null);
+                                }}
+                                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
+                                title="Imprime la receta médica con los datos de esta consulta"
+                            >
+                                <Printer size={14}/> Imprimir receta
+                            </button>
+                        )}
+
+                        <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200"><X size={24}/></button>
+                    </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-8">
-                    <div className="grid grid-cols-4 gap-4">
-                        {[{l:'Peso', v: consultaSeleccionada.consulta?.exploracion?.signos?.peso, u:'kg'}, {l:'Temp', v: consultaSeleccionada.consulta?.exploracion?.signos?.temp, u:'°C'}, {l:'T/A', v: consultaSeleccionada.consulta?.exploracion?.signos?.ta, u:''}, {l:'SpO2', v: consultaSeleccionada.consulta?.exploracion?.signos?.spo2, u:'%'}].map((s, i) => (
-                            <div key={i} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
-                                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{s.l}</p>
-                                <p className="text-lg font-black text-slate-700">{s.v || '--'} <span className="text-[10px] font-normal text-slate-400">{s.u}</span></p>
+                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-6">
+
+                    {/* Meta: Costo y Duración */}
+                    {(cs.costo || cs.duracionRealMin) && (
+                        <div className="flex gap-4">
+                            {cs.costo > 0 && (
+                                <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-2 text-sm">
+                                    <span className="font-bold text-green-700">Costo:</span> <span className="text-green-800 font-black">${Number(cs.costo).toLocaleString('es-MX')}</span>
+                                </div>
+                            )}
+                            {cs.duracionRealMin > 0 && (
+                                <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-2 text-sm">
+                                    <span className="font-bold text-blue-700">Duración:</span> <span className="text-blue-800 font-black">{cs.duracionRealMin} min</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Signos Vitales - Grid completo */}
+                    <div>
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Signos Vitales</h4>
+                        <div className="grid grid-cols-4 gap-3">
+                            {vitalesGrid.map((s, i) => (
+                                <div key={i} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{s.l}</p>
+                                    <p className="text-lg font-black text-slate-700">{s.v || '--'} <span className="text-[10px] font-normal text-slate-400">{s.u}</span></p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Colesterol / Lab */}
+                    {tieneColesterol && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Laboratorios</h4>
+                            <div className="grid grid-cols-3 gap-3">
+                                {[{l:'Triglicéridos', v: cs.consulta.exploracion.colesterol.trigliceridos}, {l:'Colesterol', v: cs.consulta.exploracion.colesterol.colesterol}, {l:'HbA1c', v: cs.consulta.exploracion.colesterol.hba1c}].map((s, i) => s.v ? (
+                                    <div key={i} className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-center">
+                                        <p className="text-[10px] font-black text-purple-400 uppercase mb-1">{s.l}</p>
+                                        <p className="text-lg font-black text-purple-700">{s.v}</p>
+                                    </div>
+                                ) : null)}
                             </div>
-                        ))}
+                        </div>
+                    )}
+
+                    {/* Glucosa */}
+                    {tieneGlucosa && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Glucosa</h4>
+                            <div className="flex flex-wrap gap-2">
+                                {cs.consulta.exploracion.glucosa.lista.map((item, idx) => (
+                                    <div key={idx} className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-2 text-sm">
+                                        <span className="font-bold text-orange-700">{item.valor || item}</span>
+                                        {item.momento && <span className="text-orange-500 ml-1 text-xs">({item.momento})</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Padecimiento */}
+                    <div>
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Padecimiento</h4>
+                        <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed whitespace-pre-line">{cs.consulta?.padecimiento || 'Sin descripción'}</div>
                     </div>
-                    <div className="space-y-6">
-                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Padecimiento</h4><div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed">{consultaSeleccionada.consulta?.padecimiento || 'Sin descripción'}</div></div>
-                        {consultaSeleccionada.consulta?.exploracion?.fisica && <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Activity size={14}/> Exploración</h4><div className="grid grid-cols-1 gap-2">{Object.entries(consultaSeleccionada.consulta.exploracion.fisica).map(([key, val]) => val ? (<div key={key} className="text-sm"><span className="font-bold text-slate-700 capitalize">{key}:</span> <span className="text-slate-600">{val}</span></div>) : null)}</div></div>}
-                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Stethoscope size={14}/> Diagnóstico</h4><div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-sm font-bold text-emerald-800">{consultaSeleccionada.consulta?.diagnostico?.enfermedad_actual || 'Sin diagnóstico'}</div></div>
-                        <div><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Pill size={14}/> Receta</h4><div className="space-y-2">{consultaSeleccionada.consulta?.diagnostico?.tratamiento_lista?.map((med, idx) => (<div key={idx} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-lg shadow-sm"><span className="font-bold text-slate-700 text-sm">{med.nombre}</span><span className="text-xs text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded">{med.dosis}</span></div>))}</div></div>
+
+                    {/* Exploración Física */}
+                    {tieneExploracionFisica && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Activity size={14}/> Exploración Física</h4>
+                            <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {Object.entries(fisica).map(([key, val]) => val ? (
+                                    <div key={key} className="text-sm">
+                                        <span className="font-bold text-slate-700 capitalize">{key}:</span> <span className="text-slate-600">{val}</span>
+                                    </div>
+                                ) : null)}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Diagnóstico + CIE-10 */}
+                    <div>
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Stethoscope size={14}/> Diagnóstico</h4>
+                        <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-sm font-bold text-emerald-800">{diag.enfermedad_actual || 'Sin diagnóstico'}</div>
+                        {tieneCie10 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                                {diag.cie10.map((item, idx) => (
+                                    <span key={idx} className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-1 rounded-lg border border-emerald-200">
+                                        {item.codigo && <span className="font-black">{item.codigo}</span>}
+                                        {item.descripcion && <span>- {item.descripcion}</span>}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
+
+                    {/* Pronóstico */}
+                    {diag.pronostico && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Pronóstico</h4>
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-sm text-slate-700 whitespace-pre-line">{diag.pronostico}</div>
+                        </div>
+                    )}
+
+                    {/* Indicaciones Generales */}
+                    {diag.indicaciones && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Indicaciones Generales</h4>
+                            <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 text-sm text-amber-900 leading-relaxed whitespace-pre-line">{diag.indicaciones}</div>
+                        </div>
+                    )}
+
+                    {/* Receta / Medicamentos */}
+                    <div>
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Pill size={14}/> Receta</h4>
+                        {diag.tratamiento_lista?.length > 0 ? (
+                            <div className="space-y-2">
+                                {diag.tratamiento_lista.map((med, idx) => (
+                                    <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                                        <div className="flex justify-between items-start">
+                                            <span className="font-bold text-slate-700 text-sm">{idx + 1}. {med.nombre}</span>
+                                            {med.presentacion && <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded border border-slate-100">{med.presentacion}</span>}
+                                        </div>
+                                        {med.dosis && <p className="text-xs text-slate-500 mt-1 font-medium">{med.dosis}</p>}
+                                        {(med.sustanciasActivas || med.numeroAcomodo) && <p className="text-[10px] text-slate-400 mt-0.5">{[med.sustanciasActivas, med.numeroAcomodo].filter(Boolean).join(' · ')}</p>}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-sm text-slate-400 italic">Sin medicamentos</p>
+                        )}
+                    </div>
+
+                    {/* Estudios */}
+                    {tieneEstudios && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Estudios</h4>
+                            <div className="space-y-2">
+                                {estudios.paquetes_seleccionados?.length > 0 && (
+                                    <div className="p-3 bg-teal-50 border border-teal-100 rounded-lg text-sm text-teal-800">
+                                        <span className="font-bold">Paquetes:</span> {estudios.paquetes_seleccionados.join(', ')}
+                                    </div>
+                                )}
+                                {estudios.estudios_seleccionados?.map((est, idx) => {
+                                    const nombre = typeof est === 'string' ? est : (est?.nombre || '');
+                                    const nota = typeof est === 'object' ? (est?.nota || '') : '';
+                                    return nombre ? (
+                                        <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg text-sm">
+                                            <span className="font-bold text-slate-700">{nombre}</span>
+                                            {nota && <span className="text-slate-400 ml-2">({nota})</span>}
+                                        </div>
+                                    ) : null;
+                                })}
+                                {estudios.notas_generales && <p className="text-xs text-slate-500 italic mt-1">Notas: {estudios.notas_generales}</p>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Procedimientos */}
+                    {tieneProcedimientos && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Activity size={14}/> Procedimientos</h4>
+                            <div className="space-y-2">
+                                {procedimientos.seleccionados?.map((proc, idx) => {
+                                    const nombre = typeof proc === 'object' ? (proc?.nombre || proc?.procedimiento || proc?.descripcion || 'Procedimiento') : String(proc || '');
+                                    const nota = typeof proc === 'object' ? (proc?.nota || '') : '';
+                                    return (
+                                        <div key={idx} className="p-3 bg-white border border-slate-200 rounded-lg text-sm">
+                                            <span className="font-bold text-slate-700">{nombre}</span>
+                                            {nota && <p className="text-xs text-slate-400 mt-1">{nota}</p>}
+                                        </div>
+                                    );
+                                })}
+                                {procedimientos.notas_generales && <p className="text-xs text-slate-500 italic mt-1">Notas: {procedimientos.notas_generales}</p>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Alergias */}
+                    {tieneAlergias && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Alergias</h4>
+                            {antecedentes.alergias.preguntados_y_negados ? (
+                                <p className="text-sm text-slate-500 italic">Preguntados y negados</p>
+                            ) : (
+                                <div className="flex flex-wrap gap-2">
+                                    {antecedentes.alergias.lista?.map((a, idx) => (
+                                        <span key={idx} className="bg-red-50 text-red-700 text-xs font-bold px-3 py-1 rounded-lg border border-red-200">{a.sustancia || a.nombre || a}</span>
+                                    ))}
+                                    {antecedentes.alergias.otros && <span className="text-xs text-slate-500">Otros: {antecedentes.alergias.otros}</span>}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Recetas generadas */}
+                    {Array.isArray(cs.recetasGeneradas) && cs.recetasGeneradas.length > 0 && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Pill size={14}/> Recetas expedidas</h4>
+                            <div className="space-y-2">
+                                {cs.recetasGeneradas.map((item, idx) => (
+                                    <div key={`receta_generada_${idx}`} className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-xs text-emerald-900 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold">{item?.nombre || 'Receta generada'}</p>
+                                            <p className="mt-1">{[item?.formato ? `Formato: ${item.formato}` : '', item?.totalMedicamentos ? `${item.totalMedicamentos} medicamentos` : ''].filter(Boolean).join(' • ')}</p>
+                                        </div>
+                                        {item?.archivoUrl && <a href={item.archivoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold"><Download size={12}/> PDF</a>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Documentos generados */}
+                    {Array.isArray(cs.documentosGenerados) && cs.documentosGenerados.length > 0 && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Documentos generados</h4>
+                            <div className="space-y-2">
+                                {cs.documentosGenerados.map((item, idx) => (
+                                    <div key={`doc_generado_${idx}`} className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-900 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold">{item?.nombre || 'Documento generado'}</p>
+                                            <p className="mt-1">{[item?.formato ? `Formato: ${item.formato}` : '', item?.origen ? `Origen: ${item.origen}` : ''].filter(Boolean).join(' • ')}</p>
+                                        </div>
+                                        {item?.archivoUrl && <a href={item.archivoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-indigo-700 hover:text-indigo-900 font-bold"><Download size={12}/> PDF</a>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Auditoría */}
+                    {cs.auditSnapshot && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Auditoría</h4>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                {cs.auditSnapshot.status && <div><span className="font-bold text-slate-500">Estado:</span> <span className="text-slate-700">{cs.auditSnapshot.status}</span></div>}
+                                {cs.auditSnapshot.completionPct !== undefined && <div><span className="font-bold text-slate-500">Completitud:</span> <span className="text-slate-700">{cs.auditSnapshot.completionPct}%</span></div>}
+                                {Array.isArray(cs.auditSnapshot.missingCritical) && cs.auditSnapshot.missingCritical.length > 0 && (
+                                    <div className="col-span-2"><span className="font-bold text-red-500">Campos críticos faltantes:</span> <span className="text-red-700">{cs.auditSnapshot.missingCritical.join(', ')}</span></div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
-                <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 text-right">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Atendido por: <span className="text-slate-600">{consultaSeleccionada.medicoNombre || 'Desconocido'}</span></p>
+                <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                    <p className="text-xs font-bold text-slate-400 uppercase">Atendido por: <span className="text-slate-600">{cs.medicoNombre || 'Desconocido'}</span></p>
+                    {cs.citaId && <p className="text-[10px] text-slate-300 font-mono">Cita: {cs.citaId}</p>}
                 </div>
             </div>
         </div>
-      )}
+                );
+      })()}
 
     </div>
   );

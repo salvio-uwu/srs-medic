@@ -8,7 +8,8 @@ import {
 const SeccionAntecedentes = ({ 
   expediente, updateCampo, sexo, edad, 
   tempAlergia, setTempAlergia, 
-  tempCirugia, setTempCirugia 
+  tempCirugia, setTempCirugia,
+  onNextStep 
 }) => {
   const [activeSubTab, setActiveSubTab] = useState('hereditarios');
   const [activeGinecoTab, setActiveGinecoTab] = useState('menstruaciones');
@@ -49,6 +50,13 @@ const SeccionAntecedentes = ({
   const renderCie10 = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><CheckCircle size={16} className="text-blue-500"/> Enfermedades del CIE-10</h4>
+      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.cie10_preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.cie10_preguntados_y_negados', e.target.checked)} />
+          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+          <span className="text-xs text-amber-600 ml-1">— El paciente niega enfermedades CIE-10</span>
+        </label>
+      </div>
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0">
         <div className="relative w-full">
           <label className={labelClass}>Buscador de enfermedades</label>
@@ -94,7 +102,7 @@ const SeccionAntecedentes = ({
         <div className="grid grid-cols-[100px_1fr_50px] bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
           <span>Código</span><span>Descripción</span><span></span>
         </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 overflow-auto custom-scrollbar">
           {(expediente.antecedentes.cie10 || []).map((enf, i) => (
             <div key={i} className="grid grid-cols-[100px_1fr_50px] py-3 border-b border-slate-50 items-center">
               <span className="text-center font-bold text-blue-600 text-xs">{enf.code}</span>
@@ -110,6 +118,13 @@ const SeccionAntecedentes = ({
 const renderPadres = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><Users size={16} className="text-blue-500"/> Nombre de los padres</h4>
+      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.padres?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.padres.preguntados_y_negados', e.target.checked)} />
+          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+          <span className="text-xs text-amber-600 ml-1">— Datos de padres y embarazo negados</span>
+        </label>
+      </div>
       <div className="space-y-3 mb-8 shrink-0">
         <input 
           className={inputClass} 
@@ -156,6 +171,13 @@ const renderPadres = () => (
 const renderPerinatales = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><Baby size={16} className="text-blue-500"/> Antecedentes Perinatales</h4>
+      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.perinatales?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.perinatales.preguntados_y_negados', e.target.checked)} />
+          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+          <span className="text-xs text-amber-600 ml-1">— El paciente niega antecedentes perinatales</span>
+        </label>
+      </div>
       
       <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-4">
         
@@ -374,6 +396,13 @@ const renderPsicomotor = () => {
     return (
       <div className={sectionClass}>
         <h4 className={headerClass}><Zap size={16} className="text-blue-500"/> Desarrollo Psicomotor</h4>
+        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.psicomotor?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.psicomotor.preguntados_y_negados', e.target.checked)} />
+            <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+            <span className="text-xs text-amber-600 ml-1">— El paciente niega alteraciones del desarrollo psicomotor</span>
+          </label>
+        </div>
         
         <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
           
@@ -440,6 +469,13 @@ const renderPsicomotor = () => {
     return (
       <div className={sectionClass}>
         <h4 className={headerClass}><HeartPulse size={16} className="text-blue-500"/> Gineco-Obstétricos</h4>
+        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.gineco_obstetricos?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.gineco_obstetricos.preguntados_y_negados', e.target.checked)} />
+            <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+            <span className="text-xs text-amber-600 ml-1">— La paciente niega antecedentes gineco-obstétricos</span>
+          </label>
+        </div>
         
         {/* Navegación de Pestañas Internas */}
         <div className="flex gap-1 border-b border-slate-200 mb-6 overflow-x-auto">
@@ -624,6 +660,13 @@ const renderPsicomotor = () => {
   const renderHereditarios = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><Activity size={16} className="text-blue-500"/> Antecedentes Heredofamiliares</h4>
+      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.hereditarios?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.hereditarios.preguntados_y_negados', e.target.checked)} />
+          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+          <span className="text-xs text-amber-600 ml-1">— El paciente niega antecedentes heredofamiliares</span>
+        </label>
+      </div>
       <div className="flex-1 w-full overflow-hidden flex flex-col border border-slate-200 rounded-2xl">
         <div className="flex bg-slate-50 border-b border-slate-200 shrink-0">
           <div className={`${tableHeaderClass} w-48 text-left pl-6`}>Padecimiento</div>
@@ -691,20 +734,36 @@ const renderPsicomotor = () => {
     <div className={sectionClass}>
       <h4 className={headerClass}><FlaskConical size={16} className="text-blue-500"/> Personales Patológicos</h4>
       <div className="flex-1 w-full overflow-y-auto custom-scrollbar pr-2">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
-          <div className="space-y-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
+          <div className="space-y-4">
             {[
               { label: 'Enfermedades actuales', key: 'actuales' },
               { label: 'Quirúrgicos', key: 'quirurgicos' },
               { label: 'Transfusionales', key: 'transfusionales' },
               { label: 'Traumáticos', key: 'traumaticos' },
               { label: 'Hospitalizaciones', key: 'hospitalizaciones' }
-            ].map(item => (
-              <div key={item.key}>
-                <label className={`${labelClass} text-blue-900 border-l-2 border-blue-500 pl-2`}>{item.label}</label>
-                <textarea className={`${inputClass} h-14 resize-none bg-white mt-1 shadow-sm`} value={expediente.antecedentes.patologicos?.[item.key] || ''} onChange={e => updateCampo(`antecedentes.patologicos.${item.key}`, e.target.value)} />
-              </div>
-            ))}
+            ].map(item => {
+              const negado = expediente.antecedentes.patologicos?.[`${item.key}_negado`] || false;
+              return (
+                <div key={item.key} className={`rounded-xl border p-3 transition-colors ${negado ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={`${labelClass} text-blue-900 border-l-2 border-blue-500 pl-2 !mb-0`}>{item.label}</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" className="w-3.5 h-3.5 accent-amber-500 rounded" checked={negado} onChange={e => {
+                        updateCampo(`antecedentes.patologicos.${item.key}_negado`, e.target.checked);
+                        if (e.target.checked) updateCampo(`antecedentes.patologicos.${item.key}`, 'NEGADOS');
+                      }} />
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide">Negado</span>
+                    </label>
+                  </div>
+                  {negado ? (
+                    <div className="text-xs font-bold text-slate-400 italic py-2 text-center">Preguntado y negado por el paciente</div>
+                  ) : (
+                    <textarea className={`${inputClass} h-14 resize-none bg-white shadow-sm`} value={expediente.antecedentes.patologicos?.[item.key] || ''} onChange={e => updateCampo(`antecedentes.patologicos.${item.key}`, e.target.value)} />
+                  )}
+                </div>
+              );
+            })}
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mt-2">
               <label className={`${labelClass} text-blue-900 border-l-2 border-blue-500 pl-2 mb-3`}>Adicciones</label>
               <div className="flex gap-6 mb-3">
@@ -717,7 +776,7 @@ const renderPsicomotor = () => {
               <textarea className={`${inputClass} h-16 bg-white`} placeholder="Detalles..." value={expediente.antecedentes.patologicos?.adicciones?.detalle || ''} onChange={e => updateCampo('antecedentes.patologicos.adicciones.detalle', e.target.value)} />
             </div>
           </div>
-          <div className="space-y-5">
+          <div className="space-y-4">
             {[
               { label: 'Glaucoma', key: 'glaucoma' },
               { label: 'Cálculo biliar', key: 'calculo' },
@@ -725,12 +784,28 @@ const renderPsicomotor = () => {
               { label: 'Incontinencia', key: 'incontinencia' },
               { label: 'Dislipidemias', key: 'dislipidemias' },
               { label: 'Otro', key: 'otro' }
-            ].map(item => (
-              <div key={item.key}>
-                <label className={labelClass}>{item.label}</label>
-                <textarea className={`${inputClass} h-14 resize-none bg-white mt-1 shadow-sm`} value={expediente.antecedentes.patologicos?.especificos?.[item.key] || ''} onChange={e => updateCampo(`antecedentes.patologicos.especificos.${item.key}`, e.target.value)} />
-              </div>
-            ))}
+            ].map(item => {
+              const negado = expediente.antecedentes.patologicos?.especificos?.[`${item.key}_negado`] || false;
+              return (
+                <div key={item.key} className={`rounded-xl border p-3 transition-colors ${negado ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={`${labelClass} !mb-0`}>{item.label}</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" className="w-3.5 h-3.5 accent-amber-500 rounded" checked={negado} onChange={e => {
+                        updateCampo(`antecedentes.patologicos.especificos.${item.key}_negado`, e.target.checked);
+                        if (e.target.checked) updateCampo(`antecedentes.patologicos.especificos.${item.key}`, 'NEGADOS');
+                      }} />
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wide">Negado</span>
+                    </label>
+                  </div>
+                  {negado ? (
+                    <div className="text-xs font-bold text-slate-400 italic py-2 text-center">Preguntado y negado por el paciente</div>
+                  ) : (
+                    <textarea className={`${inputClass} h-14 resize-none bg-white shadow-sm`} value={expediente.antecedentes.patologicos?.especificos?.[item.key] || ''} onChange={e => updateCampo(`antecedentes.patologicos.especificos.${item.key}`, e.target.value)} />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -773,37 +848,61 @@ const renderPsicomotor = () => {
   "MACRÓLIDOS", 
   "LÁTEX"
 ];
+    const negados = expediente.antecedentes.alergias?.preguntados_y_negados || false;
+
     return (
       <div className={sectionClass}>
         <h4 className={`${headerClass} text-rose-600 border-rose-100`}><FlaskConical size={16} /> Registro de Alergias</h4>
-        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">
-          <div className="flex gap-6 mb-4">
-            <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={!expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', false)} /> Categoría</label>
-            <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', true)} /> Sustancia</label>
-          </div>
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
-              {!expediente.antecedentes.alergias?.buscar_sustancia ? (
-                <select className={`${inputClass} bg-white`} value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })}><option value="">Seleccionar...</option>{CATS.map(c => <option key={c}>{c}</option>)}</select>
-              ) : (
-                <input className={`${inputClass} bg-white`} placeholder="Nombre de sustancia..." value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })} />
-              )}
-            </div>
-            <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">AGREGAR</button>
-          </div>
+
+        {/* Preguntados y negados */}
+        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={negados} onChange={e => updateCampo('antecedentes.alergias.preguntados_y_negados', e.target.checked)} />
+            <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+            <span className="text-xs text-amber-600 ml-1">— El paciente niega cualquier alergia</span>
+          </label>
         </div>
-        <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col mb-4">
-          <div className={tableHeaderClass}>Alergias Detectadas</div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-            {(expediente.antecedentes.alergias?.lista || []).map((a, i) => (
-              <div key={i} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
-                <span className="font-bold text-slate-700 text-sm">{a.sustancia}</span>
-                <button onClick={() => updateCampo('antecedentes.alergias.lista', expediente.antecedentes.alergias.lista.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16}/></button>
+
+        {!negados && (
+          <>
+            {/* Formulario de registro */}
+            <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">
+              <div className="flex gap-6 mb-4">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={!expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', false)} /> Categoría</label>
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', true)} /> Sustancia</label>
               </div>
-            ))}
-          </div>
-        </div>
-        <textarea className={`${inputClass} h-24 resize-none bg-white`} placeholder="Otras alergias..." value={expediente.antecedentes.alergias?.otras || ''} onChange={e => updateCampo('antecedentes.alergias.otras', e.target.value)} />
+              <div className="flex gap-4 items-end">
+                <div className="flex-1">
+                  {!expediente.antecedentes.alergias?.buscar_sustancia ? (
+                    <select className={`${inputClass} bg-white`} value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })}><option value="">Seleccionar...</option>{CATS.map(c => <option key={c}>{c}</option>)}</select>
+                  ) : (
+                    <input className={`${inputClass} bg-white`} placeholder="Nombre de sustancia..." value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })} />
+                  )}
+                </div>
+                <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">AGREGAR</button>
+              </div>
+            </div>
+
+            {/* Lista de alergias detectadas */}
+            <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col mb-4">
+              <div className={tableHeaderClass}>Alergias Detectadas</div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+                {(expediente.antecedentes.alergias?.lista || []).map((a, i) => (
+                  <div key={i} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
+                    <span className="font-bold text-slate-700 text-sm">{a.sustancia}</span>
+                    <button onClick={() => updateCampo('antecedentes.alergias.lista', expediente.antecedentes.alergias.lista.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={16}/></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Otros (texto libre) */}
+            <div className="w-full">
+              <label className={labelClass}>Otros</label>
+              <textarea className={`${inputClass} h-24 resize-none bg-white`} placeholder="Especifique otras alergias no listadas..." value={expediente.antecedentes.alergias?.otros || expediente.antecedentes.alergias?.otras || ''} onChange={e => updateCampo('antecedentes.alergias.otros', e.target.value)} />
+            </div>
+          </>
+        )}
       </div>
     );
   };
@@ -811,6 +910,13 @@ const renderPsicomotor = () => {
   const renderVacunas = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><Shield size={16} className="text-blue-500"/> Esquema de Vacunación</h4>
+      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.vacunas?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.vacunas.preguntados_y_negados', e.target.checked)} />
+          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+          <span className="text-xs text-amber-600 ml-1">— El paciente niega vacunación</span>
+        </label>
+      </div>
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div><label className={labelClass}>Vacuna</label><input className={inputClass} placeholder="Ej. Influenza" value={tempVacuna.nombre} onChange={e => setTempVacuna({...tempVacuna, nombre: e.target.value})} /></div>
@@ -846,6 +952,13 @@ const renderCirugias = () => {
     return (
       <div className={sectionClass}>
         <h4 className={headerClass}><Scissors size={16} className="text-blue-500"/> Cirugías e Intervenciones</h4>
+        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.cirugias?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.cirugias.preguntados_y_negados', e.target.checked)} />
+            <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
+            <span className="text-xs text-amber-600 ml-1">— El paciente niega cirugías previas</span>
+          </label>
+        </div>
         
         <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
           {/* FORMULARIO DE CAPTURA ESTILIZADO */}
@@ -1014,7 +1127,20 @@ const renderCirugias = () => {
   const opcionesVisibles = todasLasOpciones.filter(op => op.visible);
 
   return (
-    <div className="flex h-full w-full gap-6 overflow-hidden">
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* --- BARRA SUPERIOR CON BOTÓN SIGUIENTE --- */}
+      {onNextStep && (
+        <div className="shrink-0 flex items-center justify-end px-4 py-2 bg-white border-b border-slate-100">
+          <button 
+            onClick={onNextStep}
+            className="group flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-full font-bold text-xs shadow-md shadow-blue-600/25 transition-all active:scale-[0.97]"
+          >
+            Consulta
+            <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+          </button>
+        </div>
+      )}
+    <div className="flex flex-1 w-full gap-6 overflow-hidden">
       {/* --- 2. USA opcionesVisibles AQUÍ --- */}
       <div className="w-56 flex flex-col gap-2 shrink-0 bg-slate-50/50 p-2 rounded-2xl border border-slate-100 overflow-y-auto custom-scrollbar">
         {opcionesVisibles.map(item => (
@@ -1045,6 +1171,8 @@ const renderCirugias = () => {
         {activeSubTab === 'vacunas' && renderVacunas()}
         {activeSubTab === 'cirugias' && renderCirugias()}
       </div>
+
+    </div>
     </div>
   );
 };

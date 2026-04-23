@@ -1,19 +1,26 @@
 // src/pages/enfermeria/DashboardJefaEnfermeria.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Thermometer, Droplet,
+  AlertTriangle, Thermometer, Droplet, Droplets,
   CheckCircle2, Search, LogOut,
   Printer, Clock, Sparkles, X, Package, ShieldAlert,
   ChevronDown, Activity, Calendar,
   ChevronRight, Clipboard, Shield, MapPin, LayoutDashboard,
-  ClipboardList, Stethoscope, Plus, Zap, Filter
+  ClipboardList, Stethoscope, Plus, Zap, Filter, Eye, ChevronUp, Gauge
 } from 'lucide-react';
 import { db } from '../../config/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import logoImg from '../../assets/logo_azul.png';
 import FiltroBitacorasJefaturaModal from '../../components/FiltroBitacorasJefaturaModal';
+import CatalogoPedidoManager from '../../components/CatalogoPedidoManager';
+import BitacoraCarroRojo from './BitacoraCarroRojo';
+import CarroRojoJefatura from './CarroRojoJefatura';
+import AlmacenJefatura from './AlmacenJefatura';
+import KritJefatura from './KritJefatura';
+import AutoclaveJefatura from './AutoclaveJefatura';
+import CaducidadesJefatura from './CaducidadesJefatura';
 
 const Toast = ({ msg, type, onClose }) => (
   <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-lg border text-sm font-semibold animate-in slide-in-from-top-4 print:hidden ${
@@ -46,6 +53,12 @@ const VIEW_META = {
   limpieza:     { label: 'Limpieza y Desinf.', icon: Sparkles,        color: 'teal'   },
   recepcion:    { label: 'Recepción Insumos',  icon: Package,         color: 'violet' },
   es:           { label: 'Entradas y Salidas', icon: Activity,        color: 'indigo' },
+  carro_rojo:   { label: 'Carro Rojo',         icon: ShieldAlert,     color: 'rose'   },
+  krit:          { label: 'Solución KRIT',      icon: Droplets,        color: 'teal'   },
+  autoclave:    { label: 'Autoclave',           icon: Gauge,           color: 'violet' },
+  almacen:      { label: 'Almacén',            icon: Package,         color: 'amber'  },
+  caducidades:  { label: 'Caducidades',        icon: ShieldAlert,     color: 'rose'   },
+  pedidos:      { label: 'Pedidos Sucursales', icon: ClipboardList,   color: 'blue'   },
   alertas:      { label: 'Centro de Alertas',  icon: AlertTriangle,   color: 'rose'   },
 };
 
@@ -55,6 +68,7 @@ const COLOR_MAP = {
   teal:   { pill:'bg-teal-50 text-teal-600',     dot:'bg-teal-500',   active:'bg-teal-50 text-teal-700 border border-teal-200 shadow-sm', mobileActive:'text-teal-600 bg-teal-50' },
   violet: { pill:'bg-violet-50 text-violet-600', dot:'bg-violet-500', active:'bg-violet-50 text-violet-700 border border-violet-200 shadow-sm', mobileActive:'text-violet-600 bg-violet-50' },
   indigo: { pill:'bg-indigo-50 text-indigo-600', dot:'bg-indigo-500', active:'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm', mobileActive:'text-indigo-600 bg-indigo-50' },
+  amber:  { pill:'bg-amber-50 text-amber-600',   dot:'bg-amber-500',  active:'bg-amber-50 text-amber-700 border border-amber-200 shadow-sm', mobileActive:'text-amber-600 bg-amber-50' },
   rose:   { pill:'bg-rose-50 text-rose-600',     dot:'bg-rose-500',   active:'bg-rose-50 text-rose-700 border border-rose-200 shadow-sm', mobileActive:'text-rose-600 bg-rose-50' },
 };
 
@@ -107,6 +121,20 @@ const DashboardJefaEnfermeria = () => {
     }
   });
   const [showFiltroBitacoras, setShowFiltroBitacoras] = useState(false);
+  const [pedidosSucursales, setPedidosSucursales] = useState([]);
+  const [pedidosLoading, setPedidosLoading] = useState(false);
+  const [pedidosBusqueda, setPedidosBusqueda] = useState('');
+  const [pedidoExpandido, setPedidoExpandido] = useState(null);
+  const [pedidoFiltroSucursal, setPedidoFiltroSucursal] = useState('');
+  const [pedidoModoCatalogo, setPedidoModoCatalogo] = useState(false);
+  const [catalogoSucursalesJefa, setCatalogoSucursalesJefa] = useState([]);
+  const [pedidoMesActual, setPedidoMesActual] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [pedidoDiaExpandido, setPedidoDiaExpandido] = useState(null);
+  const [kritRegistros, setKritRegistros] = useState([]);
+  const [autoclaveRegistros, setAutoclaveRegistros] = useState([]);
 
   const showToast = (msg, type = 'info') => {
     setToast({ show:true, msg, type });
@@ -175,6 +203,72 @@ const DashboardJefaEnfermeria = () => {
       clearInterval(intervalId);
     };
   }, []);
+
+  // Catálogo de sucursales (para filtro)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'catalogo_sucursales'), (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.activo !== false);
+      setCatalogoSucursalesJefa(items);
+    });
+    return () => unsub();
+  }, []);
+
+  // Pedidos en tiempo real
+  useEffect(() => {
+    if (activeView !== 'pedidos') return;
+    setPedidosLoading(true);
+    const q = query(collection(db, 'bitacoras_operativas'), where('tipo', '==', 'Pedido de medicamento'));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => {
+        const da = a.fecha?.toDate?.() || new Date(a.fechaString || 0);
+        const db2 = b.fecha?.toDate?.() || new Date(b.fechaString || 0);
+        return db2 - da;
+      });
+      setPedidosSucursales(items);
+      setPedidosLoading(false);
+    }, () => {
+      showToast('Error al cargar pedidos', 'error');
+      setPedidosLoading(false);
+    });
+    return () => unsub();
+  }, [activeView]);
+
+  // Registros KRIT en tiempo real (cuando se ve la vista krit)
+  useEffect(() => {
+    if (activeView !== 'krit') return;
+    const fechaInicio = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA');
+    const fechaFin = new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA');
+    const q = query(
+      collection(db, 'registros_krit'),
+      where('fecha', '>=', fechaInicio),
+      where('fecha', '<=', fechaFin)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docs.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+      setKritRegistros(docs);
+    });
+    return () => unsub();
+  }, [activeView, currentTime]);
+
+  // Registros Autoclave en tiempo real (cuando se ve la vista autoclave)
+  useEffect(() => {
+    if (activeView !== 'autoclave') return;
+    const fechaInicio = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA');
+    const fechaFin = new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA');
+    const q = query(
+      collection(db, 'registros_autoclave'),
+      where('fecha', '>=', fechaInicio),
+      where('fecha', '<=', fechaFin)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docs.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+      setAutoclaveRegistros(docs);
+    });
+    return () => unsub();
+  }, [activeView, currentTime]);
 
   const handleLogout = async () => {
     try { await logout(); navigate('/'); } catch { showToast('Error al salir', 'error'); }
@@ -305,7 +399,14 @@ const DashboardJefaEnfermeria = () => {
         </div>
         <div className="bg-[#ffff00] py-1 border-t-2 border-b-2 border-slate-600 text-center mb-1 print-exact-colors">
            <h2 className="text-sm font-bold text-black">
-              Bitácora de {activeView === 'limpieza' ? `limpieza y desinfección ${areaLimpieza.toUpperCase()}` : meta.label}
+              {activeView === 'krit'
+                ? 'Registro de Cambio de Solución Estéril "KRIT"'
+                : activeView === 'autoclave'
+                  ? 'Registro de Autoclave'
+                  : activeView === 'caducidades'
+                    ? 'Medicamento Próximo a Caducar — Almacén'
+                    : `Bitácora de ${activeView === 'limpieza' ? `limpieza y desinfección ${areaLimpieza.toUpperCase()}` : meta.label}`
+              }
            </h2>
         </div>
         <div className="flex justify-center gap-12 font-bold text-[11px] mb-2 uppercase">
@@ -517,6 +618,86 @@ const DashboardJefaEnfermeria = () => {
           </>
         )}
 
+        {activeView === 'krit' && (() => {
+          const formatDateMX = (str) => {
+            if (!str) return '';
+            const [y, m, d] = str.split('-');
+            return `${d}/${m}/${y}`;
+          };
+          const sucursalFiltrada = user?.sucursal || '';
+          const registrosSuc = sucursalFiltrada
+            ? kritRegistros.filter(r => r.sucursal === sucursalFiltrada)
+            : kritRegistros;
+          const totalRows = Math.max(registrosSuc.length, 20);
+
+          return (
+            <table className="w-full border-collapse border-2 border-[#666]">
+              <thead>
+                <tr>
+                  <th className={thP + " w-32"}>FECHA (HOY)</th>
+                  <th className={thP + " w-40"}>PRÓXIMO CAMBIO<br/><span className="font-normal">(7 días posteriores)</span></th>
+                  <th className={thP + " w-40"}>CANTIDAD AGUA<br/><span className="font-normal">(1Lt /10ml KRIT)</span></th>
+                  <th className={thP + " w-40"}>FIRMA DEL RESPONSABLE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: totalRows }).map((_, i) => {
+                  const reg = registrosSuc[i];
+                  return (
+                    <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
+                      <td className={tdP}>{reg ? formatDateMX(reg.fecha) : ''}</td>
+                      <td className={tdP}>{reg ? formatDateMX(reg.proximoCambio) : ''}</td>
+                      <td className={tdP}>{reg?.cantidadAgua || ''}</td>
+                      <td className={tdPLeft}>{reg?.responsableNombre || ''}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
+
+        {activeView === 'autoclave' && (() => {
+          const formatDateMX = (str) => {
+            if (!str) return '';
+            const [y, m, d] = str.split('-');
+            return `${d}/${m}/${y}`;
+          };
+          const sucursalFiltrada = user?.sucursal || '';
+          const registrosSuc = sucursalFiltrada
+            ? autoclaveRegistros.filter(r => r.sucursal === sucursalFiltrada)
+            : autoclaveRegistros;
+          const totalRows = Math.max(registrosSuc.length, 20);
+
+          return (
+            <table className="w-full border-collapse border-2 border-[#666]">
+              <thead>
+                <tr>
+                  <th className={thP + " w-32"}>FECHA</th>
+                  <th className={thP + " w-32"}>LITROS UTILIZADOS</th>
+                  <th className={thP + " w-32"}>PIEZAS</th>
+                  <th className={thP + " w-32"}>DURACIÓN DEL CICLO</th>
+                  <th className={thP + " w-40"}>FIRMA DEL RESPONSABLE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: totalRows }).map((_, i) => {
+                  const reg = registrosSuc[i];
+                  return (
+                    <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
+                      <td className={tdP}>{reg ? formatDateMX(reg.fecha) : ''}</td>
+                      <td className={tdP}>{reg?.litrosUtilizados || ''}</td>
+                      <td className={tdP}>{reg?.piezas || ''}</td>
+                      <td className={tdP}>{reg?.duracionCiclo || ''}</td>
+                      <td className={tdPLeft}>{reg?.responsableNombre || ''}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
+
       </div>
     );
   };
@@ -590,7 +771,16 @@ const DashboardJefaEnfermeria = () => {
 
             {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">COFEPRIS</p>}
             {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            {['recepcion','es'].map(id => <NavItem key={id} id={id} />)}
+            {['recepcion','es','carro_rojo','krit','autoclave'].map(id => <NavItem key={id} id={id} />)}
+
+            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Almacén</p>}
+            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
+            <NavItem id="almacen" />
+            <NavItem id="caducidades" />
+
+            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pedidos</p>}
+            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
+            <NavItem id="pedidos" />
 
             {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sistema</p>}
             {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
@@ -661,7 +851,7 @@ const DashboardJefaEnfermeria = () => {
                   </button>
               </div>
 
-              {activeView !== 'dashboard' && activeView !== 'alertas' && (
+              {activeView !== 'dashboard' && activeView !== 'alertas' && activeView !== 'almacen' && activeView !== 'caducidades' && (
                 <button onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-all active:scale-95">
                     <Printer size={16}/>
                 </button>
@@ -750,6 +940,20 @@ const DashboardJefaEnfermeria = () => {
                                             <p className="font-bold text-sm text-slate-700 group-hover:text-emerald-700">Capturar Bitácora</p>
                                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Auditoría Operativa</p>
                                         </div>
+                                    </button>
+                                    <button onClick={() => setActiveView('carro_rojo')} className="w-full bg-slate-50 hover:bg-rose-50 border border-slate-100 hover:border-rose-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
+                                        <div className="bg-rose-100 text-rose-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><ShieldAlert size={20}/></div>
+                                        <div className="text-left">
+                                            <p className="font-bold text-sm text-slate-700 group-hover:text-rose-700">Carro Rojo</p>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Bitácora por Sucursal</p>
+                                        </div>
+                                    </button>
+                                    <button onClick={() => setActiveView('almacen')} className="w-full bg-slate-50 hover:bg-amber-50 border border-slate-100 hover:border-amber-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
+                                      <div className="bg-amber-100 text-amber-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Package size={20}/></div>
+                                      <div className="text-left">
+                                        <p className="font-bold text-sm text-slate-700 group-hover:text-amber-700">Almacén</p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Inventario central</p>
+                                      </div>
                                     </button>
                                 </div>
                             </div>
@@ -1105,6 +1309,301 @@ const DashboardJefaEnfermeria = () => {
                   );
               })()}
 
+              {/* --- PEDIDOS SUCURSALES ─────────────────────────────────────── */}
+              {activeView === 'pedidos' && pedidoModoCatalogo && (
+                <div className="flex-1 flex flex-col min-h-0 animate-in fade-in">
+                  <div className="shrink-0 mb-4">
+                    <button onClick={() => setPedidoModoCatalogo(false)}
+                      className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm">
+                      <ChevronRight size={16} className="rotate-180"/> Volver a Pedidos
+                    </button>
+                  </div>
+                  <CatalogoPedidoManager />
+                </div>
+              )}
+
+              {activeView === 'pedidos' && !pedidoModoCatalogo && (() => {
+                const sucursalesUnicas = catalogoSucursalesJefa.map(s => s.nombre || s.id).sort();
+
+                // Filtrado base
+                const pedidosFiltrados = pedidosSucursales.filter(p => {
+                  const matchSuc = !pedidoFiltroSucursal || p.sucursal === pedidoFiltroSucursal;
+                  const term = pedidosBusqueda.toLowerCase();
+                  const matchSearch = !term || 
+                    (p.responsableNombre || '').toLowerCase().includes(term) ||
+                    (p.sucursal || '').toLowerCase().includes(term) ||
+                    (p.fechaString || '').includes(term);
+                  return matchSuc && matchSearch;
+                });
+
+                // Filtrar por mes seleccionado y agrupar por día
+                const [mesAnio, mesNum] = pedidoMesActual.split('-').map(Number);
+                const pedidosDelMes = pedidosFiltrados.filter(p => {
+                  const d = p.fecha?.toDate?.() || (p.fechaString ? new Date(p.fechaString + 'T12:00:00') : null);
+                  if (!d) return false;
+                  return d.getFullYear() === mesAnio && (d.getMonth() + 1) === mesNum;
+                });
+
+                const diasMap = {};
+                pedidosDelMes.forEach(p => {
+                  const d = p.fecha?.toDate?.() || new Date(p.fechaString + 'T12:00:00');
+                  const key = d.toISOString().slice(0, 10);
+                  if (!diasMap[key]) diasMap[key] = [];
+                  diasMap[key].push(p);
+                });
+                const diasOrdenados = Object.keys(diasMap).sort((a, b) => b.localeCompare(a));
+
+                // Helpers de mes
+                const mesLabel = new Date(mesAnio, mesNum - 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+                const cambiarMes = (delta) => {
+                  const d = new Date(mesAnio, mesNum - 1 + delta);
+                  setPedidoMesActual(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                  setPedidoDiaExpandido(null);
+                  setPedidoExpandido(null);
+                };
+
+                // Total insumos del mes
+                const totalInsumosMes = pedidosDelMes.reduce((sum, p) => sum + (p.detalles?.filas?.length || 0), 0);
+                const sucursalesMes = [...new Set(pedidosDelMes.map(p => p.sucursal).filter(Boolean))];
+
+                // Función de impresión (se reutiliza)
+                const imprimirPedidos = (pedidosAImprimir) => {
+                  const fechaGen = new Date().toLocaleString('es-MX', { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' });
+                  const pedidosHtml = pedidosAImprimir.map((pedido, pIdx) => {
+                    const fechaStr = pedido.fecha?.toDate?.()
+                      ? pedido.fecha.toDate().toLocaleString('es-MX', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : pedido.fechaString || '—';
+                    const filas = pedido.detalles?.filas || [];
+                    const filasHtml = filas.map((f, i) =>
+                      `<tr><td class="cell num">${i+1}</td><td class="cell insumo">${f.insumo}</td><td class="cell cat">${f.categoria||'—'}</td><td class="cell val">${f.fisico||'—'}</td><td class="cell val pedido-col">${f.pedido||'—'}</td></tr>`
+                    ).join('');
+                    return `<div class="pedido-block${pIdx > 0 ? ' page-break' : ''}"><div class="pedido-header"><div class="pedido-header-left"><div class="sucursal-badge">${pedido.sucursal || 'Sin sucursal'}</div><h2 class="pedido-title">Pedido de Medicamento e Insumos</h2></div><div class="pedido-header-right"><div class="meta-item"><span class="meta-label">Responsable</span><span class="meta-value">${pedido.responsableNombre||'—'}</span></div><div class="meta-item"><span class="meta-label">Fecha</span><span class="meta-value">${fechaStr}</span></div><div class="meta-item"><span class="meta-label">Total</span><span class="meta-value">${filas.length} insumo${filas.length!==1?'s':''}</span></div></div></div><table class="pedido-table"><thead><tr><th class="th" style="width:36px">#</th><th class="th" style="text-align:left">Insumo / Medicamento</th><th class="th" style="width:120px">Categoría</th><th class="th" style="width:72px">Físico</th><th class="th" style="width:72px">Pedido</th></tr></thead><tbody>${filasHtml}</tbody></table><div class="pedido-footer"><div class="firma-box"><div class="firma-line"></div><span>Firma de quien solicita</span></div><div class="firma-box"><div class="firma-line"></div><span>Firma de autorización</span></div></div></div>`;
+                  }).join('');
+                  const win = window.open('', '_blank');
+                  if (!win) return;
+                  win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Pedidos de Medicamento</title><style>@page{margin:16mm 12mm;size:letter}*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:#1e293b;font-size:12px;line-height:1.4}.doc-header{text-align:center;padding-bottom:14px;margin-bottom:20px;border-bottom:3px solid #1e293b}.doc-header h1{font-size:18px;font-weight:800;letter-spacing:-0.02em;text-transform:uppercase}.doc-header p{font-size:11px;color:#64748b;margin-top:4px}.pedido-block{margin-bottom:32px}.page-break{page-break-before:always}.pedido-header{display:flex;justify-content:space-between;align-items:flex-start;padding:12px 16px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px 6px 0 0;gap:16px}.pedido-header-left{display:flex;flex-direction:column;gap:4px}.sucursal-badge{display:inline-block;background:#1e293b;color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;padding:3px 10px;border-radius:4px}.pedido-title{font-size:14px;font-weight:700;color:#334155;margin-top:2px}.pedido-header-right{display:flex;gap:20px;text-align:right}.meta-item{display:flex;flex-direction:column}.meta-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8}.meta-value{font-size:12px;font-weight:700;color:#1e293b}.pedido-table{width:100%;border-collapse:collapse;border:1px solid #cbd5e1;border-top:none}.th{padding:7px 10px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;background:#e2e8f0;border-bottom:2px solid #cbd5e1;text-align:center}.cell{padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px}.cell.num{text-align:center;color:#94a3b8;font-weight:600;width:36px}.cell.insumo{font-weight:600;color:#1e293b;text-align:left}.cell.cat{text-align:center;color:#64748b;font-size:10px}.cell.val{text-align:center;font-weight:700;color:#334155}.cell.pedido-col{color:#1d4ed8;font-weight:800}tbody tr:nth-child(even){background:#f8fafc}.pedido-footer{display:flex;justify-content:space-between;gap:40px;margin-top:28px;padding:0 20px}.firma-box{text-align:center;flex:1}.firma-line{border-top:1px solid #94a3b8;margin-bottom:6px;margin-top:50px}.firma-box span{font-size:10px;color:#64748b;font-weight:600}.print-btn{position:fixed;bottom:24px;right:24px;padding:14px 28px;background:#1e293b;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;align-items:center;gap:8px}.print-btn:hover{background:#0f172a}@media print{.print-btn{display:none!important}tbody tr:nth-child(even){background:#f8fafc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sucursal-badge{background:#1e293b!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.th{background:#e2e8f0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.pedido-header{background:#f1f5f9!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><div class="doc-header"><h1>Reporte de Pedidos de Medicamento</h1><p>Generado el ${fechaGen} — ${pedidosAImprimir.length} pedido${pedidosAImprimir.length!==1?'s':''}</p></div>${pedidosHtml}<button class="print-btn" onclick="window.print()">Imprimir</button></body></html>`);
+                  win.document.close();
+                };
+
+                if (pedidosLoading) {
+                  return (
+                    <div className="flex-1 flex items-center justify-center min-h-[400px]">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"/>
+                        <p className="text-sm font-bold text-slate-400">Cargando pedidos...</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (pedidosSucursales.length === 0) {
+                  return (
+                    <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px]">
+                      <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center border-4 border-blue-100 mb-4">
+                        <ClipboardList size={40} className="text-blue-400"/>
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-700">Sin pedidos registrados</h3>
+                      <p className="text-sm text-slate-400 mt-2 text-center max-w-md">Aún no se han realizado pedidos de medicamento desde ninguna sucursal.</p>
+                      <button onClick={() => setPedidoModoCatalogo(true)}
+                        className="mt-4 flex items-center gap-2 px-5 py-2.5 text-sm font-bold rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors shadow-sm">
+                        <Package size={16}/> Configurar Catálogo
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="animate-in fade-in flex-1 flex flex-col min-h-0 gap-4">
+                    {/* ── Header unificado: nav mes + filtros + acciones ── */}
+                    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm shrink-0 overflow-hidden">
+                      {/* Navegador de mes */}
+                      <div className="flex items-center justify-between px-5 pt-4 pb-3">
+                        <button onClick={() => cambiarMes(-1)}
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-blue-600 transition-colors">
+                          <ChevronRight size={18} className="rotate-180"/>
+                        </button>
+                        <div className="text-center">
+                          <h3 className="text-base font-extrabold text-slate-800 capitalize tracking-tight">{mesLabel}</h3>
+                          <div className="flex items-center justify-center gap-3 mt-1">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500">
+                              <ClipboardList size={11} className="text-slate-400"/> {pedidosDelMes.length} pedido{pedidosDelMes.length !== 1 ? 's' : ''}
+                            </span>
+                            <span className="w-px h-3 bg-slate-200"/>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500">
+                              <Package size={11} className="text-slate-400"/> {totalInsumosMes} insumos
+                            </span>
+                            <span className="w-px h-3 bg-slate-200"/>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600">
+                              <MapPin size={11}/> {sucursalesMes.length} sucursal{sucursalesMes.length !== 1 ? 'es' : ''}
+                            </span>
+                          </div>
+                        </div>
+                        <button onClick={() => cambiarMes(1)}
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-blue-600 transition-colors">
+                          <ChevronRight size={18}/>
+                        </button>
+                      </div>
+                      {/* Separador + filtros */}
+                      <div className="border-t border-slate-100 px-4 py-2.5 flex flex-wrap items-center gap-2 bg-slate-50/60">
+                        <div className="relative flex-1 min-w-[140px] max-w-xs">
+                          <Search size={14} className="absolute left-2.5 top-[9px] text-slate-400"/>
+                          <input type="text" placeholder="Buscar..."
+                            value={pedidosBusqueda} onChange={e => setPedidosBusqueda(e.target.value)}
+                            className="w-full pl-8 pr-3 py-[7px] text-[13px] bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all font-medium placeholder:text-slate-300" />
+                        </div>
+                        <select value={pedidoFiltroSucursal} onChange={e => setPedidoFiltroSucursal(e.target.value)}
+                          className="px-2.5 py-[7px] text-[13px] bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-400 font-semibold text-slate-600">
+                          <option value="">Todas</option>
+                          {sucursalesUnicas.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button onClick={() => imprimirPedidos(pedidosDelMes)} disabled={pedidosDelMes.length === 0}
+                            className="inline-flex items-center gap-1.5 px-3 py-[7px] text-[12px] font-bold rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-200 transition-colors disabled:opacity-35">
+                            <Printer size={13}/> Imprimir
+                          </button>
+                          <button onClick={() => setPedidoModoCatalogo(true)}
+                            className="inline-flex items-center gap-1.5 px-3 py-[7px] text-[12px] font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors shadow-sm">
+                            <Package size={13}/> Catálogo
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Timeline por día ── */}
+                    <div className="flex-1 overflow-auto custom-scrollbar">
+                      {diasOrdenados.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                          <Calendar size={40} className="text-slate-300 mb-3"/>
+                          <p className="text-sm font-bold text-slate-400">Sin pedidos en este mes</p>
+                          <p className="text-xs text-slate-400 mt-1">Intenta con otro mes o ajusta los filtros.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {diasOrdenados.map(diaKey => {
+                            const pedidosDia = diasMap[diaKey];
+                            const fechaDia = new Date(diaKey + 'T12:00:00');
+                            const diaLabel = fechaDia.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+                            const isDiaExpanded = pedidoDiaExpandido === diaKey;
+                            const sucursalesDia = [...new Set(pedidosDia.map(p => p.sucursal).filter(Boolean))];
+                            const totalInsumosDia = pedidosDia.reduce((s, p) => s + (p.detalles?.filas?.length || 0), 0);
+
+                            return (
+                              <div key={diaKey} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                {/* Header del día */}
+                                <button onClick={() => setPedidoDiaExpandido(isDiaExpanded ? null : diaKey)}
+                                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50/60 transition-colors">
+                                  <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 flex flex-col items-center justify-center shrink-0">
+                                    <span className="text-[10px] font-bold text-blue-400 uppercase leading-none">{fechaDia.toLocaleDateString('es-MX', { weekday: 'short' }).replace('.', '')}</span>
+                                    <span className="text-lg font-black text-blue-600 leading-none mt-0.5">{fechaDia.getDate()}</span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-bold text-slate-800 capitalize">{diaLabel}</p>
+                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                      {sucursalesDia.map(suc => (
+                                        <span key={suc} className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-blue-50 border border-blue-100 text-[9px] font-bold text-blue-600 uppercase tracking-wider">
+                                          <MapPin size={8}/> {suc}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <span className="text-xs font-bold text-slate-500">{pedidosDia.length} pedido{pedidosDia.length !== 1 ? 's' : ''}</span>
+                                    <p className="text-[10px] text-slate-400 font-medium">{totalInsumosDia} insumos</p>
+                                  </div>
+                                  {isDiaExpanded ? <ChevronUp size={16} className="text-slate-400 shrink-0"/> : <ChevronDown size={16} className="text-slate-400 shrink-0"/>}
+                                </button>
+
+                                {/* Pedidos del día expandidos */}
+                                {isDiaExpanded && (
+                                  <div className="border-t border-slate-100">
+                                    {pedidosDia.map(pedido => {
+                                      const filas = pedido.detalles?.filas || [];
+                                      const totalItems = pedido.detalles?.totalCapturados || filas.length;
+                                      const isExpanded = pedidoExpandido === pedido.id;
+                                      const horaDisplay = pedido.fecha?.toDate?.()
+                                        ? pedido.fecha.toDate().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+                                        : '';
+
+                                      return (
+                                        <div key={pedido.id} className="border-b border-slate-50 last:border-b-0">
+                                          <button onClick={() => setPedidoExpandido(isExpanded ? null : pedido.id)}
+                                            className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-blue-50/30 transition-colors">
+                                            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                                              <ClipboardList size={15} className="text-slate-500"/>
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[13px] font-bold text-slate-700">{pedido.responsableNombre || 'Sin nombre'}</span>
+                                                <span className="px-1.5 py-px rounded bg-slate-100 text-[9px] font-bold text-slate-500 uppercase">{pedido.sucursal || '—'}</span>
+                                              </div>
+                                              <div className="flex items-center gap-2 mt-0.5">
+                                                {horaDisplay && <span className="text-[11px] text-slate-400 font-medium flex items-center gap-0.5"><Clock size={10}/> {horaDisplay}</span>}
+                                                <span className="text-[11px] text-slate-400">{totalItems} insumo{totalItems !== 1 ? 's' : ''}</span>
+                                              </div>
+                                            </div>
+                                            {isExpanded ? <ChevronUp size={14} className="text-slate-400 shrink-0"/> : <ChevronDown size={14} className="text-slate-400 shrink-0"/>}
+                                          </button>
+
+                                          {isExpanded && filas.length > 0 && (
+                                            <div className="px-5 pb-4 bg-slate-50/40">
+                                              <div className="flex justify-end gap-2 mb-2">
+                                                <button onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (window.confirm(`¿Eliminar este pedido de ${pedido.sucursal || 'sucursal'}?`)) {
+                                                    deleteDoc(doc(db, 'bitacoras_operativas', pedido.id)).then(() => {
+                                                      showToast('Pedido eliminado', 'success');
+                                                      setPedidoExpandido(null);
+                                                    }).catch(() => showToast('Error al eliminar', 'error'));
+                                                  }
+                                                }}
+                                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 transition-colors">
+                                                  <X size={12}/> Eliminar
+                                                </button>
+                                                <button onClick={(e) => { e.stopPropagation(); imprimirPedidos([pedido]); }}
+                                                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-blue-600 hover:border-blue-200 transition-colors">
+                                                  <Printer size={12}/> Imprimir
+                                                </button>
+                                              </div>
+                                              <div className="overflow-auto custom-scrollbar rounded-lg border border-slate-200">
+                                                <table className="w-full text-sm min-w-[400px]">
+                                                  <thead>
+                                                    <tr>
+                                                      <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200">Insumo</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Físico</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Pedido</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                    {filas.map((fila, idx) => (
+                                                      <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                                                        <td className="px-3 py-1.5 font-semibold text-slate-800 text-[12px] border-b border-slate-50">
+                                                          {fila.insumo}
+                                                          {fila.categoria && <span className="ml-1.5 text-[8px] font-bold uppercase text-slate-400">{fila.categoria}</span>}
+                                                        </td>
+                                                        <td className="px-3 py-1.5 text-center font-bold text-slate-600 text-[12px] border-b border-slate-50">{fila.fisico || '—'}</td>
+                                                        <td className="px-3 py-1.5 text-center font-bold text-blue-600 text-[12px] border-b border-slate-50">{fila.pedido || '—'}</td>
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* --- ALERTAS ────────────────────────────────────────────────────── */}
               {activeView === 'alertas' && (() => {
                   if (alertasFiltradas.length === 0) {
@@ -1170,6 +1669,36 @@ const DashboardJefaEnfermeria = () => {
                       </div>
                   );
               })()}
+
+              {activeView === 'carro_rojo' && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 px-4 sm:px-6 pt-4">
+                  <CarroRojoJefatura />
+                </div>
+              )}
+
+              {activeView === 'krit' && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 px-4 sm:px-6 pt-4">
+                  <KritJefatura />
+                </div>
+              )}
+
+              {activeView === 'autoclave' && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 px-4 sm:px-6 pt-4">
+                  <AutoclaveJefatura />
+                </div>
+              )}
+
+              {activeView === 'almacen' && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 px-4 sm:px-6 pt-4">
+                  <AlmacenJefatura />
+                </div>
+              )}
+
+              {activeView === 'caducidades' && (
+                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 px-4 sm:px-6 pt-4">
+                  <CaducidadesJefatura />
+                </div>
+              )}
           </main>
 
           {/* ── ZONA DE IMPRESIÓN (PIXEL PERFECT EXCEL FORMAT) ── */}

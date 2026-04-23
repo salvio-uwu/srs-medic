@@ -178,7 +178,14 @@ const Inventario = () => {
         const colRef = collection(db, 'catalogo_medicamentos');
         const snap = await getDocs(colRef);
         const rows = snap.docs.map(d => normalize(d.id, d.data()));
-        rows.sort((a, b) => a.medicamento.localeCompare(b.medicamento, 'es'));
+        rows.sort((a, b) => {
+          const na = parseInt(a.numeroAcomodo, 10);
+          const nb = parseInt(b.numeroAcomodo, 10);
+          const aNum = isNaN(na) ? Infinity : na;
+          const bNum = isNaN(nb) ? Infinity : nb;
+          if (aNum !== bNum) return aNum - bNum;
+          return a.medicamento.localeCompare(b.medicamento, 'es');
+        });
         allDocsRef.current = rows;
         setTotalCount(rows.length);
         setPage(1);
@@ -224,13 +231,13 @@ const Inventario = () => {
     loadCatalogs();
   }, []);
 
-  /* ── filtered meds ── */
+  /* ── filtered meds (search over ALL docs, not just current page) ── */
   const filtered = useMemo(() => {
-    let list = meds;
+    let list = allDocsRef.current;
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(m =>
-        `${m.medicamento} ${m.grupo} ${m.sustanciaActiva} ${m.presentacion}`.toLowerCase().includes(q)
+        `${m.medicamento} ${m.grupo} ${m.sustanciaActiva} ${m.presentacion} ${m.numeroAcomodo} ${m.indicacion} ${m.dosis}`.toLowerCase().includes(q)
       );
     }
     if (nivelFilter > 0) list = list.filter(m => m.nivel === nivelFilter);
@@ -238,6 +245,17 @@ const Inventario = () => {
     if (estadoFilter === 'inactivos') list = list.filter(m => !m.activo);
     return list;
   }, [meds, search, nivelFilter, estadoFilter]);
+
+  // Reset page to 1 when filters change
+  useEffect(() => { setPage(1); }, [search, nivelFilter, estadoFilter]);
+
+  /* ── paginated slice of filtered results ── */
+  const totalFiltered = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
+  const paginatedMeds = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
 
   /* ── stats ── */
   const stats = useMemo(() => {
@@ -251,26 +269,14 @@ const Inventario = () => {
   }, [meds, totalCount]);
 
   /* ── pagination ── */
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-
   const goNext = () => {
-    if (!hasMore) return;
-    const next = page + 1;
-    setPage(next);
-    const start = (next - 1) * PAGE_SIZE;
-    const slice = allDocsRef.current.slice(start, start + PAGE_SIZE);
-    setMeds(slice);
-    setHasMore(start + PAGE_SIZE < allDocsRef.current.length);
+    if (page >= totalPages) return;
+    setPage(p => p + 1);
   };
 
   const goPrev = () => {
     if (page <= 1) return;
-    const prev = page - 1;
-    setPage(prev);
-    const start = (prev - 1) * PAGE_SIZE;
-    const slice = allDocsRef.current.slice(start, start + PAGE_SIZE);
-    setMeds(slice);
-    setHasMore(start + PAGE_SIZE < allDocsRef.current.length);
+    setPage(p => p - 1);
   };
 
   /* ── open modal ── */
@@ -500,18 +506,28 @@ const Inventario = () => {
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Medicamento</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Grupo</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Sust. Activa</th>
+                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">N° Acomodo</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Presentación</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Dosis</th>
                 <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Indicación</th>
-                <th className="px-3 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-16">Nivel</th>
+                <th className="px-3 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-16">
+                  <div className="flex flex-col items-center gap-0.5">
+                    Nivel
+                    <select value={nivelFilter} onChange={e => setNivelFilter(+e.target.value)}
+                      className={`text-[10px] font-semibold border rounded px-1 py-0.5 outline-none cursor-pointer ${nivelFilter ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}>
+                      <option value={0}>Todos</option>
+                      {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan={8} className="text-center py-12 text-slate-400">Cargando...</td></tr>
-              ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-12 text-slate-400">Sin resultados.</td></tr>
-              ) : filtered.map(m => {
+                <tr><td colSpan={10} className="text-center py-12 text-slate-400">Cargando...</td></tr>
+              ) : paginatedMeds.length === 0 ? (
+                <tr><td colSpan={10} className="text-center py-12 text-slate-400">Sin resultados.</td></tr>
+              ) : paginatedMeds.map((m, mIdx) => {
                 const isOpen = selectedMed?.id === m.id;
                 return (
                   <React.Fragment key={m.id}>
@@ -544,6 +560,13 @@ const Inventario = () => {
                       <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
                         <span title={m.sustanciaActiva} className="truncate block">{trunc(m.sustanciaActiva, 22)}</span>
                       </td>
+                      <td className="px-3 py-2.5 text-slate-600 max-w-[100px]">
+                        {m.numeroAcomodo ? (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-700">#{m.numeroAcomodo}</span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
                         <span title={m.presentacion} className="truncate block">{trunc(m.presentacion, 18)}</span>
                       </td>
@@ -564,7 +587,7 @@ const Inventario = () => {
                     {/* expanded detail row */}
                     {isOpen && (
                       <tr className="bg-sky-50">
-                        <td colSpan={8} className="px-0 py-0">
+                        <td colSpan={10} className="px-0 py-0">
                           <div className="px-5 py-4 border-t-2 border-sky-300 border-b-2 bg-gradient-to-b from-sky-50 to-sky-50/30 border-l-4"
                             style={{ borderLeftColor: m.color }}>
                             {/* top: actions + status */}
@@ -663,7 +686,7 @@ const Inventario = () => {
         {/* pagination footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/60">
           <span className="text-xs text-slate-500">
-            Página {page} de {totalPages} · {totalCount} registros totales
+            Página {page} de {totalPages} · {totalFiltered} resultado{totalFiltered !== 1 ? 's' : ''} de {totalCount} registros
           </span>
           <div className="flex items-center gap-1">
             <button onClick={goPrev} disabled={page <= 1}
@@ -671,7 +694,7 @@ const Inventario = () => {
               <ChevronLeft size={16} />
             </button>
             <span className="text-sm font-medium text-slate-700 px-2">{page}</span>
-            <button onClick={goNext} disabled={!hasMore}
+            <button onClick={goNext} disabled={page >= totalPages}
               className="p-1.5 rounded-lg border border-slate-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition">
               <ChevronRight size={16} />
             </button>

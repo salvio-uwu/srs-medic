@@ -5,10 +5,8 @@ import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { upsertPatientLegacyLink } from '../../services/patientLinkService';
 
-const htmlModules = import.meta.glob('../../../historialmedico/*.html', {
-  query: '?url',
-  import: 'default'
-});
+// historialmedico/ fue eliminado — glob deshabilitado
+const htmlModules = {};
 
 const AUDIT_COLLECTION = 'auditoria_historial_migrado';
 const SYNC_STATE_KEY = 'migracion_historial_sync_state_v1';

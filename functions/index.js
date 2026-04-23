@@ -59,6 +59,29 @@ const BOLETIN_FALLBACK = [
   }
 ];
 
+const PATRON_SIN_ALERGIAS = /preguntad[oa]s?\s+y\s+negad[oa]s?|interrogad[oa]s?\s+y\s+negad[oa]s?|sin\s+alergias?(?:\s+conocidas?)?|niega\s+alergias?|ninguna\s+conocida|no\s+refiere\s+alergias?|desconoce\s+alergias?/i;
+const PATRON_NOTA_LIBRE = /^(otros?|nota|observaciones?|comentarios?)\s*:/i;
+
+function normalizarAlergiasParaIA(historialAlergias, sinAlergiasConfirmadas = false) {
+  if (sinAlergiasConfirmadas) return "Ninguna conocida";
+
+  let textoPlano = "";
+  if (Array.isArray(historialAlergias) && historialAlergias.length > 0) {
+    textoPlano = historialAlergias.join(", ");
+  } else if (typeof historialAlergias === "string") {
+    textoPlano = historialAlergias;
+  }
+
+  const alergiasConfirmadas = String(textoPlano || "")
+    .split(/[,;\n/|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => !PATRON_NOTA_LIBRE.test(item))
+    .filter((item) => !PATRON_SIN_ALERGIAS.test(item));
+
+  return alergiasConfirmadas.length > 0 ? alergiasConfirmadas.join(", ") : "Ninguna conocida";
+}
+
 // ============================================================================
 // FUNCIÓN 1: ANÁLISIS DE MEDICAMENTOS Y ALERGIAS (La que ya tenías, pero segura)
 // ============================================================================
@@ -71,7 +94,7 @@ exports.analizarMedicamento = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar esta acción.");
     }
 
-    const { medicamento, historialAlergias, medicamentosActuales } = request.data;
+    const { medicamento, historialAlergias, medicamentosActuales, sinAlergiasConfirmadas } = request.data;
     if (!medicamento) return { riesgo: false, mensaje: "Falta medicamento." };
 
     try {
@@ -79,12 +102,10 @@ exports.analizarMedicamento = onCall(
       const genAI = new GoogleGenerativeAI(geminiApiKey.value());
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-      let textoAlergias = "Ninguna conocida";
-      if (Array.isArray(historialAlergias) && historialAlergias.length > 0) {
-        textoAlergias = historialAlergias.join(", ");
-      } else if (typeof historialAlergias === 'string' && historialAlergias.trim() !== "") {
-        textoAlergias = historialAlergias;
-      }
+      const textoAlergias = normalizarAlergiasParaIA(
+        historialAlergias,
+        sinAlergiasConfirmadas === true
+      );
 
       const contextoMedicamentosActuales =
         typeof medicamentosActuales === "string" && medicamentosActuales.trim() !== ""
@@ -94,13 +115,55 @@ exports.analizarMedicamento = onCall(
       console.log("Analizando:", { medicamento, textoAlergias });
 
       const prompt = `
-        Actúa como médico farmacólogo experto.
-        PACIENTE ALÉRGICO A: "${textoAlergias}"
-        MEDICAMENTOS ACTUALES: "${contextoMedicamentosActuales}"
-        MEDICAMENTO A RECETAR: "${medicamento}"
-        TAREA: Determina si existe riesgo clínicamente relevante de reacción alérgica directa/cruzada o interacción farmacológica grave.
-        RESPONDE ÚNICAMENTE ESTE JSON (sin markdown, sin comillas extra):
-        { "riesgo": true/false, "mensaje": "Explicación breve de la alerta." }
+        Eres un validador farmacológico ultra-estricto. Tu ÚNICO objetivo es EVITAR FALSOS POSITIVOS.
+        Un falso positivo asusta al médico y bloquea tratamientos necesarios. Solo alertas ante peligro DOCUMENTADO y REAL.
+
+        DATOS:
+        - Alergias confirmadas del paciente: "${textoAlergias}"
+        - Medicamentos ya en receta: "${contextoMedicamentosActuales}"
+        - Medicamento nuevo: "${medicamento}"
+
+        ═══════════════════════════════════════════════════
+        TABLA DE REACTIVIDAD CRUZADA VÁLIDA (ÚNICA referencia permitida):
+        ═══════════════════════════════════════════════════
+        GRUPO BETA-LACTÁMICO (cruce válido entre estos):
+          penicilina, amoxicilina, ampicilina, piperacilina, dicloxacilina, oxacilina, nafcilina, ticarcilina
+        
+        CEFALOSPORINAS (cruce con penicilinas SOLO si comparten cadena lateral R1):
+          - Cefadroxilo, cefalexina, cefaclor → SÍ cruzan con amoxicilina/ampicilina (~1-2%)
+          - Ceftriaxona, cefotaxima, cefepime, ceftazidima → NO cruzan con penicilinas (<0.5%)
+          - En caso de duda sobre cefalosporinas → riesgo=false
+        
+        CARBAPENÉMICOS (imipenem, meropenem, ertapenem, doripenem):
+          - Cruce con penicilinas <1%. NO marcar como riesgo.
+        
+        SULFONAMIDAS (cruce válido entre estos):
+          sulfametoxazol, sulfasalazina, sulfadiazina, sulfacetamida
+          - NO cruzan con: furosemida, tiazidas, celecoxib, sumatriptán (contienen sulfo pero NO son sulfonamidas antibióticas)
+        
+        AINEs (cruce válido SOLO dentro del mismo subgrupo químico):
+          - Salicilatos: aspirina ↔ diflunisal
+          - Derivados del ácido propiónico: ibuprofeno ↔ naproxeno ↔ ketoprofeno
+          - Oxicams: piroxicam ↔ meloxicam
+          - Derivados del ácido acético: diclofenaco ↔ indometacina ↔ ketorolaco
+          - Paracetamol/Acetaminofén NO es AINE → NUNCA cruza con AINEs
+          - Metamizol/Dipirona NO cruza automáticamente con AINEs
+
+        OPIOIDES: NO hay reactividad cruzada entre opioides distintos.
+        ANESTÉSICOS LOCALES: Grupo éster (procaína↔benzocaína) NO cruza con grupo amida (lidocaína↔bupivacaína).
+        ═══════════════════════════════════════════════════
+
+        REGLAS ABSOLUTAS (violarlas es un error grave):
+        1. Si alergias es "Ninguna conocida" → riesgo=false SIEMPRE. Sin excepciones.
+        2. ALERGIA DIRECTA: riesgo=true SOLO si el medicamento contiene EXACTAMENTE la misma sustancia activa de la alergia.
+        3. REACCIÓN CRUZADA: riesgo=true SOLO si ambos fármacos aparecen en el MISMO grupo de la tabla anterior. Si la combinación NO aparece en la tabla → riesgo=false.
+        4. INTERACCIÓN FARMACOLÓGICA: Solo nivel X (contraindicado absoluto). NO alertes por nivel C o D.
+        5. NO inventes cruces. Si no estás 100% seguro de que la reactividad cruzada está documentada con >5% de incidencia → riesgo=false.
+        6. Paracetamol, Acetaminofén, Metamizol → NUNCA marcar como cruzado con penicilinas, cefalosporinas ni AINEs (a menos que la alergia sea a esa misma sustancia).
+        7. Ante CUALQUIER duda → riesgo=false. Un falso positivo es peor que un falso negativo en este sistema (el médico siempre revisa alergias manualmente también).
+
+        Responde SOLO este JSON sin markdown:
+        { "riesgo": true/false, "nivel": "alto|medio|ninguno", "tipo": "alergia_directa|reaccion_cruzada|interaccion_farmacologica|ninguno", "mensaje": "Si riesgo=false deja vacío. Si riesgo=true explica brevemente con la evidencia específica." }
       `;
 
       const result = await model.generateContent(prompt);
@@ -119,7 +182,7 @@ exports.analizarMedicamento = onCall(
 
     } catch (error) {
       console.error("Error en IA:", error);
-      return { riesgo: true, mensaje: "⚠️ Error de conexión con IA. Revisar manualmente." };
+      return { riesgo: false, nivel: "ninguno", tipo: "ninguno", mensaje: "", advertencia: "No se pudo validar con IA. Verifique manualmente." };
     }
   }
 );
@@ -456,6 +519,8 @@ exports.enviarWhatsAppNotificacion = onCall(
 
     const { telefono, nombrePaciente, consultorio, nombreDoctor, nombreClinica, motivo, templateName } = request.data;
 
+    console.log(`📲 enviarWhatsAppNotificacion llamada | tel=${telefono} | paciente=${nombrePaciente} | template=${templateName || 'default'}`);
+
     if (!telefono || !nombrePaciente) {
       throw new HttpsError("invalid-argument", "Faltan datos: teléfono y nombre del paciente son obligatorios.");
     }
@@ -463,13 +528,15 @@ exports.enviarWhatsAppNotificacion = onCall(
     // Normalizar número: quitar caracteres no numéricos, agregar código de país MX
     let phone = telefono.replace(/\D/g, "");
     if (phone.length === 10) phone = `52${phone}`;
-    // Normalizar a formato WhatsApp México: 521XXXXXXXXXX
-    if (phone.length === 12 && phone.startsWith("52") && !phone.startsWith("521")) {
-      phone = "521" + phone.substring(2);
+    // Si viene con formato viejo 521, quitar el 1 → formato correcto: 52XXXXXXXXXX
+    if (phone.length === 13 && phone.startsWith("521")) {
+      phone = "52" + phone.substring(3);
     }
     if (!/^\d{12,15}$/.test(phone)) {
       throw new HttpsError("invalid-argument", "Número de teléfono inválido.");
     }
+
+    console.log(`📲 Teléfono normalizado: ${phone}`);
 
     const token = whatsappToken.value();
     const phoneId = whatsappPhoneId.value();
@@ -532,10 +599,12 @@ exports.enviarWhatsAppNotificacion = onCall(
           data = await response.json();
 
           if (response.ok) {
+            console.log(`✅ WhatsApp enviado OK | template=${template} | lang=${langCode} | to=${phone} | msgId=${data.messages?.[0]?.id}`);
             sent = true;
             break;
           }
 
+          console.warn(`❌ WhatsApp falló | template=${template} | lang=${langCode} | to=${phone} | status=${response.status} | error=${JSON.stringify(data.error)}`);
           lastErrorMessage = data.error?.message || lastErrorMessage;
           const errorCode = data.error?.code;
 
@@ -591,9 +660,9 @@ exports.enviarEncuestaWhatsApp = onCall(
 
     let phone = telefono.replace(/\D/g, "");
     if (phone.length === 10) phone = `52${phone}`;
-    // Normalizar a formato WhatsApp México: 521XXXXXXXXXX
-    if (phone.length === 12 && phone.startsWith("52") && !phone.startsWith("521")) {
-      phone = "521" + phone.substring(2);
+    // Si viene con formato viejo 521, quitar el 1 → formato correcto: 52XXXXXXXXXX
+    if (phone.length === 13 && phone.startsWith("521")) {
+      phone = "52" + phone.substring(3);
     }
     if (!/^\d{12,15}$/.test(phone)) {
       throw new HttpsError("invalid-argument", "N\u00famero de tel\u00e9fono inv\u00e1lido.");
