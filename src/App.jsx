@@ -3,19 +3,24 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Building2, Compass, HeartPulse, MessageCircle, Shield, Stethoscope, Users, X,
   LayoutDashboard, Package, UserCog, Eye, Tag, FileText, BarChart3, ClipboardList, Activity,
-  CalendarDays, Syringe, Clipboard, Crown, DollarSign, SprayCan, ChevronRight, BookOpen
+  CalendarDays, Syringe, Clipboard, Crown, DollarSign, SprayCan, ChevronRight, BookOpen,
+  AlertTriangle
 } from 'lucide-react';
 import { db } from './config/firebase';
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import Login from './pages/auth/Login';
 import ChatPanel from './components/ChatPanel';
+import ChatNotificationToast from './components/ChatNotificationToast';
+import { PanicLauncherButton, PanicAlertOverlay, usePanicSystem } from './components/PanicButton';
 import { useAuth } from './context/AuthContext';
 import { hasPermission } from './services/permissionService';
+import { useAppVersion } from './hooks/useAppVersion';
 
 // Layout Admin
 import AdminLayout from './shared/AdminLayout';
 
 // Módulos Administrativos
+import AgendaAdmin from './pages/admin/AgendaAdmin';
 import DashboardAdmin from './pages/admin/DashboardAdmin';
 import Inventario from './pages/admin/Inventario';
 import Usuarios from './pages/admin/Usuarios';
@@ -25,6 +30,8 @@ import EncuestasSatisfaccion from './pages/admin/EncuestasSatisfaccion';
 import MonitorActividad from './pages/admin/MonitorActividad';
 import CatalogosGlobales from './pages/admin/CatalogosGlobales';
 import PlantillasDocumentos from './pages/admin/PlantillasDocumentos';
+import PerfilUsuario from './pages/admin/PerfilUsuario';
+import DepuracionConsultas from './pages/admin/DepuracionConsultas';
 const AuditoriaMigracion = lazy(() => import('./pages/admin/AuditoriaMigracion'));
 
 // Módulos Doctor
@@ -57,42 +64,84 @@ import Agenda from './shared/Agenda';
 
 const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
-const GlobalChatLauncher = () => {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [showLauncherMenu, setShowLauncherMenu] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const initCanalesRef = useRef(false);
-  const initPrivadosRef = useRef(false);
-  const launcherRef = useRef(null);
-  const audioCtxRef = useRef(null);
+const getMillis = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') {
+    const nanos = typeof value?.nanoseconds === 'number' ? value.nanoseconds : 0;
+    return (value.seconds * 1000) + Math.floor(nanos / 1e6);
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
-  // Desbloquear AudioContext al primer gesto del usuario
-  useEffect(() => {
-    const unlock = () => {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume();
-      }
-      // Una vez desbloqueado, eliminar listeners
-      window.removeEventListener('click', unlock);
-      window.removeEventListener('touchstart', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-    window.addEventListener('click', unlock);
-    window.addEventListener('touchstart', unlock);
-    window.addEventListener('keydown', unlock);
-    return () => {
-      window.removeEventListener('click', unlock);
-      window.removeEventListener('touchstart', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-  }, []);
+const buildLastMessageSignature = (chatDocId, data = {}) => {
+  const ts = data?.ultimoMensajeAt;
+  const seconds = typeof ts?.seconds === 'number' ? ts.seconds : '';
+  const nanos = typeof ts?.nanoseconds === 'number' ? ts.nanoseconds : '';
+  return [
+    chatDocId,
+    data?.ultimoRemitenteId || '',
+    getMillis(ts),
+    seconds,
+    nanos,
+    data?.ultimoTexto || ''
+  ].join('|');
+};
+
+  const GlobalChatLauncher = ({ triggerPanic, hasActiveAlert }) => {
+    const { user } = useAuth();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const [isChatOpen, setIsChatOpen] = useState(false);
+    const [directMessageUser, setDirectMessageUser] = useState(null);
+    const [showLauncherMenu, setShowLauncherMenu] = useState(false);
+    const [showShortcuts, setShowShortcuts] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const initCanalesRef = useRef(false);
+    const initPrivadosRef = useRef(false);
+    const launcherRef = useRef(null);
+    const audioCtxRef = useRef(null);
+    const usersMapRef = useRef({});
+    const notifiedMessagesRef = useRef(new Map());
+    const toastRef = useRef(null);
+
+    // Desbloquear AudioContext al primer gesto del usuario
+    useEffect(() => {
+      const unlock = () => {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume();
+        }
+        // Una vez desbloqueado, eliminar listeners
+        window.removeEventListener('click', unlock);
+        window.removeEventListener('touchstart', unlock);
+        window.removeEventListener('keydown', unlock);
+      };
+      window.addEventListener('click', unlock);
+      window.addEventListener('touchstart', unlock);
+      window.addEventListener('keydown', unlock);
+      return () => {
+        window.removeEventListener('click', unlock);
+        window.removeEventListener('touchstart', unlock);
+        window.removeEventListener('keydown', unlock);
+      };
+    }, []);
+
+    // Detener sonido al cerrar pestaña o navegar fuera
+    useEffect(() => {
+      const handleBeforeUnload = () => {
+        if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+          audioCtxRef.current.suspend();
+        }
+      };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+      };
+    }, []);
 
   // Sonido de notificación suave (ding) usando Web Audio API
   const playNotificationSound = useRef(async () => {
@@ -204,12 +253,39 @@ const GlobalChatLauncher = () => {
   const mostrarChat = Boolean(user?.uid) && !rutasSinChat.includes(location.pathname);
 
   useEffect(() => {
+    if (!mostrarChat || !user?.uid) return;
+    const cachedRaw = sessionStorage.getItem('chat_users_cache_v1');
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw);
+        if (Date.now() - cached.savedAt < 10 * 60 * 1000 && Array.isArray(cached.users)) {
+          const map = {};
+          cached.users.forEach((u) => { if (u.id !== user.uid) map[u.id] = u; });
+          usersMapRef.current = map;
+          return;
+        }
+      } catch { /* cache corrupto */ }
+    }
+    getDocs(collection(db, 'users')).then((snap) => {
+      const usersList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      sessionStorage.setItem('chat_users_cache_v1', JSON.stringify({ savedAt: Date.now(), users: usersList }));
+      const map = {};
+      usersList.forEach((u) => { if (u.id !== user.uid) map[u.id] = u; });
+      usersMapRef.current = map;
+    }).catch(() => {});
+  }, [mostrarChat, user?.uid]);
+
+  useEffect(() => {
     if (!mostrarChat) {
       setIsChatOpen(false);
       setShowLauncherMenu(false);
       setShowShortcuts(false);
     }
   }, [mostrarChat, location.pathname]);
+
+  useEffect(() => {
+    notifiedMessagesRef.current.clear();
+  }, [user?.uid, mostrarChat]);
 
   const shortcutCandidates = useMemo(() => ([
     { id: 'admin.dashboard', label: 'Dashboard', path: '/admin/dashboard', group: 'Administracion', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: LayoutDashboard },
@@ -221,6 +297,7 @@ const GlobalChatLauncher = () => {
     { id: 'admin.reportes', label: 'Reportes', path: '/admin/reportes', group: 'Administracion', permission: 'admin.reportes', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: BarChart3 },
     { id: 'admin.encuestas', label: 'Encuestas', path: '/admin/encuestas', group: 'Administracion', permission: 'admin.reportes', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: ClipboardList },
     { id: 'admin.monitor', label: 'Monitor', path: '/admin/monitor', group: 'Administracion', permission: 'admin.monitor', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: Activity },
+    { id: 'admin.agenda', label: 'Agenda', path: '/admin/agenda', group: 'Administracion', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: CalendarDays },
     { id: 'rh.dashboard', label: 'Dashboard', path: '/rh/dashboard', group: 'Recursos Humanos', permission: 'rh.dashboard', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: LayoutDashboard },
     { id: 'rh.auditoria', label: 'Auditoría', path: '/rh/auditoria', group: 'Recursos Humanos', permission: 'rh.auditoria', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: Clipboard },
     { id: 'rh.inventario', label: 'Inventario Macro', path: '/rh/inventario-macro', group: 'Recursos Humanos', permission: 'rh.inventario', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: Package },
@@ -233,7 +310,7 @@ const GlobalChatLauncher = () => {
     { id: 'enfermeria.jefatura', label: 'Jefatura', path: '/enfermeria/jefatura', group: 'Enfermeria', permission: 'enfermeria.jefatura', fallbackRoles: ['jefa_enfermeria', 'jefa'], icon: Crown },
     { id: 'enfermeria.capacitacion', label: 'Capacitación', path: '/enfermeria/capacitacion', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'], icon: BookOpen },
     { id: 'enfermeria.caducidades', label: 'Caducidades', path: '/enfermeria/caducidades', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'], icon: Package },
-    { id: 'shared.agenda', label: 'Agenda', path: '/agenda', group: 'General', permission: 'shared.agenda', fallbackRoles: ['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa'], icon: CalendarDays },
+    { id: 'shared.agenda', label: 'Agenda', path: '/agenda', group: 'General', permission: 'shared.agenda', fallbackRoles: ['medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa'], icon: CalendarDays },
     { id: 'shared.pacientes', label: 'Pacientes', path: '/pacientes', group: 'General', permission: 'shared.pacientes', fallbackRoles: ['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion'], icon: Users },
   ]), []);
 
@@ -305,7 +382,12 @@ const GlobalChatLauncher = () => {
   }, [showLauncherMenu, showShortcuts]);
 
   useEffect(() => {
-    const openHandler = () => setIsChatOpen(true);
+    const openHandler = (e) => {
+      setIsChatOpen(true);
+      if (e.detail?.directMessageUser) {
+        setDirectMessageUser(e.detail.directMessageUser);
+      }
+    };
     window.addEventListener('open-global-chat', openHandler);
     return () => window.removeEventListener('open-global-chat', openHandler);
   }, []);
@@ -316,6 +398,19 @@ const GlobalChatLauncher = () => {
     initCanalesRef.current = false;
     initPrivadosRef.current = false;
 
+    const isNewLastMessage = (chatDocId, data) => {
+      const signature = buildLastMessageSignature(chatDocId, data);
+      if (!signature) return false;
+      const cache = notifiedMessagesRef.current;
+      if (cache.has(signature)) return false;
+      cache.set(signature, Date.now());
+      if (cache.size > 500) {
+        const oldest = cache.keys().next().value;
+        if (oldest) cache.delete(oldest);
+      }
+      return true;
+    };
+
     const qCanales = query(collection(db, 'canales'), orderBy('ultimoMensajeAt', 'desc'), limit(20));
     const unsubCanales = onSnapshot(qCanales, (snap) => {
       if (!initCanalesRef.current) {
@@ -325,11 +420,25 @@ const GlobalChatLauncher = () => {
       const nuevos = snap.docChanges().filter((change) => {
         if (change.type !== 'added' && change.type !== 'modified') return false;
         const data = change.doc.data();
-        return data?.ultimoRemitenteId && data.ultimoRemitenteId !== user.uid;
-      }).length;
-      if (nuevos > 0) {
-        setUnreadCount((prev) => prev + nuevos);
+        if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
+        if (!data?.ultimoMensajeAt) return false;
+        return isNewLastMessage(change.doc.id, data);
+      });
+      if (nuevos.length > 0) {
+        setUnreadCount((prev) => prev + nuevos.length);
         playNotificationSound();
+        nuevos.forEach((change) => {
+          const data = change.doc.data();
+          const uid = data.ultimoRemitenteId;
+          const cachedUser = uid ? usersMapRef.current[uid] : null;
+          window.dispatchEvent(new CustomEvent('show-chat-notification', {
+            detail: {
+              nombre: cachedUser?.nombre || data.ultimoRemitenteNombre || 'Usuario',
+              texto: data.ultimoTexto || 'Nuevo mensaje',
+              rol: cachedUser?.rol || data.ultimoRemitenteRol || '',
+            }
+          }));
+        });
       }
     });
 
@@ -346,11 +455,25 @@ const GlobalChatLauncher = () => {
       const nuevos = snap.docChanges().filter((change) => {
         if (change.type !== 'added' && change.type !== 'modified') return false;
         const data = change.doc.data();
-        return data?.ultimoRemitenteId && data.ultimoRemitenteId !== user.uid;
-      }).length;
-      if (nuevos > 0) {
-        setUnreadCount((prev) => prev + nuevos);
+        if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
+        if (!data?.ultimoMensajeAt) return false;
+        return isNewLastMessage(change.doc.id, data);
+      });
+      if (nuevos.length > 0) {
+        setUnreadCount((prev) => prev + nuevos.length);
         playNotificationSound();
+        nuevos.forEach((change) => {
+          const data = change.doc.data();
+          const uid = data.ultimoRemitenteId;
+          const cachedUser = uid ? usersMapRef.current[uid] : null;
+          window.dispatchEvent(new CustomEvent('show-chat-notification', {
+            detail: {
+              nombre: cachedUser?.nombre || data.ultimoRemitenteNombre || 'Usuario',
+              texto: data.ultimoTexto || 'Nuevo mensaje',
+              rol: cachedUser?.rol || data.ultimoRemitenteRol || '',
+            }
+          }));
+        });
       }
     });
 
@@ -368,6 +491,7 @@ const GlobalChatLauncher = () => {
 
   return (
     <>
+      <ChatNotificationToast isChatOpen={isChatOpen} />
       <div
         ref={launcherRef}
         style={{
@@ -414,6 +538,14 @@ const GlobalChatLauncher = () => {
             >
               <Compass size={19} />
             </button>
+          )}
+
+          {triggerPanic && (
+            <PanicLauncherButton
+              showLauncherMenu={showLauncherMenu}
+              onActivate={triggerPanic}
+              hasActiveAlert={hasActiveAlert}
+            />
           )}
 
           {!isChatOpen && (
@@ -573,96 +705,146 @@ const GlobalChatLauncher = () => {
           </div>
         )}
 
-        <button
-          type="button"
-          onMouseDown={handleBtnPointerDown}
-          onTouchStart={handleBtnPointerDown}
-          onClick={() => {
-            if (dragRef.current.moved) { dragRef.current.moved = false; return; }
-            setShowLauncherMenu((prev) => {
-              const next = !prev;
-              if (!next) setShowShortcuts(false);
-              return next;
-            });
-          }}
-          title="Centro rapido · Arrastra para mover"
-          style={{
-            width: 52,
-            height: 52,
-            borderRadius: 14,
-            border: showLauncherMenu ? '1px solid #7dd3fc' : '1px solid #e2e8f0',
-            background: showLauncherMenu ? 'linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)' : '#ffffff',
-            color: showLauncherMenu ? '#ffffff' : '#0f172a',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: dragPos ? '0 14px 32px rgba(15,23,42,.25)' : '0 10px 20px rgba(15,23,42,.14)',
-            cursor: dragPos ? 'grabbing' : 'grab',
-            transition: dragPos ? 'none' : 'all .2s ease',
-            touchAction: 'none',
-            transform: dragPos ? 'scale(1.1)' : 'scale(1)',
-            opacity: dragPos ? 0.85 : 1,
-          }}
-        >
-          {showLauncherMenu ? <X size={20} /> : <Compass size={21} />}
-          {!showLauncherMenu && unreadCount > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: -5,
-                right: -5,
-                minWidth: 20,
-                height: 20,
-                borderRadius: '999px',
-                background: '#ef4444',
-                border: '2px solid #ffffff',
-                color: '#ffffff',
-                fontSize: 11,
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '0 5px',
-                lineHeight: 1,
-                animation: 'bounce-badge .4s ease'
-              }}
-            >
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          )}
-        </button>
+         <button
+           type="button"
+           onMouseDown={handleBtnPointerDown}
+           onTouchStart={handleBtnPointerDown}
+           onClick={() => {
+             if (dragRef.current.moved) { dragRef.current.moved = false; return; }
+             setShowLauncherMenu((prev) => {
+               const next = !prev;
+               if (!next) setShowShortcuts(false);
+               return next;
+             });
+           }}
+           title="Centro rapido · Arrastra para mover"
+           style={{
+             width: 52,
+             height: 52,
+             borderRadius: 14,
+             border: showLauncherMenu ? '1px solid #7dd3fc' : hasActiveAlert ? '1px solid #dc2626' : '1px solid #e2e8f0',
+             background: showLauncherMenu ? 'linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)' : hasActiveAlert ? 'linear-gradient(180deg, #fff1f2 0%, #fee2e2 100%)' : '#ffffff',
+             color: showLauncherMenu ? '#ffffff' : hasActiveAlert ? '#dc2626' : '#0f172a',
+             display: 'flex',
+             alignItems: 'center',
+             justifyContent: 'center',
+             boxShadow: dragPos ? '0 14px 32px rgba(15,23,42,.25)' : hasActiveAlert ? '0 10px 20px rgba(220,38,38,.16)' : '0 10px 20px rgba(15,23,42,.14)',
+             cursor: dragPos ? 'grabbing' : 'grab',
+             transition: dragPos ? 'none' : 'all .2s ease',
+             touchAction: 'none',
+             transform: dragPos ? 'scale(1.1)' : 'scale(1)',
+             opacity: dragPos ? 0.85 : 1,
+           }}
+         >
+           {showLauncherMenu ? <X size={20} /> : <Compass size={21} />}
+           {!showLauncherMenu && unreadCount > 0 && (
+             <span
+               style={{
+                 position: 'absolute',
+                 top: -5,
+                 right: -5,
+                 minWidth: 20,
+                 height: 20,
+                 borderRadius: '999px',
+                 background: '#ef4444',
+                 border: '2px solid #ffffff',
+                 color: '#ffffff',
+                 fontSize: 11,
+                 fontWeight: 700,
+                 display: 'flex',
+                 alignItems: 'center',
+                 justifyContent: 'center',
+                 padding: '0 5px',
+                 lineHeight: 1,
+                 animation: 'bounce-badge .4s ease'
+               }}
+             >
+               {unreadCount > 99 ? '99+' : unreadCount}
+             </span>
+           )}
+           {!showLauncherMenu && hasActiveAlert && (
+             <span
+               style={{
+                 position: 'absolute',
+                 top: -5,
+                 right: -5,
+                 minWidth: 20,
+                 height: 20,
+                 borderRadius: '999px',
+                 background: '#dc2626',
+                 border: '2px solid #ffffff',
+                 color: '#ffffff',
+                 fontSize: 11,
+                 fontWeight: 700,
+                 display: 'flex',
+                 alignItems: 'center',
+                 justifyContent: 'center',
+                 padding: '0 5px',
+                 lineHeight: 1,
+                 animation: 'bounce-badge .4s ease'
+               }}
+             >
+               ⚠️
+             </span>
+           )}
+         </button>
       </div>
-      <ChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
+      <ChatPanel isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setDirectMessageUser(null); }} directMessageUser={directMessageUser} />
     </>
   );
 };
 
+// Route guards defined at module level so their component identity is stable across
+// App re-renders (e.g. heartbeat-triggered Firestore → onSnapshot → setUser every ~2 min).
+// Defining them inside App() creates a new function type on every render, which causes
+// React to unmount/remount children (including ExpedienteClinico), resetting all state.
+const GuestRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user) return <Navigate to="/portal" replace />;
+  return children;
+};
+
+const RequireAuth = ({ children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+};
+
+const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasPermission(user, permissionId, fallbackRoles)) return <Navigate to="/portal" replace />;
+  return children;
+};
+
+const UpdateBanner = () => {
+  const { updateAvailable } = useAppVersion();
+  if (!updateAvailable) return null;
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[9999] bg-blue-600 text-white text-sm font-semibold flex items-center justify-between px-4 py-2 shadow-lg">
+      <span>Hay una actualización disponible.</span>
+      <button
+        onClick={() => window.location.reload()}
+        className="ml-4 bg-white text-blue-700 text-xs font-bold px-3 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+      >
+        Actualizar ahora
+      </button>
+    </div>
+  );
+};
+
 function App() {
-  const GuestRoute = ({ children }) => {
-    const { user, loading } = useAuth();
-    if (loading) return null;
-    if (user) return <Navigate to="/portal" replace />;
-    return children;
-  };
-
-  const RequireAuth = ({ children }) => {
-    const { user, loading } = useAuth();
-    if (loading) return null;
-    if (!user) return <Navigate to="/login" replace />;
-    return children;
-  };
-
-  const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
-    const { user, loading } = useAuth();
-    if (loading) return null;
-    if (!user) return <Navigate to="/login" replace />;
-    if (!hasPermission(user, permissionId, fallbackRoles)) return <Navigate to="/portal" replace />;
-    return children;
-  };
+  const { user } = useAuth();
+  const { activeAlert, triggerPanic, dismissAlert, hasActiveAlert } = usePanicSystem();
 
   return (
     <BrowserRouter>
-      <GlobalChatLauncher />
+      <UpdateBanner />
+      <GlobalChatLauncher triggerPanic={triggerPanic} hasActiveAlert={hasActiveAlert} />
+      <PanicAlertOverlay alert={activeAlert} onDismiss={dismissAlert} currentUserId={user?.uid} />
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
@@ -673,12 +855,15 @@ function App() {
           <Route path="dashboard" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><DashboardAdmin /></PermissionRoute>} />
           <Route path="inventario" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Inventario /></PermissionRoute>} />
           <Route path="usuarios" element={<PermissionRoute permissionId="admin.usuarios" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Usuarios /></PermissionRoute>} />
+          <Route path="usuarios/:userId" element={<PermissionRoute permissionId="admin.usuarios" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><PerfilUsuario /></PermissionRoute>} />
           <Route path="supervision" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Supervision /></PermissionRoute>} />
           <Route path="catalogos" element={<PermissionRoute permissionId="admin.catalogos" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><CatalogosGlobales /></PermissionRoute>} />
           <Route path="plantillas" element={<PermissionRoute permissionId="admin.plantillas" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><PlantillasDocumentos /></PermissionRoute>} />
           <Route path="reportes" element={<PermissionRoute permissionId="admin.reportes" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Reportes /></PermissionRoute>} />
           <Route path="encuestas" element={<PermissionRoute permissionId="admin.reportes" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><EncuestasSatisfaccion /></PermissionRoute>} />
           <Route path="monitor" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><MonitorActividad /></PermissionRoute>} />
+          <Route path="depuracion" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><DepuracionConsultas /></PermissionRoute>} />
+          <Route path="agenda" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><AgendaAdmin /></PermissionRoute>} />
           <Route
             path="migracion"
             element={
@@ -717,7 +902,7 @@ function App() {
         <Route path="/enfermeria/orden-servicio" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo']}><OrdenServicioEnfermeria /></PermissionRoute>} />
 
         {/* --- RUTAS COMPARTIDAS --- */}
-        <Route path="/agenda" element={<PermissionRoute permissionId="shared.agenda" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />
+        <Route path="/agenda" element={<PermissionRoute permissionId="shared.agenda" fallbackRoles={['medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />
         <Route path="/pacientes" element={<PermissionRoute permissionId="shared.pacientes" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion']}><Pacientes /></PermissionRoute>} />
 
         <Route path="*" element={<Navigate to="/" />} />

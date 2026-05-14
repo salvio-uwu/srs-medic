@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit, Eye } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
 import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth, deleteUser } from 'firebase/auth';
@@ -168,6 +169,7 @@ const buildInitialForm = () => ({
 });
 
 const Usuarios = () => {
+  const navigate = useNavigate();
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('tabla');
@@ -349,16 +351,6 @@ const Usuarios = () => {
         return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es');
       });
   }, [usuarios, roleFilter, statusFilter, searchTerm, sortBy]);
-
-  const stats = useMemo(() => {
-    const total = usuarios.length;
-    const online = usuarios.filter((u) => isUserOnline(u)).length;
-    const offline = Math.max(total - online, 0);
-    const medicos = usuarios.filter((u) => u.rol === 'medico').length;
-    const admins = usuarios.filter((u) => ['admin', 'admin_maestro', 'administrador'].includes(u.rol)).length;
-    const withCustomPermissions = usuarios.filter((u) => Object.keys(u.permissions || {}).length > 0).length;
-    return { total, online, offline, medicos, admins, withCustomPermissions };
-  }, [usuarios]);
 
   const roleCounts = useMemo(() => {
     const map = ROLE_OPTIONS.reduce((acc, r) => ({ ...acc, [r.value]: 0 }), {});
@@ -768,18 +760,6 @@ const Usuarios = () => {
         </div>
       </div>
 
-      {/* ── Estadísticas compactas ── */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-1">
-        <StatPill label="Total" value={stats.total} />
-        <span className="w-px h-4 bg-slate-200" />
-        <StatPill label="En línea" value={stats.online} color="text-emerald-600" />
-        <StatPill label="Offline" value={stats.offline} color="text-slate-400" />
-        <span className="w-px h-4 bg-slate-200" />
-        <StatPill label="Médicos" value={stats.medicos} color="text-blue-600" />
-        <StatPill label="Admins" value={stats.admins} color="text-purple-600" />
-        <StatPill label="Con permisos" value={stats.withCustomPermissions} color="text-amber-600" />
-      </div>
-
       {viewMode === 'alta' && (
         <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-4">
 
@@ -1025,210 +1005,181 @@ const Usuarios = () => {
       )}
 
       {viewMode === 'tabla' && (
-      <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="space-y-4">
 
-        {/* Barra de control */}
-        <div className="p-5 border-b border-slate-100 space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-wider text-slate-700">Directorio de usuarios</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Filtra, busca y administra el acceso de cada persona</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-semibold">Estado:</span>
-              <button
-                onClick={() => setStatusFilter('all')}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${statusFilter === 'all' ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-              >Todos</button>
-              <button
-                onClick={() => setStatusFilter('online')}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all inline-flex items-center gap-1 ${statusFilter === 'online' ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-              ><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Online</button>
-              <button
-                onClick={() => setStatusFilter('offline')}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${statusFilter === 'offline' ? 'bg-slate-600 text-white border-slate-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-              >Offline</button>
-            </div>
+        {/* ── Filtros ── */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none"
+              placeholder="Buscar por nombre, correo, rol o asignación..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
-
-          {/* Filtros por rol */}
-          <div className="flex flex-wrap gap-2">
+          <select
+            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">Todos los estados</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
+          <select
+            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+          >
+            <option value="all">Todos los roles</option>
+            {ROLE_OPTIONS.map((r) => (
+              <option key={r.value} value={r.value}>{r.label} ({roleCounts[r.value] || 0})</option>
+            ))}
+          </select>
+          <select
+            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="online">Online primero</option>
+            <option value="recent">Actividad reciente</option>
+            <option value="role">Por rol</option>
+          </select>
+          <div className="inline-flex items-center gap-2 text-xs text-slate-500">
+            <span className="font-bold text-slate-700">{filteredUsers.length}</span> usuario(s)
+          </div>
+          {(roleFilter !== 'all' || statusFilter !== 'all' || searchTerm.trim()) && (
             <button
-              onClick={() => setRoleFilter('all')}
-              className={`rounded-full border px-3 py-1 text-xs font-bold transition-all ${roleFilter === 'all' ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              onClick={() => { setSearchTerm(''); setRoleFilter('all'); setStatusFilter('all'); setSortBy('online'); }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-medium transition"
             >
-              Todos los roles
+              <FilterX size={14} /> Limpiar
             </button>
-            {ROLE_OPTIONS.map((role) => {
-              const active = roleFilter === role.value;
-              const c = ROLE_COLORS[role.value];
-              return (
-                <button
-                  key={role.value}
-                  onClick={() => setRoleFilter(active ? 'all' : role.value)}
-                  className={`rounded-full border px-3 py-1 text-xs font-bold transition-all inline-flex items-center gap-1.5 ${active ? `${c?.bg ?? 'bg-blue-50'} ${c?.text ?? 'text-blue-700'} ${c?.border ?? 'border-blue-200'} shadow-sm` : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${active ? (c?.dot ?? 'bg-blue-500') : 'bg-slate-300'}`} />
-                  {role.label}
-                  <span className={`text-[10px] font-black ${active ? '' : 'text-slate-400'}`}>{roleCounts[role.value] || 0}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Búsqueda y ordenamiento */}
-          <div className="flex flex-col md:flex-row md:items-center gap-3">
-            <div className="relative flex-1 md:max-w-md">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50/60 focus:bg-white focus:border-blue-400 outline-none text-sm transition-all"
-                placeholder="Buscar por nombre, correo, rol o asignación..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-blue-400">
-                <option value="online">Online primero</option>
-                <option value="recent">Actividad reciente</option>
-                <option value="role">Por rol</option>
-              </select>
-              <button
-                onClick={() => { setSearchTerm(''); setRoleFilter('all'); setStatusFilter('all'); setSortBy('online'); }}
-                className="px-3 py-2.5 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-sm inline-flex items-center gap-1.5 transition-all"
-              >
-                <FilterX size={14} /> Limpiar
-              </button>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Resumen de filtro activo */}
-        <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50/50 text-xs text-slate-500 font-medium flex flex-wrap items-center gap-2">
-          <span className="font-bold text-slate-700">{filteredUsers.length}</span> resultado(s)
-          {roleFilter !== 'all' && <><span className="text-slate-300">·</span><span className="bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 font-semibold">{roleLabel(roleFilter)}</span></>}
-          {statusFilter !== 'all' && <><span className="text-slate-300">·</span><span className={`rounded-full px-2 py-0.5 font-semibold border ${statusFilter === 'online' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{statusFilter === 'online' ? 'Online' : 'Offline'}</span></>}
-          {searchTerm.trim() && <><span className="text-slate-300">·</span><span className="text-slate-600">"{searchTerm.trim()}"</span></>}
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left border-collapse">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="p-3 text-xs font-bold text-slate-400 uppercase w-12 text-center">#</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase text-center w-24">Estado</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Usuario</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Rol</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Especialidad</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Asignación</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Última actividad</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase">Permisos</th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading && (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
-                    <td className="p-3"><div className="h-3 bg-slate-100 rounded mx-auto w-5" /></td>
-                    <td className="p-4"><div className="h-5 bg-slate-100 rounded-full w-16 mx-auto" /></td>
-                    <td className="p-4"><div className="flex items-center gap-3"><div className="w-9 h-9 rounded-full bg-slate-100 flex-shrink-0" /><div className="space-y-1.5"><div className="h-3 bg-slate-100 rounded w-32" /><div className="h-2.5 bg-slate-100 rounded w-44" /></div></div></td>
-                    <td className="p-4"><div className="h-5 bg-slate-100 rounded-full w-20" /></td>
-                    <td className="p-4"><div className="h-3 bg-slate-100 rounded w-24" /></td>
-                    <td className="p-4"><div className="h-3 bg-slate-100 rounded w-28" /></td>
-                    <td className="p-4"><div className="h-3 bg-slate-100 rounded w-20" /></td>
-                    <td className="p-4"><div className="h-3 bg-slate-100 rounded w-16" /></td>
-                    <td className="p-4"><div className="h-7 bg-slate-100 rounded w-8 ml-auto" /></td>
-                  </tr>
-                ))
-              )}
-              {!loading && filteredUsers.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="py-16 text-center">
-                    <div className="flex flex-col items-center gap-3 text-slate-400">
-                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center">
-                        <Users size={22} className="text-slate-300" />
-                      </div>
-                      <p className="text-sm font-semibold">No hay usuarios con los filtros aplicados</p>
-                      <p className="text-xs">Prueba ajustando los criterios de búsqueda</p>
-                    </div>
-                  </td>
+        {/* ── Tabla ── */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-8">#</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Estado</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Usuario</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rol</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Asignación</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Actividad</th>
+                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Permisos</th>
+                  <th className="px-3 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider w-0">Acciones</th>
                 </tr>
-              )}
-
-              {!loading && filteredUsers.map((user, idx) => {
-                const online = isUserOnline(user);
-                const asignacion = user.consultorioRecurrente || user.areaRecurrente || user.sucursal || '--';
-                const permissionCount = Array.isArray(user.permissionList)
-                  ? user.permissionList.length
-                  : Object.values(user.permissions || {}).filter(Boolean).length;
-                const c = ROLE_COLORS[user.rol];
-
-                return (
-                  <tr key={user.id} className="hover:bg-slate-50/80 transition-colors group">
-                    <td className="p-3 text-center text-xs font-semibold text-slate-300">{idx + 1}</td>
-                    <td className="p-4 text-center">
-                      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${online ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-                        {online ? 'Online' : 'Offline'}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <UserAvatar name={user.nombre} role={user.rol} />
-                        <div>
-                          <p className="font-bold text-slate-800 text-sm leading-snug">{user.nombre}</p>
-                          <p className="text-xs text-slate-400">{user.email}</p>
-                          {!!user.cedulaProfesional && <p className="text-[10px] text-blue-600 font-bold mt-0.5">Céd. {user.cedulaProfesional}</p>}
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading && Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-4" /></td>
+                    <td className="px-3 py-2.5"><div className="h-5 bg-slate-100 rounded-full w-16" /></td>
+                    <td className="px-3 py-2.5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-slate-100 flex-shrink-0" /><div className="space-y-1.5"><div className="h-3 bg-slate-100 rounded w-28" /><div className="h-2.5 bg-slate-100 rounded w-40" /></div></div></td>
+                    <td className="px-3 py-2.5"><div className="h-5 bg-slate-100 rounded-full w-20" /></td>
+                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-24" /></td>
+                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-20" /></td>
+                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-16" /></td>
+                    <td className="px-3 py-2.5"><div className="h-7 bg-slate-100 rounded w-16 ml-auto" /></td>
+                  </tr>
+                ))}
+                {!loading && filteredUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="text-center py-16 text-slate-400">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center">
+                          <Users size={22} className="text-slate-300" />
                         </div>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <RoleBadge role={user.rol} />
-                    </td>
-                    <td className="p-4 text-xs text-slate-500">{user.especialidad || <span className="text-slate-300">—</span>}</td>
-                    <td className="p-4">
-                      <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                        <MapPin size={11} className="text-slate-300 flex-shrink-0" /> {asignacion}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                        <Clock3 size={11} className="text-slate-300 flex-shrink-0" /> {formatLastSeen(user.lastSeen)}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border ${permissionCount > 0 ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                        <Key size={9} /> {permissionCount} activos
-                      </span>
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => startEditUser(user)}
-                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Editar usuario"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        {(user.rol !== 'admin_maestro' && user.rol !== 'admin') && (
-                          <button
-                            onClick={() => handleDelete(user)}
-                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                            title="Eliminar usuario"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
+                        <p className="text-sm font-semibold">No se encontraron usuarios</p>
+                        <p className="text-xs">Ajusta los filtros o crea un nuevo usuario</p>
                       </div>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                )}
+                {!loading && filteredUsers.map((user, idx) => {
+                  const online = isUserOnline(user);
+                  const asignacion = user.consultorioRecurrente || user.areaRecurrente || user.sucursal || '—';
+                  const permissionCount = Array.isArray(user.permissionList)
+                    ? user.permissionList.length
+                    : Object.values(user.permissions || {}).filter(Boolean).length;
+                  return (
+                    <tr
+                      key={user.id}
+                      className="border-b border-slate-50 hover:bg-slate-50/70 cursor-pointer"
+                      onClick={() => navigate(`/admin/usuarios/${user.id}`)}
+                    >
+                      <td className="px-3 py-2.5 text-xs text-slate-300">{idx + 1}</td>
+                      <td className="px-3 py-2.5">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${online ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                          {online ? 'Online' : 'Offline'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <UserAvatar name={user.nombre} role={user.rol} />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 truncate">{user.nombre}</p>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              <span className="text-xs text-slate-400 truncate">{user.email}</span>
+                              {user.especialidad && <span className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">{user.especialidad}</span>}
+                              {user.cedulaProfesional && <span className="text-[10px] text-blue-600 font-semibold">Céd. {user.cedulaProfesional}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <RoleBadge role={user.rol} />
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-slate-500">
+                        <div className="flex items-center gap-1.5">
+                          <MapPin size={12} className="text-slate-300 flex-shrink-0" /> {asignacion}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-slate-500">
+                        <div className="flex items-center gap-1.5">
+                          <Clock3 size={12} className="text-slate-300 flex-shrink-0" /> {formatLastSeen(user.lastSeen)}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${permissionCount > 0 ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                          <Key size={9} /> {permissionCount}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => startEditUser(user)}
+                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                            title="Editar usuario"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          {(user.rol !== 'admin_maestro' && user.rol !== 'admin') && (
+                            <button
+                              onClick={() => handleDelete(user)}
+                              className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                              title="Eliminar usuario"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </section>
+
+      </div>
       )}
     </div>
   );
@@ -1272,12 +1223,5 @@ const RoleBadge = ({ role }) => {
     </span>
   );
 };
-
-const StatPill = ({ label, value, color = 'text-slate-700' }) => (
-  <div className="flex items-baseline gap-1.5">
-    <span className={`text-xl font-black leading-none ${color}`}>{value}</span>
-    <span className="text-xs text-slate-400 font-medium">{label}</span>
-  </div>
-);
 
 export default Usuarios;

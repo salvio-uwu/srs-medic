@@ -15,7 +15,6 @@ BOLD='\033[1m'
 # Funciones auxiliares
 # ==========================================
 
-# Animación de carga en consola
 spinner() {
     local pid=$1
     local delay=0.1
@@ -37,58 +36,85 @@ spinner() {
 clear
 echo -e "${BOLD}${CYAN}=== SRS Medic | CI/CD Release Pipeline ===${NC}\n"
 
-# 1. Validar dependencia de Node
+# 1. Validar dependencias
 if ! command -v node &> /dev/null; then
-    echo -e "${RED}Error: Node.js es requerido para leer el package.json.${NC}"
+    echo -e "${RED}[!] Error: Node.js es requerido.${NC}"
     exit 1
 fi
 
 # 2. Extraer versión actual
-VERSION=$(node -p "require('./package.json').version")
-echo -e "Versión objetivo: ${BOLD}${YELLOW}v${VERSION}${NC}\n"
+CURRENT_VERSION=$(node -p "require('./package.json').version")
+echo -e "Versión actual detectada: ${BOLD}${CYAN}v${CURRENT_VERSION}${NC}\n"
 
-# 3. Confirmación de seguridad
-read -p "Deseas iniciar el despliegue a GitHub Actions? (y/n) " -n 1 -r
+# 3. Menú interactivo de versionamiento (SemVer)
+echo -e "${BLUE}Selecciona el tipo de actualización para el package.json:${NC}"
+echo "  1) Patch (Corrección de bugs)       -> Incrementa a $(npm --no-git-tag-version version patch --dry-run 2>/dev/null | sed 's/v//')"
+echo "  2) Minor (Nuevas características)   -> Incrementa a $(npm --no-git-tag-version version minor --dry-run 2>/dev/null | sed 's/v//')"
+echo "  3) Major (Cambios incompatibles)    -> Incrementa a $(npm --no-git-tag-version version major --dry-run 2>/dev/null | sed 's/v//')"
+echo "  4) Ninguna (Mantener v${CURRENT_VERSION} para reintentar pipeline)"
+echo ""
+read -p "Opción [1-4]: " BUMP_OPT
+
+echo ""
+
+case $BUMP_OPT in
+    1) npm version patch --no-git-tag-version > /dev/null ;;
+    2) npm version minor --no-git-tag-version > /dev/null ;;
+    3) npm version major --no-git-tag-version > /dev/null ;;
+    4) echo -e "${YELLOW}[i] Manteniendo versión actual.${NC}" ;;
+    *) echo -e "${RED}[!] Opción inválida. Abortando.${NC}"; exit 1 ;;
+esac
+
+# Obtener la versión final que se va a desplegar
+VERSION=$(node -p "require('./package.json').version")
+
+if [ "$CURRENT_VERSION" != "$VERSION" ]; then
+    echo -e "${GREEN}[✔] Versión actualizada a v${VERSION}${NC}\n"
+fi
+
+# 4. Confirmación de seguridad
+read -p "¿Deseas iniciar el despliegue de la versión v${VERSION} a GitHub Actions? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo -e "\n${RED}Operación cancelada por el usuario.${NC}"
+    # Si cancela, revertimos el cambio en el package.json por limpieza
+    git restore package.json package-lock.json 2>/dev/null
     exit 1
 fi
 echo ""
 
-# 4. Sincronización de código base
+# 5. Sincronización de código base
 echo -e "${BLUE}[1/3] Analizando árbol de trabajo...${NC}"
 if [[ -n $(git status -s) ]]; then
     git add .
-    # Se usa nomenclatura de commits semánticos
     git commit -m "chore(release): empaquetar versión v${VERSION}" > /dev/null
     
-    echo -n -e "${BLUE}      Empujando cambios a 'main'...${NC}"
+    echo -n -e "${BLUE}      Empujando código a la rama 'main'...${NC}"
     git push origin main &> /dev/null &
     spinner $!
     echo -e "\n"
 else
-    echo -e "${YELLOW}      Árbol limpio. Omitiendo commit.${NC}\n"
+    echo -e "${YELLOW}      Árbol limpio (sin contar package.json si no hubo bump).${NC}\n"
 fi
 
-# 5. Gestión de Tags
+# 6. Gestión de Tags
 echo -n -e "${BLUE}[2/3] Generando tag de versión (v${VERSION})...${NC}"
 if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
     echo -e "\n${YELLOW}      Advertencia: El tag v${VERSION} ya existe localmente.${NC}"
 else
     git tag -a "v${VERSION}" -m "Release oficial v${VERSION}"
-    echo -e " Hecho."
+    echo -e " [✔]"
 fi
 
-# 6. Disparar Pipeline
+# 7. Disparar Pipeline
 echo -n -e "${BLUE}[3/3] Disparando GitHub Actions...${NC}"
 git push origin "v${VERSION}" &> /dev/null &
 spinner $!
 echo -e "\n"
 
-# 7. Finalización y métricas
+# 8. Finalización y enlaces
 REPO_URL=$(git config --get remote.origin.url | sed -e 's/git@github.com:/https:\/\/github.com\//' -e 's/\.git//')
 
-echo -e "${BOLD}${GREEN}Despliegue iniciado correctamente.${NC}"
-echo -e "Monitorea la compilación de los binarios en:"
+echo -e "${BOLD}${GREEN}[✔] Despliegue iniciado correctamente.${NC}"
+echo -e "Monitorea la compilación de los binarios nativos en:"
 echo -e "${CYAN}${REPO_URL}/actions${NC}\n"

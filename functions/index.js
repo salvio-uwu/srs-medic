@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const { google } = require("googleapis");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -100,7 +100,15 @@ exports.analizarMedicamento = onCall(
     try {
       // 2. Inicializamos la IA *adentro* de la función usando el secreto
       const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.0-flash",
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
+      });
 
       const textoAlergias = normalizarAlergiasParaIA(
         historialAlergias,
@@ -375,7 +383,7 @@ exports.generarBoletinMedicoSeguro = onCall(
 );
 
 exports.askGemini = onCall(
-  { secrets: [geminiApiKey], invoker: "public", cors: true },
+  { secrets: [geminiApiKey], invoker: "public", cors: true, timeoutSeconds: 90 },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "No autorizado.");
@@ -386,14 +394,37 @@ exports.askGemini = onCall(
 
     try {
       const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.0-flash",
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
+      });
 
-      const result = await model.generateContent(prompt);
-      return { result: result.response.text() };
+      let lastError = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const result = await model.generateContent(prompt);
+          return { result: result.response.text() };
+        } catch (e) {
+          lastError = e;
+          const msg = String(e?.message || "");
+          const esRateLimit = msg.includes("429") || msg.includes("Resource exhausted") || msg.includes("Too Many Requests");
+          if (!esRateLimit || attempt === 2) throw e;
+          const delay = Math.pow(2, attempt + 2) * 1000;
+          console.log(`askGemini: rate limit, reintento ${attempt + 1}/3 en ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      throw lastError;
       
     } catch (error) {
       console.error("Error en Gemini:", error);
-      throw new HttpsError("internal", "Fallo al consultar a Gemini.");
+      const detalle = error?.message || String(error);
+      throw new HttpsError("internal", `Fallo al consultar a Gemini: ${detalle}`);
     }
 });
 

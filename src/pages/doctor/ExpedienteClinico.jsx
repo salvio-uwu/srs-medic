@@ -6,25 +6,25 @@ import {
   History as HistoryIcon, User, Clock, Activity, LayoutGrid, Stethoscope,
   Droplet, Baby, Scissors, AlertTriangle, X, Printer,
   FlaskConical, Syringe, FileBadge, ShieldCheck, CheckCircle2, AlertCircle, HeartHandshake,
-  Monitor, Calculator, LogOut, Scale, Ruler
+  Monitor, Calculator, LogOut, Scale, Ruler, ArrowLeftRight
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { goBackOr } from '../../utils/navigation';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { db, auth } from "../../config/firebase";
-import { 
+import {
   doc, getDoc, collection, addDoc, serverTimestamp, updateDoc, deleteField,
-  query, where, orderBy, getDocs, limit, runTransaction, setDoc, onSnapshot 
+  query, where, orderBy, getDocs, limit, runTransaction, setDoc, onSnapshot
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../../context/AuthContext'; 
+import { useAuth } from '../../context/AuthContext';
 
 // Importación de las secciones y componentes
 import SeccionConsulta from './expediente/SeccionConsulta';
 import SeccionAntecedentes from './expediente/SeccionAntecedentes';
 import SeccionResumen from './expediente/SeccionResumen';
- 
+
 import HistoriaClinicaModal from '../../components/HistoriaClinicaModal';
 import EstudioPrevioModal from '../../components/EstudioPrevioModal';
 import HistoricoEstudiosModal from '../../components/HistoricoEstudiosModal';
@@ -35,7 +35,9 @@ import { listLegacyLinksByPaciente } from '../../services/patientLinkService';
 import { createClinicalAuditRecord, validateClinicalRecord } from '../../services/clinicalAuditService';
 import { uploadDocumentoPDF } from '../../services/documentStorageService';
 import { buildEnfermeriaPatientLogRecord } from '../../services/enfermeriaPatientLogService';
+import { getTipoCitaLabel } from '../../services/referenciaMedicaService';
 import AvatarPaciente from '../../components/AvatarPaciente';
+import { getPatientDisplayName } from '../../utils/patientName';
 
 // historialmedico/ fue eliminado — glob deshabilitado
 const legacyHtmlModules = {};
@@ -210,14 +212,13 @@ const STYLES = `
 
 // --- COMPONENTE INTERNO: TOAST NOTIFICATION ---
 const ToastNotification = ({ msg, type, onClose }) => (
-  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top duration-500 backdrop-blur-md ${
-    type === 'error' ? 'bg-red-50/90 border-red-200 text-red-700' : 
-    type === 'success' ? 'bg-emerald-50/90 border-emerald-200 text-emerald-700' : 
-    'bg-blue-50/90 border-blue-200 text-blue-700'
-  }`}>
-    {type === 'error' ? <AlertCircle size={24}/> : type === 'success' ? <CheckCircle2 size={24}/> : <Clock size={24}/>}
+  <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border animate-in slide-in-from-top duration-500 backdrop-blur-md ${type === 'error' ? 'bg-red-50/90 border-red-200 text-red-700' :
+      type === 'success' ? 'bg-emerald-50/90 border-emerald-200 text-emerald-700' :
+        'bg-blue-50/90 border-blue-200 text-blue-700'
+    }`}>
+    {type === 'error' ? <AlertCircle size={24} /> : type === 'success' ? <CheckCircle2 size={24} /> : <Clock size={24} />}
     <span className="font-bold text-sm">{msg}</span>
-    <button onClick={onClose} className="ml-4 p-1 hover:bg-black/5 rounded-full transition-colors"><X size={16}/></button>
+    <button onClick={onClose} className="ml-4 p-1 hover:bg-black/5 rounded-full transition-colors"><X size={16} /></button>
   </div>
 );
 
@@ -233,11 +234,10 @@ const ControlEmbarazoModal = ({ onClose, onBackToMenu, data, updateCampo }) => {
             <button
               key={op}
               onClick={() => updateCampo(`control_embarazo.${path}`, op)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
-                val === op
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${val === op
                   ? 'bg-blue-600 text-white border-blue-600 shadow-md'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-              }`}
+                }`}
             >
               {op}
             </button>
@@ -564,25 +564,23 @@ const mergeClinicalSection = (base, incoming) => {
 };
 
 const mergeGeneratedEvents = (baseEvents = [], nextEvents = []) => {
-  const seen = new Set();
+  // Clave semántica: no incluye timestamps ni URLs para que la deduplicación
+  // funcione correctamente entre eventos ya guardados y nuevos de sesión.
+  const semanticKey = (event) => [
+    event?.tipo || '',
+    event?.nombre || '',
+    event?.formato || '',
+    event?.origen || '',
+    event?.plantillaId || '',
+    event?.totalMedicamentos || ''
+  ].join('|');
 
-  return [...baseEvents, ...nextEvents].filter((event) => {
-    const key = [
-      event?.tipo || '',
-      event?.nombre || '',
-      event?.formato || '',
-      event?.origen || '',
-      event?.plantillaId || '',
-      event?.generadoAt || '',
-      event?.archivoUrl || '',
-      event?.archivoPath || '',
-      event?.totalMedicamentos || ''
-    ].join('|');
-
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // Los eventos de nextEvents (sesión actual) tienen prioridad: se sobreescriben
+  // los eventos base con la misma clave semántica.
+  const merged = new Map();
+  for (const evt of baseEvents) merged.set(semanticKey(evt), evt);
+  for (const evt of nextEvents) merged.set(semanticKey(evt), evt);
+  return Array.from(merged.values());
 };
 
 const pickMostRecentClinicalSection = (rows = [], sectionKey = '') => {
@@ -663,15 +661,15 @@ const buildComparableDraftSnapshot = ({
 
   const normalizedEventos = Array.isArray(eventosDocumentales)
     ? eventosDocumentales.map((evento) => ({
-        tipo: evento?.tipo || '',
-        nombre: evento?.nombre || '',
-        formato: evento?.formato || '',
-        origen: evento?.origen || '',
-        plantillaId: evento?.plantillaId || '',
-        plantillaNombre: evento?.plantillaNombre || '',
-        archivoUrl: evento?.archivoUrl || '',
-        archivoPath: evento?.archivoPath || ''
-      }))
+      tipo: evento?.tipo || '',
+      nombre: evento?.nombre || '',
+      formato: evento?.formato || '',
+      origen: evento?.origen || '',
+      plantillaId: evento?.plantillaId || '',
+      plantillaNombre: evento?.plantillaNombre || '',
+      archivoUrl: evento?.archivoUrl || '',
+      archivoPath: evento?.archivoPath || ''
+    }))
     : [];
 
   return normalizeComparableValue({
@@ -704,13 +702,13 @@ const buildUnsavedChangeSummary = (baseline, current) => {
   );
   pushIfChanged(
     !isSame(baseExp?.consulta?.diagnostico?.enfermedad_actual, currentExp?.consulta?.diagnostico?.enfermedad_actual)
-      || !isSame(baseExp?.consulta?.diagnostico?.indicaciones, currentExp?.consulta?.diagnostico?.indicaciones)
-      || !isSame(baseExp?.consulta?.diagnostico?.pronostico, currentExp?.consulta?.diagnostico?.pronostico),
+    || !isSame(baseExp?.consulta?.diagnostico?.indicaciones, currentExp?.consulta?.diagnostico?.indicaciones)
+    || !isSame(baseExp?.consulta?.diagnostico?.pronostico, currentExp?.consulta?.diagnostico?.pronostico),
     'Diagnóstico, indicaciones o pronóstico'
   );
   pushIfChanged(
     !isSame(baseExp?.consulta?.diagnostico?.tratamiento_lista, currentExp?.consulta?.diagnostico?.tratamiento_lista)
-      || !isSame(baseline?.tempMed, current?.tempMed),
+    || !isSame(baseline?.tempMed, current?.tempMed),
     'Tratamiento o receta pendiente'
   );
   pushIfChanged(
@@ -727,8 +725,8 @@ const buildUnsavedChangeSummary = (baseline, current) => {
   );
   pushIfChanged(
     !isSame(baseExp?.antecedentes, currentExp?.antecedentes)
-      || !isSame(baseline?.tempAlergia, current?.tempAlergia)
-      || !isSame(baseline?.tempCirugia, current?.tempCirugia),
+    || !isSame(baseline?.tempAlergia, current?.tempAlergia)
+    || !isSame(baseline?.tempCirugia, current?.tempCirugia),
     'Antecedentes, alergias o cirugías'
   );
   pushIfChanged(
@@ -758,7 +756,7 @@ const buildUnsavedChangeSummary = (baseline, current) => {
 const ExpedienteClinico = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth(); 
+  const { user } = useAuth();
   const {
     pacienteId,
     citaId,
@@ -766,7 +764,8 @@ const ExpedienteClinico = () => {
     pacienteNombre: pacienteNombreState,
     paciente: pacienteNombreLegacy,
     openDocumentTemplates = false,
-    openedFrom = ''
+    openedFrom = '',
+    doctorOverride = null
   } = location.state || {};
   const nombreInicialRuta = String(pacienteNombreState || pacienteNombreLegacy || '').trim();
   const isEnfermeriaDocumentMode = Boolean(
@@ -774,24 +773,28 @@ const ExpedienteClinico = () => {
     (openedFrom === 'enfermeria_agenda' || location.pathname.startsWith('/enfermeria'))
   );
   const exitFallbackPath = isEnfermeriaDocumentMode ? '/enfermeria/dashboard' : '/agenda';
-  
+
   // --- ESTADOS DE UI Y MODALES ---
   const [showHistoricoEmbarazos, setShowHistoricoEmbarazos] = useState(false);
   const [showLegacyHistory, setShowLegacyHistory] = useState(false);
   const [showFormatSelector, setShowFormatSelector] = useState(false);
   const [showRecipeTemplateSelector, setShowRecipeTemplateSelector] = useState(false);
-  const [showActionsMenu, setShowActionsMenu] = useState(false); 
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [showHistoriaModal, setShowHistoriaModal] = useState(false);
   const [showEstudioModal, setShowEstudioModal] = useState(false);
   const [showHistoricoEstudios, setShowHistoricoEstudios] = useState(false);
   const [showEmbarazoModal, setShowEmbarazoModal] = useState(false);
   const [showNegatoscopio, setShowNegatoscopio] = useState(false);
   const [showCalculadoraDosis, setShowCalculadoraDosis] = useState(false);
-  const [showMenuQx, setShowMenuQx] = useState(false); 
+  const [showMenuQx, setShowMenuQx] = useState(false);
+  const [showTraspasarModal, setShowTraspasarModal] = useState(false);
+  const [traspasarData, setTraspasarData] = useState({ doctorUid: '', doctorNombre: '', justificacion: '' });
+  const [doctoresCatalogo, setDoctoresCatalogo] = useState([]);
+  const [traspasarLoading, setTraspasarLoading] = useState(false);
   const [plantillasDinamicas, setPlantillasDinamicas] = useState([]);
   const [plantillaRecetaPreferidaId, setPlantillaRecetaPreferidaId] = useState('');
   const [plantillaActiva, setPlantillaActiva] = useState(null);
-  const [notification, setNotification] = useState(null); 
+  const [notification, setNotification] = useState(null);
   const [showPrintAlert, setShowPrintAlert] = useState(false);
   const [showExitAlert, setShowExitAlert] = useState(false);
   const [exitChangeList, setExitChangeList] = useState([]);
@@ -802,6 +805,8 @@ const ExpedienteClinico = () => {
   const pendingExitAfterRecipePrintRef = useRef(false);
   const pendingDraftBeforeHistoricalRef = useRef(null);
   const exitBaselineRef = useRef(null);
+  const savingRef = useRef(false);
+  const saveCompletedRef = useRef(false);
   const citaEntryStateRef = useRef({
     initialized: false,
     autoStarted: false,
@@ -809,7 +814,7 @@ const ExpedienteClinico = () => {
     previousDraft: null,
     previousDraftUpdatedAt: null
   });
-  const [activeMainTab, setActiveMainTab] = useState('resumen'); 
+  const [activeMainTab, setActiveMainTab] = useState('resumen');
   const [visitedTabs, setVisitedTabs] = useState(new Set(['resumen']));
   const [activeConsulta, setActiveConsulta] = useState('padecimiento');
 
@@ -819,7 +824,7 @@ const ExpedienteClinico = () => {
     setVisitedTabs(prev => new Set([...prev, tab]));
   };
   const [pacienteNombre, setPacienteNombre] = useState(nombreInicialRuta);
-  const [pacienteData, setPacienteData] = useState({}); 
+  const [pacienteData, setPacienteData] = useState({});
   const [loading, setLoading] = useState(false);
   const [historialCompleto, setHistorialCompleto] = useState([]);
   const [legacyLinks, setLegacyLinks] = useState([]);
@@ -873,10 +878,21 @@ const ExpedienteClinico = () => {
   }, []);
 
   useEffect(() => {
+    const unsub = onSnapshot(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor'])), (snap) => {
+      setDoctoresCatalogo(snap.docs
+        .map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id }))
+        .filter((item) => item.nombre && item.id !== (user?.uid || ''))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre))
+      );
+    }, () => {});
+    return () => unsub();
+  }, [user?.uid]);
+
+  useEffect(() => {
     setIsTimerActive(!isHistoricalReviewMode);
   }, [isHistoricalReviewMode]);
 
-  const showToast = (msg, type='info') => {
+  const showToast = (msg, type = 'info') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 4000);
   };
@@ -888,21 +904,28 @@ const ExpedienteClinico = () => {
     const origen = String(evento.origen || 'plantilla_dinamica').trim();
     const plantillaId = String(evento.plantillaId || '').trim();
 
-    setEventosDocumentales((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        tipo,
-        nombre,
-        formato,
-        origen,
-        plantillaId,
-        plantillaNombre: String(evento.plantillaNombre || '').trim(),
-        generadoAt: new Date().toISOString(),
-        archivoUrl: evento.archivoUrl || '',
-        archivoPath: evento.archivoPath || ''
-      }
-    ]);
+    const nuevoEvento = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tipo,
+      nombre,
+      formato,
+      origen,
+      plantillaId,
+      plantillaNombre: String(evento.plantillaNombre || '').trim(),
+      generadoAt: new Date().toISOString(),
+      archivoUrl: evento.archivoUrl || '',
+      archivoPath: evento.archivoPath || ''
+    };
+
+    // Si la misma plantilla/documento ya fue registrado en esta sesión, reemplazar
+    // en lugar de acumular (evita duplicados cuando se imprime dos veces).
+    const sessionKey = (e) => `${e.tipo}|${e.nombre}|${e.plantillaId}`;
+    const keyNuevo = sessionKey(nuevoEvento);
+    setEventosDocumentales((prev) => {
+      const existe = prev.some((e) => sessionKey(e) === keyNuevo);
+      if (existe) return prev.map((e) => sessionKey(e) === keyNuevo ? nuevoEvento : e);
+      return [...prev, nuevoEvento];
+    });
 
     if (tipo === 'receta' && pendingExitAfterRecipePrintRef.current) {
       pendingExitAfterRecipePrintRef.current = false;
@@ -988,7 +1011,10 @@ const ExpedienteClinico = () => {
           if (citaEntryStateRef.current.previousEstado) {
             payload.estado = citaEntryStateRef.current.previousEstado;
           }
-          payload.consultaIniciadaAt = deleteField();
+          // No borrar consultaIniciadaAt: si se borra, al reabrir la consulta
+          // el sistema vuelve a auto-iniciarla y se crea un loop de "se reinicia".
+          // Manteniendo consultaIniciadaAt, la segunda apertura no dispara autoStarted
+          // y el estado permanece estable.
         }
 
         await updateDoc(doc(db, 'citas', citaId), payload);
@@ -1071,7 +1097,9 @@ const ExpedienteClinico = () => {
         : prev.consulta,
       meta: consultaHistorica.meta
         ? mergeClinicalSection(prev.meta, consultaHistorica.meta)
-        : prev.meta
+        : prev.meta,
+      medicoNombre: consultaHistorica.medicoNombre || prev.medicoNombre || '',
+      medicoPerfil: consultaHistorica.medicoPerfil || prev.medicoPerfil || null
     }));
 
     setHistoricalReview({
@@ -1080,12 +1108,12 @@ const ExpedienteClinico = () => {
       tipoNota: consultaHistorica.tipoNota || 'Consulta General',
       fechaLabel: fechaHistorica
         ? fechaHistorica.toLocaleString('es-MX', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          })
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
         : [consultaHistorica.fechaFormato, consultaHistorica.horaFormato].filter(Boolean).join(' • ') || 'sin fecha',
       recetasGeneradas: Array.isArray(consultaHistorica.recetasGeneradas) ? consultaHistorica.recetasGeneradas : [],
       documentosGenerados: Array.isArray(consultaHistorica.documentosGenerados) ? consultaHistorica.documentosGenerados : []
@@ -1108,7 +1136,7 @@ const ExpedienteClinico = () => {
       const gain = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      gain.gain.setValueAtTime(0.05, ctx.currentTime); 
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -1157,20 +1185,20 @@ const ExpedienteClinico = () => {
 
   // --- ESTADO DEL EXPEDIENTE ---
   const [expediente, setExpediente] = useState({
-    px_info: { 
-      edad: '', id_receta: '', telefono: '', alergias_base: '', 
+    px_info: {
+      edad: '', id_receta: '', telefono: '', alergias_base: '',
       grupo_sanguineo: '',
-      fum: '', fpp: '', sdg: '', 
+      fum: '', fpp: '', sdg: '',
       es_embarazada: false,
       requiere_cirugia: { general: false, ginecologica: false },
-      fecha_nacimiento: '' 
+      fecha_nacimiento: ''
     },
     control_embarazo: {
       num_embarazo: '', num_bebes: '', riesgo: 'No aplica', acido_folico: 'No aplica',
       complicaciones: {
-          diabetes: 'No aplica', infeccion_urinaria: 'No aplica', preeclampsia: 'No aplica',
-          hemorragia: 'No aplica', sospecha_covid: 'No aplica', covid_confirmado: 'No aplica',
-          hipertension: 'No aplica'
+        diabetes: 'No aplica', infeccion_urinaria: 'No aplica', preeclampsia: 'No aplica',
+        hemorragia: 'No aplica', sospecha_covid: 'No aplica', covid_confirmado: 'No aplica',
+        hipertension: 'No aplica'
       }
     },
     resumen: { notas_previas: "", resumen_paciente: "" },
@@ -1198,19 +1226,19 @@ const ExpedienteClinico = () => {
         especificos: { glaucoma: "", calculo: "", reflujo: "", incontinencia: "", dislipidemias: "", otro: "" },
         preguntados_y_negados: false
       },
-      aparatos: { 
+      aparatos: {
         digestivo: "", cardiovascular: "", respiratorio: "", urinario: "", genital: "", hematologico: "",
         endocrino: "", osteomuscular: "", nervioso: "", sensorial: "", psicosomatico: "", otro: "",
         preguntados_y_negados: false
       },
       alergias: { tipo: "Medicamento", buscar_sustancia: false, lista: [], otros: "", preguntados_y_negados: false },
-      vacunas: { lista: [], otras: "", preguntados_y_negados: false },
+      vacunas: { lista: [], otras: "", completo_para_la_edad: false },
       cirugias: { lista: [], preguntados_y_negados: false },
       cie10: [],
       cie10_preguntados_y_negados: false
     },
     consulta: {
-      padecimiento: "", 
+      padecimiento: "",
       exploracion: {
         signos: { ta: "", temp: "", fc: "", fr: "", spo2: "" },
         antropometria: { peso: "", talla: "", cintura: "", cadera: "", imc: "", peso_ideal: "" },
@@ -1220,7 +1248,8 @@ const ExpedienteClinico = () => {
       },
       diagnostico: { enfermedad_actual: "", tratamiento_lista: [], indicaciones: "", pronostico: "" },
       estudios: { paquetes_seleccionados: [], estudios_seleccionados: [], notas_generales: "" },
-      procedimientos: { seleccionados: [], notas_generales: "" }
+      procedimientos: { seleccionados: [], notas_generales: "" },
+      referencias_medicas: { seleccionadas: [], notas_generales: "" }
     },
     meta: { costo: "", segunda_opinion: false }
   });
@@ -1238,22 +1267,22 @@ const ExpedienteClinico = () => {
 
   useEffect(() => {
     if (expediente.px_info.fum) {
-        const fum = new Date(expediente.px_info.fum);
-        if(!isNaN(fum.getTime())) {
-            const fppDate = new Date(fum);
-            fppDate.setDate(fppDate.getDate() + 7);
-            fppDate.setMonth(fppDate.getMonth() - 3);
-            fppDate.setFullYear(fppDate.getFullYear() + 1);
-            const hoy = new Date();
-            const diffTime = Math.abs(hoy - fum);
-            const diffWeeks = (diffTime / (1000 * 60 * 60 * 24 * 7)).toFixed(1);
-            if(expediente.px_info.sdg !== diffWeeks || expediente.px_info.fpp !== fppDate.toISOString().split('T')[0]) {
-               setExpediente(prev => ({
-                   ...prev,
-                   px_info: { ...prev.px_info, fpp: fppDate.toISOString().split('T')[0], sdg: `${diffWeeks} Semanas` }
-               }));
-            }
+      const fum = new Date(expediente.px_info.fum);
+      if (!isNaN(fum.getTime())) {
+        const fppDate = new Date(fum);
+        fppDate.setDate(fppDate.getDate() + 7);
+        fppDate.setMonth(fppDate.getMonth() - 3);
+        fppDate.setFullYear(fppDate.getFullYear() + 1);
+        const hoy = new Date();
+        const diffTime = Math.abs(hoy - fum);
+        const diffWeeks = (diffTime / (1000 * 60 * 60 * 24 * 7)).toFixed(1);
+        if (expediente.px_info.sdg !== diffWeeks || expediente.px_info.fpp !== fppDate.toISOString().split('T')[0]) {
+          setExpediente(prev => ({
+            ...prev,
+            px_info: { ...prev.px_info, fpp: fppDate.toISOString().split('T')[0], sdg: `${diffWeeks} Semanas` }
+          }));
         }
+      }
     }
   }, [expediente.px_info.fum]);
 
@@ -1428,7 +1457,7 @@ const ExpedienteClinico = () => {
   }, [pacienteId]);
 
 
-// src/pages/doctor/ExpedienteClinico.jsx
+  // src/pages/doctor/ExpedienteClinico.jsx
 
   // ... (inicio del componente)
 
@@ -1436,7 +1465,9 @@ const ExpedienteClinico = () => {
   useEffect(() => {
     const fetchDatos = async () => {
       if (!pacienteId) return;
-      setLoading(true); 
+      setLoading(true);
+      savingRef.current = false;
+      saveCompletedRef.current = false;
       citaEntryStateRef.current = {
         initialized: false,
         autoStarted: false,
@@ -1447,12 +1478,12 @@ const ExpedienteClinico = () => {
       try {
         // 1. OBTENER TODO EN PARALELO
         const [pxSnap, historialSnap, citaSnap] = await Promise.all([
-            getDoc(doc(db, "pacientes", pacienteId)),
+          getDoc(doc(db, "pacientes", pacienteId)),
           getDocs(query(collection(db, "historial_clinico"), where("pacienteId", "==", pacienteId), orderBy("fecha", "desc"), limit(25))),
-            citaId ? getDoc(doc(db, "citas", citaId)) : Promise.resolve(null)
+          citaId ? getDoc(doc(db, "citas", citaId)) : Promise.resolve(null)
         ]);
 
-        let nuevosDatos = { ...expediente }; 
+        let nuevosDatos = { ...expediente };
         let nextTempMed = DEFAULT_TEMP_MED;
         let nextTempAlergia = DEFAULT_TEMP_ALERGIA;
         let nextTempCirugia = DEFAULT_TEMP_CIRUGIA;
@@ -1460,9 +1491,7 @@ const ExpedienteClinico = () => {
         // 2. PROCESAR DATOS PACIENTE
         if (pxSnap.exists()) {
           const dataPx = pxSnap.data();
-          const nombreCompletoPx =
-            dataPx.nombreCompleto ||
-            [dataPx.nombre, dataPx.apellidoPaterno, dataPx.apellidoMaterno].filter(Boolean).join(' ').trim();
+          const nombreCompletoPx = getPatientDisplayName(dataPx);
 
           setPacienteNombre(nombreCompletoPx || 'Paciente sin nombre');
           setPacienteData(dataPx);
@@ -1480,7 +1509,7 @@ const ExpedienteClinico = () => {
             id_receta: legacyId || generatedId,
             telefono: dataPx.telefonoMovil || '',
             grupo_sanguineo: dataPx.grupoSanguineo || '',
-            alergias_base: '' 
+            alergias_base: ''
           };
 
           if (hasMeaningfulClinicalData(dataPx.resumenClinico)) {
@@ -1491,6 +1520,10 @@ const ExpedienteClinico = () => {
           }
           if (hasMeaningfulClinicalData(dataPx.controlEmbarazoClinico)) {
             nuevosDatos.control_embarazo = mergeClinicalSection(nuevosDatos.control_embarazo, dataPx.controlEmbarazoClinico);
+          }
+
+          if (dataPx.notasPersonales || nuevosDatos.resumen?.notas_previas) {
+            nuevosDatos.resumen.notas_previas = dataPx.notasPersonales || nuevosDatos.resumen.notas_previas || '';
           }
         }
 
@@ -1625,103 +1658,103 @@ const ExpedienteClinico = () => {
           } else {
             consultaInicioRef.current = new Date();
           }
-          
+
           // A) Signos Vitales
           if (dataCita.signos_vitales) {
-             nuevosDatos.consulta.exploracion.signos = {
-                 ...nuevosDatos.consulta.exploracion.signos,
-                 ...dataCita.signos_vitales 
-             };
-             if(dataCita.signos_vitales.peso) nuevosDatos.consulta.exploracion.antropometria.peso = dataCita.signos_vitales.peso;
-             if(dataCita.signos_vitales.talla) nuevosDatos.consulta.exploracion.antropometria.talla = dataCita.signos_vitales.talla;
-             if(dataCita.signos_vitales.imc) nuevosDatos.consulta.exploracion.antropometria.imc = dataCita.signos_vitales.imc;
+            nuevosDatos.consulta.exploracion.signos = {
+              ...nuevosDatos.consulta.exploracion.signos,
+              ...dataCita.signos_vitales
+            };
+            if (dataCita.signos_vitales.peso) nuevosDatos.consulta.exploracion.antropometria.peso = dataCita.signos_vitales.peso;
+            if (dataCita.signos_vitales.talla) nuevosDatos.consulta.exploracion.antropometria.talla = dataCita.signos_vitales.talla;
+            if (dataCita.signos_vitales.imc) nuevosDatos.consulta.exploracion.antropometria.imc = dataCita.signos_vitales.imc;
           }
 
           // B) Motivo de Triage
           if (dataCita.triage_motivo) {
-             nuevosDatos.consulta.padecimiento = dataCita.triage_motivo;
+            nuevosDatos.consulta.padecimiento = dataCita.triage_motivo;
           }
 
           // C) ALERGIAS DE TRIAGE (ESTRUCTURADO)
           if (dataCita.triage_alergias_struct) {
-             const as = dataCita.triage_alergias_struct;
-             
-             // Aseguramos que existe la estructura
-             if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otros: '' };
+            const as = dataCita.triage_alergias_struct;
 
-             if (as.preguntados_y_negados) {
-                // Si en triage fue "preguntados y negados", marcarlo igual en expediente
-                nuevosDatos.antecedentes.alergias.preguntados_y_negados = true;
-             } else {
-                // Insertar cada alergia de la lista del triage en la lista del expediente
-                const listaExistente = nuevosDatos.antecedentes.alergias.lista || [];
-                const sustanciasExistentes = new Set(listaExistente.map(a => (a.sustancia || '').toUpperCase()));
-                const nuevas = (as.lista || []).filter(a => !sustanciasExistentes.has((a.sustancia || '').toUpperCase()));
-                if (nuevas.length > 0) {
-                   nuevosDatos.antecedentes.alergias.lista = [...listaExistente, ...nuevas];
-                }
+            // Aseguramos que existe la estructura
+            if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otros: '' };
 
-                // Insertar "otros" del triage
-                if (as.otros) {
-                   const baseOtros = nuevosDatos.antecedentes.alergias.otros || nuevosDatos.antecedentes.alergias.otras || '';
-                   if (!baseOtros.includes(as.otros)) {
-                      nuevosDatos.antecedentes.alergias.otros = baseOtros 
-                         ? `${baseOtros}. Reportado en Triage: ${as.otros}` 
-                         : `Reportado en Triage: ${as.otros}`;
-                   }
-                }
-             }
+            if (as.preguntados_y_negados) {
+              // Si en triage fue "preguntados y negados", marcarlo igual en expediente
+              nuevosDatos.antecedentes.alergias.preguntados_y_negados = true;
+            } else {
+              // Insertar cada alergia de la lista del triage en la lista del expediente
+              const listaExistente = nuevosDatos.antecedentes.alergias.lista || [];
+              const sustanciasExistentes = new Set(listaExistente.map(a => (a.sustancia || '').toUpperCase()));
+              const nuevas = (as.lista || []).filter(a => !sustanciasExistentes.has((a.sustancia || '').toUpperCase()));
+              if (nuevas.length > 0) {
+                nuevosDatos.antecedentes.alergias.lista = [...listaExistente, ...nuevas];
+              }
 
-             // Actualizar alergias_base para alertas rápidas
-             const nueva = dataCita.triage_alergias || '';
-             if (nueva) {
-                const baseInfo = nuevosDatos.px_info.alergias_base || '';
-                if (!baseInfo.includes(nueva)) {
-                   nuevosDatos.px_info.alergias_base = baseInfo ? `${baseInfo} / ${nueva} (Triage)` : nueva;
+              // Insertar "otros" del triage
+              if (as.otros) {
+                const baseOtros = nuevosDatos.antecedentes.alergias.otros || nuevosDatos.antecedentes.alergias.otras || '';
+                if (!baseOtros.includes(as.otros)) {
+                  nuevosDatos.antecedentes.alergias.otros = baseOtros
+                    ? `${baseOtros}. Reportado en Triage: ${as.otros}`
+                    : `Reportado en Triage: ${as.otros}`;
                 }
-             }
+              }
+            }
+
+            // Actualizar alergias_base para alertas rápidas
+            const nueva = dataCita.triage_alergias || '';
+            if (nueva) {
+              const baseInfo = nuevosDatos.px_info.alergias_base || '';
+              if (!baseInfo.includes(nueva)) {
+                nuevosDatos.px_info.alergias_base = baseInfo ? `${baseInfo} / ${nueva} (Triage)` : nueva;
+              }
+            }
           } else if (dataCita.triage_alergias) {
-             const nueva = dataCita.triage_alergias;
-             
-             // 1. Insertar en Ficha Técnica (Para alertas rápidas e IA)
-             const baseInfo = nuevosDatos.px_info.alergias_base || '';
-             if (!baseInfo.includes(nueva)) {
-                 nuevosDatos.px_info.alergias_base = baseInfo ? `${baseInfo} / ${nueva} (Triage)` : nueva;
-             }
+            const nueva = dataCita.triage_alergias;
 
-             // 2. Insertar en Sección Antecedentes -> Alergias -> Otros (Para que el doctor lo vea en la lista)
-             // Aseguramos que existe la estructura antes de escribir
-             if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otros: '' };
-             
-             const baseOtros = nuevosDatos.antecedentes.alergias.otros || nuevosDatos.antecedentes.alergias.otras || '';
-             // Solo agregamos si no está ya escrito para no duplicar texto
-             if (!baseOtros.includes(nueva)) {
-                 nuevosDatos.antecedentes.alergias.otros = baseOtros 
-                    ? `${baseOtros}. Reportado en Triage: ${nueva}` 
-                    : `Reportado en Triage: ${nueva}`;
-             }
+            // 1. Insertar en Ficha Técnica (Para alertas rápidas e IA)
+            const baseInfo = nuevosDatos.px_info.alergias_base || '';
+            if (!baseInfo.includes(nueva)) {
+              nuevosDatos.px_info.alergias_base = baseInfo ? `${baseInfo} / ${nueva} (Triage)` : nueva;
+            }
+
+            // 2. Insertar en Sección Antecedentes -> Alergias -> Otros (Para que el doctor lo vea en la lista)
+            // Aseguramos que existe la estructura antes de escribir
+            if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otros: '' };
+
+            const baseOtros = nuevosDatos.antecedentes.alergias.otros || nuevosDatos.antecedentes.alergias.otras || '';
+            // Solo agregamos si no está ya escrito para no duplicar texto
+            if (!baseOtros.includes(nueva)) {
+              nuevosDatos.antecedentes.alergias.otros = baseOtros
+                ? `${baseOtros}. Reportado en Triage: ${nueva}`
+                : `Reportado en Triage: ${nueva}`;
+            }
           }
 
           // D) ENFERMEDADES DE TRIAGE
           if (dataCita.triage_enfermedades) {
-             const enf = dataCita.triage_enfermedades;
-             if (!enf.preguntados_y_negados) {
-                // Insertar enfermedades en antecedentes patológicos -> actuales
-                const enfTexto = [
-                   ...(enf.lista || []),
-                   ...(enf.otros ? [enf.otros] : [])
-                ].join(', ');
+            const enf = dataCita.triage_enfermedades;
+            if (!enf.preguntados_y_negados) {
+              // Insertar enfermedades en antecedentes patológicos -> actuales
+              const enfTexto = [
+                ...(enf.lista || []),
+                ...(enf.otros ? [enf.otros] : [])
+              ].join(', ');
 
-                if (enfTexto) {
-                   const actuales = nuevosDatos.antecedentes.patologicos?.actuales || '';
-                   if (!actuales.includes(enfTexto)) {
-                      nuevosDatos.antecedentes.patologicos = nuevosDatos.antecedentes.patologicos || {};
-                      nuevosDatos.antecedentes.patologicos.actuales = actuales 
-                         ? `${actuales}. Reportado en Triage: ${enfTexto}`
-                         : `Reportado en Triage: ${enfTexto}`;
-                   }
+              if (enfTexto) {
+                const actuales = nuevosDatos.antecedentes.patologicos?.actuales || '';
+                if (!actuales.includes(enfTexto)) {
+                  nuevosDatos.antecedentes.patologicos = nuevosDatos.antecedentes.patologicos || {};
+                  nuevosDatos.antecedentes.patologicos.actuales = actuales
+                    ? `${actuales}. Reportado en Triage: ${enfTexto}`
+                    : `Reportado en Triage: ${enfTexto}`;
                 }
-             }
+              }
+            }
           }
         }
 
@@ -1824,10 +1857,10 @@ const ExpedienteClinico = () => {
 
         return nextExpediente;
       });
-    }, () => {});
+    }, () => { });
     return () => unsub();
   }, [citaId, loading, tempMed, tempAlergia, tempCirugia, eventosDocumentales]);
-  
+
   useEffect(() => {
     if (!pacienteId || !citaId || loading || isHistoricalReviewMode) return;
 
@@ -1881,6 +1914,36 @@ const ExpedienteClinico = () => {
     isHistoricalReviewMode
   ]);
 
+  // Mantener alergias_base sincronizado con antecedentes.alergias (fuente de verdad)
+  useEffect(() => {
+    const alergias = expediente.antecedentes?.alergias;
+    if (!alergias) return;
+
+    const lista = Array.isArray(alergias.lista)
+      ? alergias.lista.map((item) => String(item?.sustancia || item?.nombre || '').trim()).filter(Boolean)
+      : [];
+    const otros = String(alergias.otros || alergias.otras || '').trim();
+    const preguntados = alergias.preguntados_y_negados === true;
+
+    const textoActualizado = preguntados
+      ? 'Preguntados y negados'
+      : [...lista, ...(otros ? [otros] : [])].join(', ') || '';
+
+    setExpediente((prev) => {
+      const actual = prev.px_info?.alergias_base || '';
+      if (actual === textoActualizado) return prev;
+      return {
+        ...prev,
+        px_info: { ...prev.px_info, alergias_base: textoActualizado }
+      };
+    });
+  }, [
+    expediente.antecedentes?.alergias?.lista,
+    expediente.antecedentes?.alergias?.otros,
+    expediente.antecedentes?.alergias?.otras,
+    expediente.antecedentes?.alergias?.preguntados_y_negados
+  ]);
+
   useEffect(() => {
     if (!openDocumentTemplates) return;
 
@@ -1889,51 +1952,181 @@ const ExpedienteClinico = () => {
     setShowFormatSelector(true);
   }, [openDocumentTemplates, openedFrom]);
 
+  const handleTraspasarPaciente = async () => {
+    if (!traspasarData.doctorUid) {
+      showToast('Selecciona un médico para transferir al paciente.', 'error');
+      return;
+    }
+    if (!traspasarData.justificacion.trim()) {
+      showToast('Escribe una justificación para la transferencia.', 'error');
+      return;
+    }
+    setTraspasarLoading(true);
+    try {
+      if (citaId) {
+        await updateDoc(doc(db, 'citas', citaId), {
+          doctorAsignado: traspasarData.doctorNombre,
+          doctorUid: traspasarData.doctorUid,
+          reasignadaAt: serverTimestamp(),
+          reasignadaPor: user?.uid || '',
+          reasignadaPorNombre: user?.nombre || '',
+          reasignadaDoctorAnterior: user?.nombre || '',
+          reasignadaDoctorAnteriorUid: user?.uid || '',
+          reasignadaJustificacion: traspasarData.justificacion.trim()
+        });
+      } else {
+        const today = new Date();
+        const fechaStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const nowTime = `${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
+        const endTime = new Date(today.getTime() + 30 * 60000);
+        const horaFin = `${String(endTime.getHours()).padStart(2, '0')}:${String(endTime.getMinutes()).padStart(2, '0')}`;
+        await addDoc(collection(db, 'citas'), {
+          paciente: pacienteNombre,
+          pacienteId,
+          fecha: fechaStr,
+          hora: nowTime,
+          horaFin,
+          fechaHora: `${fechaStr}T${nowTime}`,
+          fechaHoraFin: `${fechaStr}T${horaFin}`,
+          doctorAsignado: traspasarData.doctorNombre,
+          doctorUid: traspasarData.doctorUid,
+          estado: 'pendiente',
+          motivo: 'Transferencia de paciente',
+          motivoId: 'transferencia',
+          tipoConsulta: 'transferencia',
+          formaPago: 'efectivo',
+          creadoPor: user?.uid || '',
+          creadoPorRol: user?.rol || '',
+          reasignadaAt: serverTimestamp(),
+          reasignadaPor: user?.uid || '',
+          reasignadaPorNombre: user?.nombre || '',
+          reasignadaDoctorAnterior: user?.nombre || '',
+          reasignadaDoctorAnteriorUid: user?.uid || '',
+          reasignadaJustificacion: traspasarData.justificacion.trim(),
+          notas: `Paciente transferido por Dr. ${user?.nombre || ''}. Justificación: ${traspasarData.justificacion.trim()}`
+        });
+      }
+      showToast(`Paciente transferido al Dr. ${traspasarData.doctorNombre} exitosamente.`, 'success');
+      setShowTraspasarModal(false);
+      setShowActionsMenu(false);
+      setTraspasarData({ doctorUid: '', doctorNombre: '', justificacion: '' });
+    } catch (e) {
+      console.error('Error al transferir paciente:', e);
+      showToast('Error al transferir el paciente. Intenta de nuevo.', 'error');
+    }
+    setTraspasarLoading(false);
+  };
+
   const handleVerHistoria = async () => {
     setLoading(true);
     setShowActionsMenu(false);
     try {
-        const q = query(collection(db, "historial_clinico"), where("pacienteId", "==", pacienteId), orderBy("fecha", "desc"));
-        const querySnapshot = await getDocs(q);
-        const historial = querySnapshot.docs.map(doc => {
-            const data = doc.data();
-            const fisicaRaw = data.consulta?.exploracion?.fisica || {};
-            const exploracionLimpia = JSON.stringify(fisicaRaw).replace(/[{}"']/g, ' ').replace(/ , /g, ', ').trim();
-            return {
-                id: doc.id,
-                fecha: data.fecha?.toDate ? data.fecha.toDate().toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute:'2-digit' }) : 'Fecha no disponible',
-                motivo: data.tipoNota || 'Consulta General',
-                medicoNombre: data.medicoNombre || 'Médico General',
-                padecimiento: data.consulta?.padecimiento || 'Sin descripción',
-                signos: data.consulta?.exploracion?.signos || {},
-                exploracionFisica: exploracionLimpia === "{}" ? "Sin hallazgos registrados" : exploracionLimpia,
-                diagnostico: data.consulta?.diagnostico?.enfermedad_actual || 'Sin diagnóstico',
-                receta: data.consulta?.diagnostico?.tratamiento_lista || [],
-                recetasGeneradas: Array.isArray(data.recetasGeneradas) ? data.recetasGeneradas : [],
-                documentosGenerados: Array.isArray(data.documentosGenerados) ? data.documentosGenerados : [],
-                indicaciones: data.consulta?.diagnostico?.indicaciones || '',
-                auditSnapshot: data.auditSnapshot || null
-            };
-        });
-        setHistorialCompleto(historial);
-        setShowHistoriaModal(true);
+      const qHistorial = query(collection(db, "historial_clinico"), where("pacienteId", "==", pacienteId), orderBy("fecha", "desc"));
+      const qEstudios = query(collection(db, "estudios_previos"), where("pacienteId", "==", pacienteId));
+
+      const [snapHistorial, snapEstudios] = await Promise.all([
+        getDocs(qHistorial),
+        getDocs(qEstudios)
+      ]);
+
+      const historialClinico = snapHistorial.docs.map(doc => {
+        const data = doc.data();
+        const fisicaRaw = data.consulta?.exploracion?.fisica || {};
+        const exploracionLimpia = JSON.stringify(fisicaRaw).replace(/[{}"']/g, ' ').replace(/ , /g, ', ').trim();
+        return {
+          id: doc.id,
+          origen: 'consulta',
+          fecha: data.fecha?.toDate ? data.fecha.toDate().toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Fecha no disponible',
+          fechaRaw: data.fecha?.toDate ? data.fecha.toDate() : null,
+          motivo: data.tipoNota || 'Consulta General',
+          medicoNombre: data.medicoNombre || 'Médico General',
+          padecimiento: data.consulta?.padecimiento || 'Sin descripción',
+          signos: data.consulta?.exploracion?.signos || {},
+          exploracionFisica: exploracionLimpia === "{}" ? "Sin hallazgos registrados" : exploracionLimpia,
+          diagnostico: data.consulta?.diagnostico?.enfermedad_actual || 'Sin diagnóstico',
+          receta: data.consulta?.diagnostico?.tratamiento_lista || [],
+          recetasGeneradas: Array.isArray(data.recetasGeneradas) ? data.recetasGeneradas : [],
+          documentosGenerados: Array.isArray(data.documentosGenerados) ? data.documentosGenerados : [],
+          indicaciones: data.consulta?.diagnostico?.indicaciones || '',
+          auditSnapshot: data.auditSnapshot || null
+        };
+      });
+
+      const historialEstudios = snapEstudios.docs.map(doc => {
+        const data = doc.data();
+        const fechaRaw = data.fechaRegistro?.toDate ? data.fechaRegistro.toDate() : (data.fecha ? new Date(data.fecha + 'T00:00:00') : null);
+        const fechaLabel = data.fechaRegistro?.toDate
+          ? data.fechaRegistro.toDate().toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : (data.fecha || 'Fecha no disponible');
+        const estudiosNombres = Array.isArray(data.estudios) ? data.estudios.join(', ') : '';
+
+        return {
+          id: doc.id,
+          origen: 'estudio_previo',
+          fecha: fechaLabel,
+          fechaRaw,
+          motivo: estudiosNombres ? `Estudios: ${estudiosNombres}` : 'Estudios Previos',
+          tipoNota: 'Estudios Previos',
+          medicoNombre: data.medicoNombre || 'Médico',
+          padecimiento: data.interpretacion || 'Sin interpretación',
+          diagnostico: estudiosNombres || 'Sin estudios',
+          signos: {},
+          exploracionFisica: '',
+          receta: [],
+          recetasGeneradas: [],
+          documentosGenerados: [],
+          indicaciones: '',
+          auditSnapshot: null,
+          adjuntos: Array.isArray(data.adjuntos) ? data.adjuntos : [],
+          interpretacion: data.interpretacion || '',
+          estudiosPrevios: Array.isArray(data.estudios) ? data.estudios : [],
+          clasificacion: data.clasificacion || ''
+        };
+      });
+
+      const historial = [...historialClinico, ...historialEstudios].sort((a, b) => {
+        const aTs = a.fechaRaw?.getTime?.() || 0;
+        const bTs = b.fechaRaw?.getTime?.() || 0;
+        return bTs - aTs;
+      });
+
+      setHistorialCompleto(historial);
+      setShowHistoriaModal(true);
     } catch (error) { showToast("Error al abrir historial", "error"); }
     setLoading(false);
   };
 
   const handleGuardar = () => {
+    // Si no hay cambios clínicos, salir sin revertir el estado de la cita.
+    // Nota: NO llamar restoreEntryStateAndExit aquí porque ese método cancela
+    // la consulta (revierte estado → en_espera). Finalizar ≠ Cancelar.
+    const { hasChanges, changes } = assessUnsavedChanges();
+    if (!hasChanges) {
+      goBackOr(navigate, exitFallbackPath);
+      return;
+    }
+
+    // Hay cambios: reproducir pitido de advertencia y mostrar diálogo
+    playSoftBeep(880, 0.12);
+    setTimeout(() => playSoftBeep(660, 0.18), 180);
+
+    setExitChangeList(changes);
+
     const tieneReceta = (expediente.consulta.diagnostico.tratamiento_lista?.length > 0) || (tempMed.nombre?.trim() !== '');
     const tieneEstudios = (expediente.consulta.estudios.paquetes_seleccionados?.length > 0) || (expediente.consulta.estudios.estudios_seleccionados?.length > 0);
     const tieneProcedimientos = (expediente.consulta.procedimientos?.seleccionados?.length || 0) > 0;
 
     if (tieneReceta || tieneEstudios || tieneProcedimientos) {
-        setShowPrintAlert(true);
+      setShowPrintAlert(true);
     } else {
-        executeSave({ allowCritical: true });
+      executeSave({ allowCritical: true });
     }
   };
 
   const executeSave = async ({ allowCritical = false } = {}) => {
+    if (savingRef.current) return;
+    if (saveCompletedRef.current) return;
+    savingRef.current = true;
     setLoading(true);
     setShowPrintAlert(false);
 
@@ -1947,22 +2140,22 @@ const ExpedienteClinico = () => {
       const duracionRealMin = Math.max(1, Math.round((finConsulta - consultaInicioRef.current) / 60000));
 
       if (tempMed.nombre.trim() !== '') {
-         const listaActual = expedienteFinal.consulta.diagnostico.tratamiento_lista || [];
-         expedienteFinal.consulta.diagnostico.tratamiento_lista = [...listaActual, tempMed];
+        const listaActual = expedienteFinal.consulta.diagnostico.tratamiento_lista || [];
+        expedienteFinal.consulta.diagnostico.tratamiento_lista = [...listaActual, tempMed];
       }
       if (tempAlergia.nombre.trim() !== '') {
-         const listaAlergias = expedienteFinal.antecedentes.alergias.lista || [];
-         expedienteFinal.antecedentes.alergias.lista = [...listaAlergias, { sustancia: tempAlergia.nombre }];
+        const listaAlergias = expedienteFinal.antecedentes.alergias.lista || [];
+        expedienteFinal.antecedentes.alergias.lista = [...listaAlergias, { sustancia: tempAlergia.nombre }];
       }
       if (tempCirugia.procedimiento.trim() !== '') {
-         const nuevaCirugia = {
-            ...tempCirugia,
-            id: Date.now(),
-            fechaRegistro: tempCirugia.tipoFecha === 'ano' ? tempCirugia.ano : tempCirugia.fechaHora.split('T')[0],
-            medico: expediente.medicoNombre || 'Medico Tratante'
-         };
-         const listaCirugias = expedienteFinal.antecedentes.cirugias.lista || [];
-         expedienteFinal.antecedentes.cirugias.lista = [...listaCirugias, nuevaCirugia];
+        const nuevaCirugia = {
+          ...tempCirugia,
+          id: Date.now(),
+          fechaRegistro: tempCirugia.tipoFecha === 'ano' ? tempCirugia.ano : tempCirugia.fechaHora.split('T')[0],
+          medico: expediente.medicoNombre || 'Medico Tratante'
+        };
+        const listaCirugias = expedienteFinal.antecedentes.cirugias.lista || [];
+        expedienteFinal.antecedentes.cirugias.lista = [...listaCirugias, nuevaCirugia];
       }
 
       const tratamientoActual = Array.isArray(expedienteFinal?.consulta?.diagnostico?.tratamiento_lista)
@@ -1971,13 +2164,15 @@ const ExpedienteClinico = () => {
 
       const eventosDocumento = eventosDocumentales.filter((evt) => evt.tipo === 'documento');
       const eventosReceta = eventosDocumentales.filter((evt) => evt.tipo === 'receta');
-      const mappedSessionRecetas = eventosReceta.map((evt) => ({
+      // Enriquecer la primera receta impresa con el conteo de medicamentos para trazabilidad de auditoría.
+      const mappedSessionRecetas = eventosReceta.map((evt, idx) => ({
         tipo: 'receta',
         nombre: evt.nombre,
         formato: evt.formato,
         origen: evt.origen,
         plantillaId: evt.plantillaId || '',
         plantillaNombre: evt.plantillaNombre || '',
+        ...(idx === 0 && tratamientoActual.length > 0 ? { totalMedicamentos: tratamientoActual.length } : {}),
         generadoAt: evt.generadoAt,
         archivoUrl: evt.archivoUrl || '',
         archivoPath: evt.archivoPath || ''
@@ -1995,16 +2190,19 @@ const ExpedienteClinico = () => {
         archivoPath: evt.archivoPath || ''
       }));
 
+      // Solo agregar la entrada auto-generada si el usuario no imprimió
+      // ninguna plantilla de receta durante la sesión (evita duplicados en timeline).
+      const hasPrintedRecipe = mappedSessionRecetas.length > 0;
       let recetasGeneradas = [
-        ...(tratamientoActual.length > 0
+        ...(tratamientoActual.length > 0 && !hasPrintedRecipe
           ? [{
-              tipo: 'receta',
-              nombre: 'Receta medica de consulta',
-              totalMedicamentos: tratamientoActual.length,
-              formato: 'clinico',
-              origen: 'consulta',
-              generadoAt: finConsulta.toISOString()
-            }]
+            tipo: 'receta',
+            nombre: 'Receta medica de consulta',
+            totalMedicamentos: tratamientoActual.length,
+            formato: 'clinico',
+            origen: 'consulta',
+            generadoAt: finConsulta.toISOString()
+          }]
           : []),
         ...mappedSessionRecetas
       ];
@@ -2014,26 +2212,29 @@ const ExpedienteClinico = () => {
       if (isHistoricalReviewMode) {
         const baseRecetas = Array.isArray(historicalReview?.recetasGeneradas)
           ? historicalReview.recetasGeneradas.map((evt) => {
-              if ((evt?.origen === 'consulta' || evt?.nombre === 'Receta medica de consulta') && tratamientoActual.length > 0) {
-                return { ...evt, totalMedicamentos: tratamientoActual.length };
-              }
-              return evt;
-            })
+            if ((evt?.origen === 'consulta' || evt?.nombre === 'Receta medica de consulta') && tratamientoActual.length > 0) {
+              return { ...evt, totalMedicamentos: tratamientoActual.length };
+            }
+            return evt;
+          })
           : [];
 
         const hasConsultaRecipe = baseRecetas.some(
           (evt) => evt?.origen === 'consulta' || evt?.nombre === 'Receta medica de consulta'
         );
 
-        const reviewBaseRecetas = !hasConsultaRecipe && tratamientoActual.length > 0
+        // Si el usuario imprimió una plantilla de receta en esta revisión, no agregar
+        // la entrada auto-generada para evitar duplicados en el timeline.
+        const reviewHasPrintedRecipe = mappedSessionRecetas.length > 0;
+        const reviewBaseRecetas = !hasConsultaRecipe && tratamientoActual.length > 0 && !reviewHasPrintedRecipe
           ? [{
-              tipo: 'receta',
-              nombre: 'Receta medica de consulta',
-              totalMedicamentos: tratamientoActual.length,
-              formato: 'clinico',
-              origen: 'consulta',
-              generadoAt: finConsulta.toISOString()
-            }, ...baseRecetas]
+            tipo: 'receta',
+            nombre: 'Receta medica de consulta',
+            totalMedicamentos: tratamientoActual.length,
+            formato: 'clinico',
+            origen: 'consulta',
+            generadoAt: finConsulta.toISOString()
+          }, ...baseRecetas]
           : baseRecetas;
 
         recetasGeneradas = mergeGeneratedEvents(reviewBaseRecetas, mappedSessionRecetas);
@@ -2055,10 +2256,12 @@ const ExpedienteClinico = () => {
       if (!consultaTieneDatosClinicos()) {
         showToast("Sin datos clínicos para guardar.", "info");
         if (isHistoricalReviewMode) {
+          savingRef.current = false;
           setLoading(false);
           return;
         }
         setTimeout(() => goBackOr(navigate, exitFallbackPath), 800);
+        savingRef.current = false;
         setLoading(false);
         return;
       }
@@ -2082,7 +2285,8 @@ const ExpedienteClinico = () => {
             grupoSanguineo: grupoSanguineoNormalizado,
             resumenClinico: resumenClinicoSnapshot,
             antecedentesClinicos: antecedentesClinicosSnapshot,
-            controlEmbarazoClinico: controlEmbarazoClinicoSnapshot
+            controlEmbarazoClinico: controlEmbarazoClinicoSnapshot,
+            notasPersonales: expedienteFinal.resumen?.notas_previas || ""
           });
           setPacienteData(prev => ({
             ...prev,
@@ -2122,17 +2326,17 @@ const ExpedienteClinico = () => {
         setHistorialCompleto((prev) => (
           Array.isArray(prev)
             ? prev.map((row) => (
-                row.id === historicalReview.historialId
-                  ? {
-                      ...row,
-                      ...expedienteFinal,
-                      costo: costoSanitizado,
-                      recetasGeneradas,
-                      documentosGenerados,
-                      auditSnapshot: validation.snapshot
-                    }
-                  : row
-              ))
+              row.id === historicalReview.historialId
+                ? {
+                  ...row,
+                  ...expedienteFinal,
+                  costo: costoSanitizado,
+                  recetasGeneradas,
+                  documentosGenerados,
+                  auditSnapshot: validation.snapshot
+                }
+                : row
+            ))
             : prev
         ));
         setExpediente(expedienteFinal);
@@ -2143,10 +2347,10 @@ const ExpedienteClinico = () => {
         setHistoricalReview((prev) => (
           prev
             ? {
-                ...prev,
-                recetasGeneradas,
-                documentosGenerados
-              }
+              ...prev,
+              recetasGeneradas,
+              documentosGenerados
+            }
             : prev
         ));
         setHistorialRefreshKey((prev) => prev + 1);
@@ -2158,26 +2362,78 @@ const ExpedienteClinico = () => {
           showToast(`Guardado con observaciones de auditoria: ${validation.missingRecommended.join(', ')}`, 'info');
         }
 
+        savingRef.current = false;
         setLoading(false);
         return;
       }
 
-      const historialRef = await addDoc(collection(db, "historial_clinico"), { 
-          ...expedienteFinal, 
-          pacienteId, 
-          pacienteNombre, 
-          medicoNombre: user.nombre, 
-          fecha: serverTimestamp(), 
+      const medicoPerfilSnapshot = {
+        nombre: user?.nombre || '',
+        cedula: user?.cedula || user?.cedulaProfesional || '',
+        cedulaProfesional: user?.cedula || user?.cedulaProfesional || '',
+        especialidad: user?.especialidad || '',
+        universidadEgreso: user?.universidadEgreso || '',
+        sucursal: user?.sucursal || ''
+      };
+
+      // Verificar si ya existe un registro para esta misma cita antes de crear uno nuevo
+      let historialRef = null;
+      let esActualizacion = false;
+
+      if (citaId) {
+        try {
+          const queryDuplicados = query(
+            collection(db, "historial_clinico"),
+            where("citaId", "==", citaId),
+            where("pacienteId", "==", pacienteId),
+            limit(5)
+          );
+          const snapDuplicados = await getDocs(queryDuplicados);
+          if (!snapDuplicados.empty) {
+            // Filtrar en JS: ignorar registros de enfermería o de solo-antecedentes.
+            // Si el doctor no ha guardado aún, esos registros no deben ser sobreescritos.
+            const docConsulta = snapDuplicados.docs.find((d) => {
+              const data = d.data();
+              return data.origenRegistro !== 'enfermeria_agenda'
+                && !data.soloAntecedentes
+                && data.tipoNota !== 'Carga de Estudio';
+            });
+            if (docConsulta) {
+              historialRef = docConsulta.ref;
+              esActualizacion = true;
+              await updateDoc(historialRef, {
+                ...expedienteFinal,
+                recetasGeneradas,
+                documentosGenerados,
+                auditSnapshot: validation.snapshot,
+                actualizadoEnConsultaAt: serverTimestamp()
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('No se pudo verificar duplicados, creando nuevo registro:', e);
+        }
+      }
+
+      if (!esActualizacion) {
+        historialRef = await addDoc(collection(db, "historial_clinico"), {
+          ...expedienteFinal,
+          pacienteId,
+          pacienteNombre,
+          medicoNombre: user.nombre,
+          medicoPerfil: medicoPerfilSnapshot,
+          fecha: serverTimestamp(),
           medicoId: auth.currentUser?.uid || "anonimo",
           citaId: citaId || null,
           consultorioId: citaContext.consultorioId || null,
           consultorioNombre: citaContext.consultorioNombre || null,
           costo: costoSanitizado,
           duracionRealMin,
-            recetasGeneradas,
-            documentosGenerados,
+          recetasGeneradas,
+          documentosGenerados,
           auditSnapshot: validation.snapshot
-      });
+        });
+      }
 
       await createClinicalAuditRecord({
         pacienteId,
@@ -2260,7 +2516,7 @@ const ExpedienteClinico = () => {
           console.warn('No se pudo enviar encuesta de satisfacción:', encuestaError);
         }
       }
-      
+
       setTempMed(DEFAULT_TEMP_MED);
       setTempAlergia(DEFAULT_TEMP_ALERGIA);
       setTempCirugia(DEFAULT_TEMP_CIRUGIA);
@@ -2273,6 +2529,7 @@ const ExpedienteClinico = () => {
         eventosDocumentales: []
       });
 
+      saveCompletedRef.current = true;
       showToast("Expediente guardado correctamente.", "success");
       if (validation.status === 'critico') {
         showToast(`Guardado al salir con campos pendientes: ${validation.missingCritical.join(', ')}`, 'info');
@@ -2281,15 +2538,16 @@ const ExpedienteClinico = () => {
       }
       setTimeout(() => goBackOr(navigate, exitFallbackPath), 1500);
 
-    } catch(e) { 
-        console.error(e);
-        if (isEnfermeriaDocumentMode) {
-          showToast("No se pudo guardar el expediente. Regresando a enfermería.", "info");
-          setTimeout(() => goBackOr(navigate, exitFallbackPath), 800);
-        } else {
-          showToast("Error al guardar el expediente", "error");
-        }
+    } catch (e) {
+      console.error(e);
+      if (isEnfermeriaDocumentMode) {
+        showToast("No se pudo guardar el expediente. Regresando a enfermería.", "info");
+        setTimeout(() => goBackOr(navigate, exitFallbackPath), 800);
+      } else {
+        showToast("Error al guardar el expediente", "error");
+      }
     }
+    savingRef.current = false;
     setLoading(false);
   };
 
@@ -2314,28 +2572,28 @@ const ExpedienteClinico = () => {
 
     const medicamentosTexto = tratamientoLista.length > 0
       ? tratamientoLista.map((med, idx) => {
-          const lines = [`${idx + 1}. ${med.nombre || 'Medicamento'} ${med.presentacion || ''}`];
-          const subParts = [med.numeroAcomodo || '', med.sustanciasActivas || ''].filter(Boolean);
-          if (subParts.length > 0) lines.push(`   ${subParts.join(' ')}`);
-          if (med.dosis) lines.push(`   ${med.dosis}`);
-          return lines.join('\n');
-        }).join('\n')
+        const lines = [`${idx + 1}. ${med.nombre || 'Medicamento'} ${med.presentacion || ''}`];
+        const subParts = [med.numeroAcomodo || '', med.sustanciasActivas || ''].filter(Boolean);
+        if (subParts.length > 0) lines.push(`   ${subParts.join(' ')}`);
+        if (med.dosis) lines.push(`   ${med.dosis}`);
+        return lines.join('\n');
+      }).join('\n')
       : '';
 
     const medicamentosHtml = tratamientoLista.length > 0
       ? tratamientoLista.map((med, idx) => {
-          const nombre = esc(med.nombre || 'Medicamento');
-          const presentacion = esc(med.presentacion || '');
-          const sustancia = esc(med.sustanciasActivas || '');
-          const numAcomodo = esc(med.numeroAcomodo || '');
-          const dosis = esc(med.dosis || '');
-          let html = `<div style="margin-bottom:8px;"><div><strong>${idx + 1}. ${nombre}</strong>${presentacion ? ` ${presentacion}` : ''}</div>`;
-          const subParts = [numAcomodo, sustancia].filter(Boolean);
-          if (subParts.length > 0) html += `<div style="margin-left:16px;">${subParts.join(' ')}</div>`;
-          if (dosis) html += `<div style="margin-left:16px;">${dosis}</div>`;
-          html += '</div>';
-          return html;
-        }).join('')
+        const nombre = esc(med.nombre || 'Medicamento');
+        const presentacion = esc(med.presentacion || '');
+        const sustancia = esc(med.sustanciasActivas || '');
+        const numAcomodo = esc(med.numeroAcomodo || '');
+        const dosis = esc(med.dosis || '');
+        let html = `<div style="margin-bottom:8px;"><div><strong>${idx + 1}. ${nombre}</strong>${presentacion ? ` ${presentacion}` : ''}</div>`;
+        const subParts = [numAcomodo, sustancia].filter(Boolean);
+        if (subParts.length > 0) html += `<div style="margin-left:16px;">${subParts.join(' ')}</div>`;
+        if (dosis) html += `<div style="margin-left:16px;">${dosis}</div>`;
+        html += '</div>';
+        return html;
+      }).join('')
       : '';
 
     const estudiosLista = exp?.consulta?.estudios?.estudios_seleccionados || [];
@@ -2442,6 +2700,64 @@ const ExpedienteClinico = () => {
       return html;
     })();
 
+    const referenciasLista = exp?.consulta?.referencias_medicas?.seleccionadas || [];
+    const referenciasOffset = tratamientoLista.length + estudiosLista.length + procedimientosLista.length;
+
+    const referenciasTexto = (() => {
+      const parts = [];
+      referenciasLista.forEach((ref, idx) => {
+        if (!ref || typeof ref !== 'object') return;
+        const nombreMedico = String(ref.nombreMedico || '').trim();
+        if (!nombreMedico) return;
+
+        const lineas = [`${referenciasOffset + idx + 1}. ${nombreMedico.toUpperCase()} (${(ref.especialidad || '').toUpperCase()} · ${getTipoCitaLabel(ref.tipoCita).toUpperCase()})${ref.esUrgente ? ' - URGENTE' : ''}`];
+
+        const info = [];
+        if (ref.telefonoConsultorio) info.push(ref.telefonoConsultorio);
+        if (ref.direccionConsultorio) info.push(ref.direccionConsultorio);
+        if (ref.datosExtras) info.push(ref.datosExtras);
+        if (ref.notas) info.push(ref.notas);
+        if (info.length > 0) lineas.push(`   ${info.join(' | ')}`);
+
+        if (ref.diagnostico) lineas.push(`   ${ref.diagnostico}`);
+
+        parts.push(lineas.join('\n'));
+      });
+
+      return parts.length > 0 ? parts.join('\n') : '';
+    })();
+
+    const referenciasHtml = (() => {
+      let html = '';
+      if (referenciasLista.length > 0) {
+        html += `<ol start="${referenciasOffset + 1}">`;
+        referenciasLista.forEach((ref) => {
+          if (!ref || typeof ref !== 'object') return;
+          const nombreMedico = esc(String(ref.nombreMedico || '').trim());
+          if (!nombreMedico) return;
+
+          const titulo = `<strong>${nombreMedico.toUpperCase()}</strong> <em>(${esc(ref.especialidad || '').toUpperCase()} · ${esc(getTipoCitaLabel(ref.tipoCita)).toUpperCase()})</em>`;
+          const urgenteTag = ref.esUrgente ? ' <strong style="color:#e11d48;">URGENTE</strong>' : '';
+
+          let itemHtml = `<li>${titulo}${urgenteTag}`;
+
+          const info = [];
+          if (ref.telefonoConsultorio) info.push(esc(ref.telefonoConsultorio));
+          if (ref.direccionConsultorio) info.push(esc(ref.direccionConsultorio));
+          if (ref.datosExtras) info.push(esc(ref.datosExtras));
+          if (ref.notas) info.push(esc(ref.notas));
+          if (info.length > 0) itemHtml += `<br/>${info.join(' · ')}`;
+
+          if (ref.diagnostico) itemHtml += `<br/>${esc(ref.diagnostico)}`;
+
+          itemHtml += '</li>';
+          html += itemHtml;
+        });
+        html += '</ol>';
+      }
+      return html;
+    })();
+
     const fechaRecetaRaw = exp?.fechaConsulta
       || exp?.consulta?.fecha
       || exp?.createdAt
@@ -2449,7 +2765,8 @@ const ExpedienteClinico = () => {
       || new Date().toISOString();
     const fechaRecetaDate = parseFirestoreDate(fechaRecetaRaw) || new Date();
 
-    const userFuente = userProfileDoc || user || {};
+    const baseUserFuente = userProfileDoc || user || {};
+    const userFuente = doctorOverride || baseUserFuente;
     const existeCitaEnContexto = Boolean(citaId);
     const sucursalNombreDesdeCita = String(citaContext?.sucursalNombre || '').trim();
     const sucursalTelefonoDesdeCita = String(citaContext?.sucursalTelefono || '').trim();
@@ -2471,10 +2788,10 @@ const ExpedienteClinico = () => {
     const alergiasDesdeAntecedentes = preguntadosYNegados
       ? 'Preguntados y negados'
       : [
-          ...alergiasLista,
-          ...(alergiasOtros ? [alergiasOtros] : [])
-        ].join(', ');
-    const alergiasTexto = String(exp?.px_info?.alergias_base || '').trim() || alergiasDesdeAntecedentes || 'Interrogadas y negadas';
+        ...alergiasLista,
+        ...(alergiasOtros ? [alergiasOtros] : [])
+      ].join(', ');
+    const alergiasTexto = alergiasDesdeAntecedentes || String(exp?.px_info?.alergias_base || '').trim() || 'Interrogadas y negadas';
 
     // --- Resolución de consultorio con fallback a perfil del usuario ---
     const consultorioIdDesdeCita = String(citaContext?.consultorioId || '').trim();
@@ -2495,21 +2812,21 @@ const ExpedienteClinico = () => {
     // Intento 1: buscar por datos de la cita
     const consultorioEncontradoPorCita = (consultorioIdDesdeCita || consultorioNombreDesdeCita)
       ? consultoriosCatalogo.find((item) => {
-          const byId = consultorioIdDesdeCita && String(item?.id || '').trim() === consultorioIdDesdeCita;
-          const byName = consultorioNombreDesdeCita
-            && consultorioNombreDesdeCita.toLowerCase() !== 'sin asignar'
-            && normalizeTextKey(item?.nombre || '') === normalizeTextKey(consultorioNombreDesdeCita);
-          return byId || byName;
-        })
+        const byId = consultorioIdDesdeCita && String(item?.id || '').trim() === consultorioIdDesdeCita;
+        const byName = consultorioNombreDesdeCita
+          && consultorioNombreDesdeCita.toLowerCase() !== 'sin asignar'
+          && normalizeTextKey(item?.nombre || '') === normalizeTextKey(consultorioNombreDesdeCita);
+        return byId || byName;
+      })
       : null;
 
     // Intento 2: buscar por datos del perfil del usuario (si la cita no resolvió)
     const consultorioEncontradoPorUser = !consultorioEncontradoPorCita
       ? consultoriosCatalogo.find((item) => {
-          const byId = consultorioIdDesdeUser && String(item?.id || '').trim() === consultorioIdDesdeUser;
-          const byName = consultorioNombreDesdeUser && normalizeTextKey(item?.nombre || '') === normalizeTextKey(consultorioNombreDesdeUser);
-          return byId || byName;
-        })
+        const byId = consultorioIdDesdeUser && String(item?.id || '').trim() === consultorioIdDesdeUser;
+        const byName = consultorioNombreDesdeUser && normalizeTextKey(item?.nombre || '') === normalizeTextKey(consultorioNombreDesdeUser);
+        return byId || byName;
+      })
       : null;
 
     const consultorioEncontrado = consultorioEncontradoPorCita || consultorioEncontradoPorUser || null;
@@ -2662,13 +2979,13 @@ const ExpedienteClinico = () => {
         }
       },
       medico: {
-        nombre: user?.nombre || '',
-        cedula: user?.cedula || user?.cedulaProfesional || '',
-        cedula_profesional: user?.cedula || user?.cedulaProfesional || '',
-        especialidad: user?.especialidad || '',
-        universidad_egreso: user?.universidadEgreso || '',
-        centro_estudios: user?.universidadEgreso || '',
-        sucursal: user?.sucursal || ''
+        nombre: exp?.medicoPerfil?.nombre || exp?.medicoNombre || doctorOverride?.nombre || user?.nombre || '',
+        cedula: exp?.medicoPerfil?.cedula || exp?.medicoPerfil?.cedulaProfesional || doctorOverride?.cedula || doctorOverride?.cedulaProfesional || user?.cedula || user?.cedulaProfesional || '',
+        cedula_profesional: exp?.medicoPerfil?.cedula || exp?.medicoPerfil?.cedulaProfesional || doctorOverride?.cedula || doctorOverride?.cedulaProfesional || user?.cedula || user?.cedulaProfesional || '',
+        especialidad: exp?.medicoPerfil?.especialidad || doctorOverride?.especialidad || user?.especialidad || '',
+        universidad_egreso: exp?.medicoPerfil?.universidadEgreso || doctorOverride?.universidadEgreso || user?.universidadEgreso || '',
+        centro_estudios: exp?.medicoPerfil?.universidadEgreso || doctorOverride?.universidadEgreso || user?.universidadEgreso || '',
+        sucursal: exp?.medicoPerfil?.sucursal || doctorOverride?.sucursal || user?.sucursal || ''
       },
       receta: {
         folio: folioReceta,
@@ -2710,6 +3027,9 @@ const ExpedienteClinico = () => {
         procedimientos_html: procedimientosHtml,
         procedimientos_conteo: String(procedimientosLista.length),
         procedimientos_notas: notasProcedimientos,
+        referencias_texto: referenciasTexto,
+        referencias_html: referenciasHtml,
+        referencias_conteo: String(referenciasLista.length),
         receta_contenido: (() => {
           const secciones = [];
           if (medicamentosTexto) secciones.push(medicamentosTexto);
@@ -2720,6 +3040,10 @@ const ExpedienteClinico = () => {
           if (procedimientosTexto) {
             secciones.push('');
             secciones.push(procedimientosTexto);
+          }
+          if (referenciasTexto) {
+            secciones.push('');
+            secciones.push(referenciasTexto);
           }
           return secciones.join('\n');
         })()
@@ -2841,13 +3165,15 @@ const ExpedienteClinico = () => {
       return;
     }
 
+    playSoftBeep(440, 0.15);
+    setTimeout(() => playSoftBeep(350, 0.2), 200);
     setExitChangeList(changes);
     setShowExitAlert(true);
   };
 
   return (
     <div className="h-screen w-full bg-[#f8fafc] flex flex-col overflow-hidden text-slate-800 font-sans selection:bg-blue-100 relative">
-      <style dangerouslySetInnerHTML={{__html: STYLES}} />
+      <style dangerouslySetInnerHTML={{ __html: STYLES }} />
 
       {/* --- TOAST --- */}
       {notification && <ToastNotification msg={notification.msg} type={notification.type} onClose={() => setNotification(null)} />}
@@ -2866,8 +3192,8 @@ const ExpedienteClinico = () => {
 
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="relative flex-shrink-0">
-                <AvatarPaciente sexo={pacienteData?.sexo} fechaNacimiento={pacienteData?.fechaNacimiento} size="md" />
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></div>
+              <AvatarPaciente sexo={pacienteData?.sexo} fechaNacimiento={pacienteData?.fechaNacimiento} size="md" />
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></div>
             </div>
 
             <div className="flex flex-col min-w-0">
@@ -2891,24 +3217,23 @@ const ExpedienteClinico = () => {
                   );
                 })()}
                 <div className="relative group">
-                    <div className={`flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-black uppercase tracking-wide cursor-pointer transition-all ${
-                        expediente.px_info.grupo_sanguineo 
-                        ? 'bg-rose-50 text-rose-600 border-rose-100 ring-1 ring-rose-50' 
-                        : 'bg-slate-50 text-slate-400 border-slate-200 border-dashed hover:border-slate-300'
+                  <div className={`flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-black uppercase tracking-wide cursor-pointer transition-all ${expediente.px_info.grupo_sanguineo
+                      ? 'bg-rose-50 text-rose-600 border-rose-100 ring-1 ring-rose-50'
+                      : 'bg-slate-50 text-slate-400 border-slate-200 border-dashed hover:border-slate-300'
                     }`}>
-                        <Droplet size={8} className={expediente.px_info.grupo_sanguineo ? "fill-rose-500 text-rose-500" : "text-slate-300"} />
-                        {expediente.px_info.grupo_sanguineo || '?'}
-                    </div>
-                    <select
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        value={expediente.px_info.grupo_sanguineo || ''}
-                        onChange={(e) => updateCampo('px_info.grupo_sanguineo', e.target.value)}
-                    >
-                        <option value="">Definir...</option>
-                        {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(t => (
-                            <option key={t} value={t}>{t}</option>
-                        ))}
-                    </select>
+                    <Droplet size={8} className={expediente.px_info.grupo_sanguineo ? "fill-rose-500 text-rose-500" : "text-slate-300"} />
+                    {expediente.px_info.grupo_sanguineo || '?'}
+                  </div>
+                  <select
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    value={expediente.px_info.grupo_sanguineo || ''}
+                    onChange={(e) => updateCampo('px_info.grupo_sanguineo', e.target.value)}
+                  >
+                    <option value="">Definir...</option>
+                    {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
                 </div>
                 {expediente.consulta.exploracion.antropometria?.peso && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-bold bg-slate-50 text-slate-500 border-slate-200 uppercase tracking-wide">
@@ -2930,8 +3255,8 @@ const ExpedienteClinico = () => {
 
         <div className={`hidden lg:flex items-center gap-2 px-3 py-1 rounded-full border transition-all duration-500 ${getTimerStyles()}`}>
           <div className="relative flex items-center justify-center">
-             <Clock size={14} className={`${seconds <= 10 && seconds >= 0 ? "animate-spin" : ""}`} />
-             {seconds <= 60 && <span className="absolute w-full h-full rounded-full bg-current opacity-20 animate-ping"></span>}
+            <Clock size={14} className={`${seconds <= 10 && seconds >= 0 ? "animate-spin" : ""}`} />
+            {seconds <= 60 && <span className="absolute w-full h-full rounded-full bg-current opacity-20 animate-ping"></span>}
           </div>
           <span className="text-base font-mono font-bold tracking-tight">
             {formatTime(seconds)}
@@ -2940,112 +3265,112 @@ const ExpedienteClinico = () => {
 
         {/* ── NAVEGACIÓN PRINCIPAL ── */}
         <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
-          <HeaderTab icon={<Activity size={15}/>} label="Resumen" active={activeMainTab === 'resumen'} visited={visitedTabs.has('resumen')} onClick={() => handleTabChange('resumen')} color="emerald" />
+          <HeaderTab icon={<Activity size={15} />} label="Resumen" active={activeMainTab === 'resumen'} visited={visitedTabs.has('resumen')} onClick={() => handleTabChange('resumen')} color="emerald" />
           <div className={`w-4 h-px ${visitedTabs.has('antecedentes') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
-          <HeaderTab icon={<ClipboardList size={15}/>} label="Historial" active={activeMainTab === 'antecedentes'} visited={visitedTabs.has('antecedentes')} onClick={() => handleTabChange('antecedentes')} color="violet" />
+          <HeaderTab icon={<ClipboardList size={15} />} label="Historial" active={activeMainTab === 'antecedentes'} visited={visitedTabs.has('antecedentes')} onClick={() => handleTabChange('antecedentes')} color="violet" />
           <div className={`w-4 h-px ${visitedTabs.has('consulta') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
-          <HeaderTab icon={<Stethoscope size={15}/>} label="Consulta" active={activeMainTab === 'consulta'} visited={visitedTabs.has('consulta')} onClick={() => handleTabChange('consulta')} color="blue" />
+          <HeaderTab icon={<Stethoscope size={15} />} label="Consulta" active={activeMainTab === 'consulta'} visited={visitedTabs.has('consulta')} onClick={() => handleTabChange('consulta')} color="blue" />
         </div>
 
         <div className="flex items-center gap-1.5">
 
           {/* ── ESTADO DEL PACIENTE ── */}
           <div className="relative">
-             <button 
-                onClick={() => setShowMenuQx(!showMenuQx)}
-                title="Estado del Paciente"
-                className={`p-2 rounded-lg border text-xs font-bold transition-all
-                ${(expediente.px_info.requiere_cirugia?.general || expediente.px_info.es_embarazada) 
-                  ? 'bg-rose-50 text-rose-600 border-rose-200' 
+            <button
+              onClick={() => setShowMenuQx(!showMenuQx)}
+              title="Estado del Paciente"
+              className={`p-2 rounded-lg border text-xs font-bold transition-all
+                ${(expediente.px_info.requiere_cirugia?.general || expediente.px_info.es_embarazada)
+                  ? 'bg-rose-50 text-rose-600 border-rose-200'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-             >
-                {pacienteData.sexo === 'Femenino' ? <Baby size={16}/> : <Scissors size={16}/>}
-             </button>
+            >
+              {pacienteData.sexo === 'Femenino' ? <Baby size={16} /> : <Scissors size={16} />}
+            </button>
 
-             {showMenuQx && (
-                <>
+            {showMenuQx && (
+              <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowMenuQx(false)}></div>
                 <div className="absolute top-full right-0 mt-3 w-80 bg-white rounded-2xl shadow-xl ring-1 ring-slate-900/5 z-20 overflow-hidden p-5 animate-in fade-in zoom-in-95 origin-top-right border border-slate-100">
-                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Requerimientos Qx</h4>
-                    <div className="space-y-3 mb-6">
-                        <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
-                            <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded" 
-                                checked={expediente.px_info.requiere_cirugia?.general || false}
-                                onChange={(e) => updateCampo('px_info.requiere_cirugia.general', e.target.checked)} />
-                            <span className="text-sm font-bold text-slate-700">Cirugía General</span>
-                        </label>
-                        {pacienteData.sexo === 'Femenino' && (
-                            <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
-                                <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded" 
-                                    checked={expediente.px_info.requiere_cirugia?.ginecologica || false}
-                                    onChange={(e) => updateCampo('px_info.requiere_cirugia.ginecologica', e.target.checked)} />
-                                <span className="text-sm font-bold text-slate-700">Cirugía Ginecológica</span>
-                            </label>
-                        )}
-                    </div>
-
+                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Requerimientos Qx</h4>
+                  <div className="space-y-3 mb-6">
+                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
+                      <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded"
+                        checked={expediente.px_info.requiere_cirugia?.general || false}
+                        onChange={(e) => updateCampo('px_info.requiere_cirugia.general', e.target.checked)} />
+                      <span className="text-sm font-bold text-slate-700">Cirugía General</span>
+                    </label>
                     {pacienteData.sexo === 'Femenino' && (
-                        <>
-                            <div className="border-t border-slate-100 my-4"></div>
-                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Estado Obstétrico</h4>
-                            
-                            <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 mb-3">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">F.U.M.</label>
-                                <input type="date" className="w-full mt-1 p-1.5 bg-white border border-slate-200 rounded text-sm font-bold text-slate-700" 
-                                    value={expediente.px_info.fum} onChange={(e) => updateCampo('px_info.fum', e.target.value)} />
-                            </div>
-
-                            <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-blue-50 mb-3">
-                                <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded" 
-                                    checked={expediente.px_info.es_embarazada || false}
-                                    onChange={(e) => updateCampo('px_info.es_embarazada', e.target.checked)} />
-                                <span className="text-sm font-bold text-slate-700">¿Existe Embarazo?</span>
-                            </label>
-
-                            {expediente.px_info.es_embarazada && (
-                                <div className="space-y-3 animate-in fade-in">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
-                                            <span className="block text-[9px] font-bold text-slate-400">S.D.G.</span>
-                                            <span className="text-xs font-bold text-blue-600">{expediente.px_info.sdg || '--'}</span>
-                                        </div>
-                                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
-                                            <span className="block text-[9px] font-bold text-slate-400">F.P.P.</span>
-                                            <span className="text-xs font-bold text-blue-600">{expediente.px_info.fpp || '--'}</span>
-                                        </div>
-                                    </div>
-                                    <button 
-                                        onClick={() => { setShowMenuQx(false); setShowEmbarazoModal(true); }}
-                                        className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-blue-600 transition-all"
-                                    >
-                                        Detalles Control Embarazo
-                                    </button>
-                                </div>
-                            )}
-                        </>
+                      <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
+                        <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded"
+                          checked={expediente.px_info.requiere_cirugia?.ginecologica || false}
+                          onChange={(e) => updateCampo('px_info.requiere_cirugia.ginecologica', e.target.checked)} />
+                        <span className="text-sm font-bold text-slate-700">Cirugía Ginecológica</span>
+                      </label>
                     )}
+                  </div>
+
+                  {pacienteData.sexo === 'Femenino' && (
+                    <>
+                      <div className="border-t border-slate-100 my-4"></div>
+                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Estado Obstétrico</h4>
+
+                      <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 mb-3">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">F.U.M.</label>
+                        <input type="date" className="w-full mt-1 p-1.5 bg-white border border-slate-200 rounded text-sm font-bold text-slate-700"
+                          value={expediente.px_info.fum} onChange={(e) => updateCampo('px_info.fum', e.target.value)} />
+                      </div>
+
+                      <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-blue-50 mb-3">
+                        <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded"
+                          checked={expediente.px_info.es_embarazada || false}
+                          onChange={(e) => updateCampo('px_info.es_embarazada', e.target.checked)} />
+                        <span className="text-sm font-bold text-slate-700">¿Existe Embarazo?</span>
+                      </label>
+
+                      {expediente.px_info.es_embarazada && (
+                        <div className="space-y-3 animate-in fade-in">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">S.D.G.</span>
+                              <span className="text-xs font-bold text-blue-600">{expediente.px_info.sdg || '--'}</span>
+                            </div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">F.P.P.</span>
+                              <span className="text-xs font-bold text-blue-600">{expediente.px_info.fpp || '--'}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setShowMenuQx(false); setShowEmbarazoModal(true); }}
+                            className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-blue-600 transition-all"
+                          >
+                            Detalles Control Embarazo
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                </>
-             )}
+              </>
+            )}
           </div>
 
           {/* ── COSTO CONSULTA ── */}
           <div className="hidden lg:flex items-center gap-1 px-2 py-1 bg-slate-50 rounded-lg border border-slate-100" title="Costo consulta">
             <span className="text-slate-400 font-bold text-xs">$</span>
-            <input 
-              className="w-14 bg-transparent text-right font-bold text-slate-700 outline-none placeholder:text-slate-300 text-xs" 
-              value={expediente.meta.costo} 
-              onChange={e => updateCampo('meta.costo', e.target.value)} 
-              placeholder="0.00" 
+            <input
+              className="w-14 bg-transparent text-right font-bold text-slate-700 outline-none placeholder:text-slate-300 text-xs"
+              value={expediente.meta.costo}
+              onChange={e => updateCampo('meta.costo', e.target.value)}
+              placeholder="0.00"
             />
           </div>
 
           <div className="w-px h-5 bg-slate-200"></div>
 
           {/* ── IMPRIMIR RECETA ── */}
-          <button 
-            onClick={handlePrintReceta} 
-            title="Imprimir Receta" 
+          <button
+            onClick={handlePrintReceta}
+            title="Imprimir Receta"
             className="p-2 rounded-lg border transition-all active:scale-95 bg-white border-slate-200 text-purple-500 hover:bg-purple-50 hover:border-purple-300"
           >
             <Printer size={16} />
@@ -3057,10 +3382,10 @@ const ExpedienteClinico = () => {
           </button>
 
           {/* ── FINALIZAR CONSULTA ── */}
-          <button 
-            onClick={handleGuardar} 
+          <button
+            onClick={handleGuardar}
             disabled={loading}
-            title={isHistoricalReviewMode ? 'Guardar consulta histórica' : 'Finalizar consulta'} 
+            title={isHistoricalReviewMode ? 'Guardar consulta histórica' : 'Finalizar consulta'}
             className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-xs transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 disabled:opacity-50"
           >
             <CheckCircle2 size={14} />
@@ -3094,74 +3419,76 @@ const ExpedienteClinico = () => {
       <div className="flex-1 flex overflow-hidden relative print:hidden">
         <main className="flex-1 overflow-hidden relative bg-slate-50/50 p-2 md:p-4 print:p-0">
           <div className="w-full h-full bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="flex-1 flex flex-col h-full w-full"> 
-                {activeMainTab === 'consulta' && (
-                  <div className="flex-1 h-full w-full animate-in fade-in duration-300">
-                    <SeccionConsulta 
-                       key={pacienteId}
-                       expediente={expediente} 
-                       updateCampo={updateCampo} 
-                       activeConsulta={activeConsulta} 
-                       setActiveConsulta={setActiveConsulta}
-                        onPrintReceta={handlePrintReceta}
-                        onPrintRecetaSalir={isHistoricalReviewMode ? handlePrintReceta : handlePrintRecetaYSalir}
-                       tempMed={tempMed}
-                       setTempMed={setTempMed}
-                       doctorUid={user?.uid}
-                    />
-                  </div>
-                )}
-                {activeMainTab === 'antecedentes' && (
-                  <div className="flex-1 h-full w-full animate-in fade-in duration-300">
-                    <SeccionAntecedentes 
-                       key={pacienteId}
-                       expediente={expediente} 
-                       updateCampo={updateCampo} 
-                       sexo={pacienteData?.sexo} 
-                       edad={parseInt(expediente.px_info.edad)}
-                       tempAlergia={tempAlergia}
-                       setTempAlergia={setTempAlergia}
-                       tempCirugia={tempCirugia}
-                       setTempCirugia={setTempCirugia}
-                       onNextStep={() => handleTabChange('consulta')}
-                    />
-                  </div>
-                )}
-                {activeMainTab === 'resumen' && (
-                  <div className="flex-1 h-full w-full animate-in fade-in duration-300">
-                    <SeccionResumen 
-                       key={pacienteId}
-                       expediente={expediente} 
-                       updateCampo={updateCampo} 
-                       pacienteId={pacienteId}
-                        historialRefreshKey={historialRefreshKey}
-                       eventosDocumentalesSesion={eventosDocumentales}
-                       onNextStep={() => handleTabChange('antecedentes')}
-                        onCargarConsultaHistorica={cargarConsultaHistorica}
+            <div className="flex-1 flex flex-col h-full w-full">
+              {activeMainTab === 'consulta' && (
+                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                  <SeccionConsulta
+                    key={pacienteId}
+                    expediente={expediente}
+                    updateCampo={updateCampo}
+                    activeConsulta={activeConsulta}
+                    setActiveConsulta={setActiveConsulta}
+                    onPrintReceta={handlePrintReceta}
+                    onPrintRecetaSalir={isHistoricalReviewMode ? handlePrintReceta : handlePrintRecetaYSalir}
+                    tempMed={tempMed}
+                    setTempMed={setTempMed}
+                    doctorUid={user?.uid}
+                  />
+                </div>
+              )}
+              {activeMainTab === 'antecedentes' && (
+                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                  <SeccionAntecedentes
+                    key={pacienteId}
+                    expediente={expediente}
+                    updateCampo={updateCampo}
+                    sexo={pacienteData?.sexo}
+                    edad={parseInt(expediente.px_info.edad)}
+                    tempAlergia={tempAlergia}
+                    setTempAlergia={setTempAlergia}
+                    tempCirugia={tempCirugia}
+                    setTempCirugia={setTempCirugia}
+                    onNextStep={() => handleTabChange('consulta')}
+                  />
+                </div>
+              )}
+              {activeMainTab === 'resumen' && (
+                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                  <SeccionResumen
+                    key={pacienteId}
+                    expediente={expediente}
+                    updateCampo={updateCampo}
+                    pacienteId={pacienteId}
+                    historialRefreshKey={historialRefreshKey}
+                    eventosDocumentalesSesion={eventosDocumentales}
+                    onNextStep={() => handleTabChange('antecedentes')}
+                    onCargarConsultaHistorica={cargarConsultaHistorica}
 
-                       onImprimirReceta={(historicalData) => {
-                         const fechaHist = historicalData.fecha?.toDate ? historicalData.fecha.toDate() : (historicalData.fecha instanceof Date ? historicalData.fecha : null);
-                         expedienteParaRecetaRef.current = {
-                           ...expediente,
-                           consulta: historicalData.consulta || expediente.consulta,
-                           antecedentes: historicalData.antecedentes || expediente.antecedentes,
-                           resumen: historicalData.resumen || expediente.resumen,
-                           meta: historicalData.meta || expediente.meta,
-                           px_info: { ...expediente.px_info, ...(historicalData.px_info || {}) },
-                           fechaConsulta: fechaHist ? fechaHist.toISOString() : null
-                         };
-                         handlePrintReceta();
-                       }}
-                    />
-                  </div>
-                )}
+                    onImprimirReceta={(historicalData) => {
+                      const fechaHist = historicalData.fecha?.toDate ? historicalData.fecha.toDate() : (historicalData.fecha instanceof Date ? historicalData.fecha : null);
+                      expedienteParaRecetaRef.current = {
+                        ...expediente,
+                        consulta: historicalData.consulta || expediente.consulta,
+                        antecedentes: historicalData.antecedentes || expediente.antecedentes,
+                        resumen: historicalData.resumen || expediente.resumen,
+                        meta: historicalData.meta || expediente.meta,
+                        px_info: { ...expediente.px_info, ...(historicalData.px_info || {}) },
+                        fechaConsulta: fechaHist ? fechaHist.toISOString() : null,
+                        medicoNombre: historicalData.medicoNombre || '',
+                        medicoPerfil: historicalData.medicoPerfil || null
+                      };
+                      handlePrintReceta();
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </main>
       </div>
 
 
-      
+
       {/* --- OTROS MODALES --- */}
       {showHistoriaModal && (
         <HistoriaClinicaModal
@@ -3170,7 +3497,7 @@ const ExpedienteClinico = () => {
             setShowHistoriaModal(false);
             setShowActionsMenu(true);
           }}
-          paciente={{...pacienteData, nombre: pacienteNombre}}
+          paciente={{ ...pacienteData, nombre: pacienteNombre }}
           historial={historialCompleto}
           doctor={user}
           expedienteActual={expediente}
@@ -3188,6 +3515,7 @@ const ExpedienteClinico = () => {
           pacienteNombre={pacienteNombre}
           pacienteId={pacienteId}
           doctorId={user.uid}
+          medicoNombre={user.nombre}
         />
       )}
       {showHistoricoEstudios && (
@@ -3252,35 +3580,112 @@ const ExpedienteClinico = () => {
       {showActionsMenu && (
         <div className="fixed inset-0 z-[170] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-lg w-full max-w-5xl h-[85vh] flex flex-col border border-slate-200 overflow-hidden">
-             <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-sm">
-                <div>
-                   <h3 className="exp-sora text-3xl font-black tracking-tighter" style={{color: 'var(--slate-900)'}}>Acciones del Expediente</h3>
-                   <p className="font-medium mt-1" style={{color: 'var(--slate-500)'}}>Selecciona una herramienta para el paciente <span className="font-bold" style={{color: 'var(--blue-600)'}}>{pacienteNombre}</span></p>
+            <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-sm">
+              <div>
+                <h3 className="exp-sora text-3xl font-black tracking-tighter" style={{ color: 'var(--slate-900)' }}>Acciones del Expediente</h3>
+                <p className="font-medium mt-1" style={{ color: 'var(--slate-500)' }}>Selecciona una herramienta para el paciente <span className="font-bold" style={{ color: 'var(--blue-600)' }}>{pacienteNombre}</span></p>
+              </div>
+              <button onClick={() => setShowActionsMenu(false)} className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"><X size={24} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-10 bg-slate-50/50 exp-scroll">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <ActionCard title="Ver Historia Clínica" subtitle="Línea de tiempo" icon={<ClipboardList size={32} />} color="bg-blue-500" onClick={handleVerHistoria} />
+                <ActionCard
+                  title="Historico legado"
+                  subtitle="Migrado de MedicalManik"
+                  icon={<History size={32} />}
+                  color="bg-indigo-500"
+                  onClick={() => {
+                    setShowLegacyHistory(true);
+                    setShowActionsMenu(false);
+                  }}
+                />
+                <ActionCard title="Plantillas" subtitle="Documentos de administracion" icon={<FileText size={32} />} color="bg-orange-500" onClick={() => { setShowFormatSelector(true); setShowActionsMenu(false); }} />
+                <ActionCard title="Agregar Estudio" subtitle="Subir resultado externo" icon={<PlusSquare size={32} />} color="bg-teal-500" onClick={() => { setShowEstudioModal(true); setShowActionsMenu(false); }} />
+                <ActionCard title="Historial Estudios" subtitle="Ver laboratorio previo" icon={<HistoryIcon size={32} />} color="bg-blue-600" onClick={() => { setShowHistoricoEstudios(true); setShowActionsMenu(false); }} />
+                {pacienteData?.sexo === 'Femenino' && <ActionCard title="Histórico Embarazos" subtitle="Control prenatal" icon={<Baby size={32} />} color="bg-rose-500" onClick={() => { setShowHistoricoEmbarazos(true); setShowActionsMenu(false); }} />}
+                <ActionCard title="Negatoscopio" subtitle="Visor de imágenes médicas" icon={<Monitor size={32} />} color="bg-slate-700" onClick={() => { setShowNegatoscopio(true); setShowActionsMenu(false); }} />
+                <ActionCard title="Calculadora de Dosis" subtitle="Dosis por peso y dilución" icon={<Calculator size={32} />} color="bg-emerald-600" onClick={() => { setShowCalculadoraDosis(true); setShowActionsMenu(false); }} />
+                <ActionCard title="Traspasar PX" subtitle="Transferir a otro médico" icon={<ArrowLeftRight size={32} />} color="bg-cyan-600" onClick={() => { setShowActionsMenu(false); setTraspasarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); setShowTraspasarModal(true); }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL TRASPASAR PACIENTE --- */}
+      {showTraspasarModal && (
+        <div className="fixed inset-0 z-[175] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-lg w-full max-w-lg flex flex-col border border-slate-200 overflow-hidden">
+            <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-sm">
+              <div>
+                <h3 className="exp-sora text-xl font-black tracking-tighter" style={{ color: 'var(--slate-900)' }}>Traspasar Paciente</h3>
+                <p className="text-sm font-medium mt-0.5" style={{ color: 'var(--slate-500)' }}>
+                  Transferir <span className="font-bold" style={{ color: 'var(--blue-600)' }}>{pacienteNombre}</span> a otro médico
+                </p>
+              </div>
+              <button onClick={() => { setShowTraspasarModal(false); setTraspasarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); }} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"><X size={20} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 flex flex-col gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Médico destino</label>
+                <div className="max-h-52 overflow-y-auto border border-slate-200 rounded-xl bg-white divide-y divide-slate-100">
+                  {doctoresCatalogo.length === 0 ? (
+                    <p className="px-4 py-6 text-sm text-slate-400 text-center">No hay médicos disponibles</p>
+                  ) : (
+                    doctoresCatalogo.map((doc) => (
+                      <button
+                        key={doc.id}
+                        onClick={() => setTraspasarData(prev => ({ ...prev, doctorUid: doc.id, doctorNombre: doc.nombre }))}
+                        className={`w-full text-left px-4 py-3 text-sm font-medium transition-colors ${
+                          traspasarData.doctorUid === doc.id
+                            ? 'bg-cyan-50 text-cyan-700 border-l-2 border-cyan-500'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Dr. {doc.nombre}
+                      </button>
+                    ))
+                  )}
                 </div>
-                <button onClick={() => setShowActionsMenu(false)} className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"><X size={24}/></button>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-10 bg-slate-50/50 exp-scroll">
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                   <ActionCard title="Ver Historia Clínica" subtitle="Línea de tiempo" icon={<ClipboardList size={32}/>} color="bg-blue-500" onClick={handleVerHistoria} />
-                   <ActionCard
-                     title="Historico legado"
-                     subtitle="Migrado de MedicalManik"
-                     icon={<History size={32} />}
-                     color="bg-indigo-500"
-                     onClick={() => {
-                       setShowLegacyHistory(true);
-                       setShowActionsMenu(false);
-                     }}
-                   />
-                   <ActionCard title="Plantillas" subtitle="Documentos de administracion" icon={<FileText size={32}/>} color="bg-orange-500" onClick={() => { setShowFormatSelector(true); setShowActionsMenu(false); }} />
-                   <ActionCard title="Agregar Estudio" subtitle="Subir resultado externo" icon={<PlusSquare size={32}/>} color="bg-teal-500" onClick={() => { setShowEstudioModal(true); setShowActionsMenu(false); }} />
-                   <ActionCard title="Historial Estudios" subtitle="Ver laboratorio previo" icon={<HistoryIcon size={32}/>} color="bg-blue-600" onClick={() => { setShowHistoricoEstudios(true); setShowActionsMenu(false); }} />
-                   {pacienteData?.sexo === 'Femenino' && <ActionCard title="Histórico Embarazos" subtitle="Control prenatal" icon={<Baby size={32}/>} color="bg-rose-500" onClick={() => { setShowHistoricoEmbarazos(true); setShowActionsMenu(false); }} />}
-                   <ActionCard title="Negatoscopio" subtitle="Visor de imágenes médicas" icon={<Monitor size={32}/>} color="bg-slate-700" onClick={() => { setShowNegatoscopio(true); setShowActionsMenu(false); }} />
-                   <ActionCard title="Calculadora de Dosis" subtitle="Dosis por peso y dilución" icon={<Calculator size={32}/>} color="bg-emerald-600" onClick={() => { setShowCalculadoraDosis(true); setShowActionsMenu(false); }} />
-                </div>
-             </div>
+                {traspasarData.doctorNombre && (
+                  <p className="text-xs text-cyan-600 font-medium mt-1.5">
+                    Médico seleccionado: <span className="font-bold">Dr. {traspasarData.doctorNombre}</span>
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
+                  Justificación <span className="text-red-400">*</span>
+                </label>
+                <textarea
+                  value={traspasarData.justificacion}
+                  onChange={(e) => setTraspasarData(prev => ({ ...prev, justificacion: e.target.value }))}
+                  placeholder="Describe el motivo de la transferencia..."
+                  rows={4}
+                  className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 bg-white focus:outline-none focus:ring-2 focus:ring-cyan-100 focus:border-cyan-300 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 bg-white flex justify-end gap-3">
+              <button
+                onClick={() => { setShowTraspasarModal(false); setTraspasarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); }}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleTraspasarPaciente}
+                disabled={traspasarLoading || !traspasarData.doctorUid}
+                className="px-5 py-2.5 rounded-xl bg-cyan-600 text-white font-bold text-sm hover:bg-cyan-700 transition-colors disabled:opacity-50 shadow-sm shadow-cyan-600/20"
+              >
+                {traspasarLoading ? 'Transfiriendo...' : 'Confirmar Transferencia'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3304,8 +3709,8 @@ const ExpedienteClinico = () => {
           <div className="bg-white rounded-2xl shadow-lg w-full max-w-5xl h-[75vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-white">
               <div>
-                 <h3 className="exp-sora text-3xl font-black tracking-tighter" style={{color: 'var(--slate-900)'}}>Plantillas Disponibles</h3>
-                 <p className="font-medium mt-1" style={{color: 'var(--slate-500)'}}>Documentos configurados por administración</p>
+                <h3 className="exp-sora text-3xl font-black tracking-tighter" style={{ color: 'var(--slate-900)' }}>Plantillas Disponibles</h3>
+                <p className="font-medium mt-1" style={{ color: 'var(--slate-500)' }}>Documentos configurados por administración</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -3334,11 +3739,11 @@ const ExpedienteClinico = () => {
                   }}
                   className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"
                 >
-                  <X size={24}/>
+                  <X size={24} />
                 </button>
               </div>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-10 bg-slate-50/50 exp-scroll">
               {plantillasDinamicas.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-5">
@@ -3369,10 +3774,10 @@ const ExpedienteClinico = () => {
           <div className="bg-white rounded-2xl shadow-lg w-full max-w-4xl h-[68vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-white">
               <div>
-                <h3 className="exp-sora text-2xl font-black tracking-tight" style={{color: 'var(--slate-900)'}}>Plantilla de Receta</h3>
-                <p className="font-medium mt-1 text-sm" style={{color: 'var(--slate-500)'}}>Elige una plantilla para imprimir la receta de este paciente.</p>
+                <h3 className="exp-sora text-2xl font-black tracking-tight" style={{ color: 'var(--slate-900)' }}>Plantilla de Receta</h3>
+                <p className="font-medium mt-1 text-sm" style={{ color: 'var(--slate-500)' }}>Elige una plantilla para imprimir la receta de este paciente.</p>
               </div>
-              <button onClick={() => { pendingExitAfterRecipePrintRef.current = false; expedienteParaRecetaRef.current = null; setShowRecipeTemplateSelector(false); }} className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"><X size={22}/></button>
+              <button onClick={() => { pendingExitAfterRecipePrintRef.current = false; expedienteParaRecetaRef.current = null; setShowRecipeTemplateSelector(false); }} className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors"><X size={22} /></button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50 exp-scroll">
@@ -3509,15 +3914,15 @@ const ExpedienteClinico = () => {
                 </p>
               </div>
             </div>
-            
+
             <div className="flex justify-end gap-3 mt-6">
-              <button 
+              <button
                 onClick={() => setShowPrintAlert(false)}
                 className="px-4 py-2 text-slate-500 font-bold text-sm hover:bg-slate-50 rounded-lg transition-colors"
               >
                 No, cancelar
               </button>
-              <button 
+              <button
                 onClick={executeSave}
                 className="px-6 py-2 bg-slate-900 text-white font-bold text-sm rounded-lg hover:bg-slate-800 shadow-lg transition-all"
               >
@@ -3568,6 +3973,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
   const documentHtml = schema?.documentHtml || '';
   const page = schema?.page || { width: 816, height: 1056 };
   const printPageRef = useRef(null);
+  const printScrollRef = useRef(null);
   const signatureCanvasRef = useRef(null);
   const editMenuRef = useRef(null);
   const isSigningRef = useRef(false);
@@ -3586,7 +3992,66 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
   const documentFontFamily = schema?.documentFontFamily || 'Trebuchet MS';
   const documentLineHeight = Number(schema?.documentLineHeight || 1.45);
   const normalizedDocumentHtml = String(documentHtml || '').replace(/font-size\s*:\s*(\d+(?:\.\d+)?)px/gi, (_, num) => `font-size:${num}pt`);
+  const hasDocumentHtml = Boolean(String(documentHtml || '').trim());
   const isRecipeTemplate = (plantilla?.tipoDocumento || 'general') === 'receta';
+  const LETTER_WIDTH = 816;
+  const LETTER_HEIGHT = 1056;
+  const HALF_LETTER_HEIGHT = LETTER_HEIGHT / 2;
+  const PT_TO_CSS_PX = 96 / 72;
+
+  const isNearDimension = (value = 0, target = 0, tolerance = 3) => Math.abs(Number(value || 0) - Number(target || 0)) <= tolerance;
+
+  const isLikelyPointBasedPage = (width = 0, height = 0) => {
+    const knownPointSizes = [
+      [612, 792], // Letter
+      [612, 396], // Half letter (landscape)
+      [595, 842], // A4
+      [612, 1008], // Legal
+      [420, 595] // A5
+    ];
+    return knownPointSizes.some(([w, h]) => isNearDimension(width, w) && isNearDimension(height, h));
+  };
+
+  const normalizedPage = useMemo(() => {
+    const rawWidth = Number(page?.width || LETTER_WIDTH);
+    const rawHeight = Number(page?.height || (isRecipeTemplate ? HALF_LETTER_HEIGHT : LETTER_HEIGHT));
+    const safeWidth = Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : LETTER_WIDTH;
+    const safeHeight = Number.isFinite(rawHeight) && rawHeight > 0 ? rawHeight : (isRecipeTemplate ? HALF_LETTER_HEIGHT : LETTER_HEIGHT);
+
+    const looksPointBased = isLikelyPointBasedPage(safeWidth, safeHeight);
+    let width = looksPointBased ? safeWidth * PT_TO_CSS_PX : safeWidth;
+    let height = looksPointBased ? safeHeight * PT_TO_CSS_PX : safeHeight;
+
+    if (isRecipeTemplate) {
+      const looksLegacyFullHeight = height > HALF_LETTER_HEIGHT + 180;
+      if (looksLegacyFullHeight && !hasDocumentHtml) {
+        const allPositionedItems = [
+          ...(Array.isArray(elementos) ? elementos : []),
+          ...(Array.isArray(campos) ? campos : []),
+          ...(Array.isArray(bloques) ? bloques : [])
+        ];
+        const maxBottom = allPositionedItems.reduce((acc, item) => {
+          const y = Number(item?.y || 0);
+          const rawItemHeight = Number(item?.h);
+          const fallbackHeight = item?.type === 'shape' || item?.tipo === 'forma' ? 2 : 24;
+          const itemHeight = Number.isFinite(rawItemHeight) && rawItemHeight > 0 ? rawItemHeight : fallbackHeight;
+          return Math.max(acc, y + itemHeight);
+        }, 0);
+
+        // Plantillas legacy guardaron receta con altura carta completa.
+        // Si el contenido real vive en la mitad superior, restauramos media carta.
+        if (maxBottom === 0 || maxBottom <= HALF_LETTER_HEIGHT + 32) {
+          height = HALF_LETTER_HEIGHT;
+        }
+      }
+    }
+
+    return {
+      width: Math.max(1, Math.round(width)),
+      height: Math.max(1, Math.round(height))
+    };
+  }, [bloques, campos, elementos, hasDocumentHtml, isRecipeTemplate, page?.height, page?.width]);
+
   const getElementRenderZ = (el) => {
     if (el?.type === 'image' && el?.isWatermark) return 0;
     return Number(el?.zIndex || 1) + 10;
@@ -3989,21 +4454,16 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
     }
   }, [showSignatureModal, signatureDataUrl]);
 
-  const LETTER_WIDTH = 816;
-  const LETTER_HEIGHT = 1056;
-  const HALF_LETTER_HEIGHT = LETTER_HEIGHT / 2;
-  const pageWidth = Number(page?.width || 816);
-  const pageHeight = Number(page?.height || 1056);
-  const looksLegacyPt = Math.abs(pageWidth - 595) <= 2 && Math.abs(pageHeight - 842) <= 2;
-  const legacyToCssScale = looksLegacyPt ? (96 / 72) : 1;
-  const convertedWidth = pageWidth * legacyToCssScale;
-  const convertedHeight = pageHeight * legacyToCssScale;
+  const pageWidth = normalizedPage.width;
+  const pageHeight = normalizedPage.height;
+  const convertedWidth = pageWidth;
+  const convertedHeight = pageHeight;
   const fitToLetterScale = Math.min(1, LETTER_WIDTH / convertedWidth, LETTER_HEIGHT / convertedHeight);
-  const printScale = legacyToCssScale * fitToLetterScale;
+  const printScale = fitToLetterScale;
   const printWidth = Math.round(pageWidth * printScale);
   const printHeight = Math.round(pageHeight * printScale);
   const recipeFitToHalfScale = Math.min(1, LETTER_WIDTH / convertedWidth, HALF_LETTER_HEIGHT / convertedHeight);
-  const recipeCopyScale = legacyToCssScale * recipeFitToHalfScale;
+  const recipeCopyScale = Number(recipeFitToHalfScale.toFixed(4));
   const finalPrintWidth = isRecipeTemplate ? LETTER_WIDTH : printWidth;
   const finalPrintHeight = isRecipeTemplate ? LETTER_HEIGHT : printHeight;
   const activeEditorMode = showFieldEditor ? 'info' : showContentEditor ? 'document' : null;
@@ -4131,185 +4591,185 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
       : '';
 
     return (
-    <>
-      {documentHtml ? (
-        <div
-          className="absolute inset-0 text-slate-800"
-          style={{
-            paddingTop: docMargins.top,
-            paddingRight: docMargins.right,
-            paddingBottom: docMargins.bottom,
-            paddingLeft: docMargins.left,
-            fontSize: `${docBaseFontPt}pt`,
-            lineHeight: documentLineHeight,
-            fontFamily: documentFontFamily,
-            overflow: 'visible',
-            wordBreak: 'break-word',
-            overflowWrap: 'anywhere',
-            zIndex: 10
-          }}
-          dangerouslySetInnerHTML={{ __html: resolvedDocHtml }}
-        />
-      ) : null}
+      <>
+        {documentHtml ? (
+          <div
+            className="absolute inset-0 text-slate-800"
+            style={{
+              paddingTop: docMargins.top,
+              paddingRight: docMargins.right,
+              paddingBottom: docMargins.bottom,
+              paddingLeft: docMargins.left,
+              fontSize: `${docBaseFontPt}pt`,
+              lineHeight: documentLineHeight,
+              fontFamily: documentFontFamily,
+              overflow: 'visible',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+              zIndex: 10
+            }}
+            dangerouslySetInnerHTML={{ __html: resolvedDocHtml }}
+          />
+        ) : null}
 
-      {orderedElementos.length > 0 ? (
-        orderedElementos.map((elemento) => {
-          const isField = elemento.type === 'field';
-          const bindKey = isField ? (elemento.bind || elemento.id || '') : '';
-          const isImage = elemento.type === 'image';
-          const isShape = elemento.type === 'shape';
-          const isShapeOrImg = isImage || isShape;
-          const isSignatureField = isField && (elemento.bind || elemento.id) === 'firma.medico';
-          const isSignatureLineField = isField && (elemento.bind || elemento.id) === 'firma.linea';
-          const shapeKind = elemento.shapeKind || 'line';
-          const shapeStrokeWidth = Number(elemento.strokeWidth || 1);
-          const shapeOpacity = Number(elemento.opacity ?? 1);
-          const addressGuardStyle = isField
-            ? getAddressGuardStyle(bindKey, {
+        {orderedElementos.length > 0 ? (
+          orderedElementos.map((elemento) => {
+            const isField = elemento.type === 'field';
+            const bindKey = isField ? (elemento.bind || elemento.id || '') : '';
+            const isImage = elemento.type === 'image';
+            const isShape = elemento.type === 'shape';
+            const isShapeOrImg = isImage || isShape;
+            const isSignatureField = isField && (elemento.bind || elemento.id) === 'firma.medico';
+            const isSignatureLineField = isField && (elemento.bind || elemento.id) === 'firma.linea';
+            const shapeKind = elemento.shapeKind || 'line';
+            const shapeStrokeWidth = Number(elemento.strokeWidth || 1);
+            const shapeOpacity = Number(elemento.opacity ?? 1);
+            const addressGuardStyle = isField
+              ? getAddressGuardStyle(bindKey, {
                 fontSize: Number(elemento.fontSize || 12),
                 lineHeight: Number(elemento.lineHeight || 1.35),
                 boxHeight: Number(elemento.h || 20)
               })
-            : null;
-          const texto = getContentHtml(`element:${elemento.id}`, buildElementResolvedHtml(elemento));
-
-          return (
-            <div
-              key={elemento.id}
-              className="absolute whitespace-pre-wrap leading-relaxed text-slate-800"
-              style={{
-                left: isSignatureLineField ? '50%' : Number(elemento.x || 0),
-                top: Number(elemento.y || 0),
-                width: isSignatureLineField ? 320 : Number(elemento.w || 80),
-                height: isShapeOrImg ? Number(elemento.h || 20) : undefined,
-                minHeight: isShapeOrImg ? undefined : Number(elemento.h || 20),
-                fontSize: addressGuardStyle?.fontSize ?? Number(elemento.fontSize || 12),
-                fontFamily: elemento.fontFamily || 'Trebuchet MS',
-                lineHeight: addressGuardStyle?.lineHeight ?? Number(elemento.lineHeight || 1.35),
-                fontWeight: elemento.bold ? 700 : 500,
-                textAlign: elemento.align || 'left',
-                overflow: addressGuardStyle?.overflow ?? 'visible',
-                wordBreak: addressGuardStyle?.wordBreak ?? (isShape ? 'normal' : 'break-word'),
-                overflowWrap: addressGuardStyle?.overflowWrap ?? (isShape ? 'normal' : 'anywhere'),
-                whiteSpace: addressGuardStyle?.whiteSpace,
-                display: addressGuardStyle?.display,
-                WebkitBoxOrient: addressGuardStyle?.WebkitBoxOrient,
-                WebkitLineClamp: addressGuardStyle?.WebkitLineClamp,
-                textOverflow: addressGuardStyle?.textOverflow,
-                transform: isSignatureLineField ? 'translateX(-50%)' : undefined,
-                zIndex: getElementRenderZ(elemento),
-                opacity: Number(elemento.opacity ?? 1)
-              }}
-            >
-              {isImage
-                ? (elemento.src ? <img src={elemento.src} alt="" className="w-full h-full" style={{ objectFit: elemento.objectFit || 'contain', opacity: Number(elemento.opacity ?? 1) }} /> : null)
-                : isShape
-                  ? (
-                    shapeKind === 'arrow'
-                      ? (
-                        <svg width={Number(elemento.w || 200)} height={Math.max(Number(elemento.h || 20), 20)} style={{ display: 'block', overflow: 'visible' }}>
-                          <defs>
-                            <marker id={`shape_arrow_${elemento.id}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                              <polygon points="0 0, 8 3, 0 6" fill="#000000" opacity={shapeOpacity} />
-                            </marker>
-                          </defs>
-                          <line x1={shapeStrokeWidth} y1={Math.max(Number(elemento.h || 20), 20) / 2} x2={Number(elemento.w || 200) - 8} y2={Math.max(Number(elemento.h || 20), 20) / 2} stroke="#000000" strokeWidth={shapeStrokeWidth} markerEnd={`url(#shape_arrow_${elemento.id})`} opacity={shapeOpacity} />
-                        </svg>
-                      )
-                      : (shapeKind === 'line-vertical' || shapeKind === 'line-vertical-dashed')
-                        ? (
-                          <div className="w-full h-full flex justify-center">
-                            <div style={{ width: shapeStrokeWidth, height: '100%', borderLeft: `${shapeStrokeWidth}px ${shapeKind === 'line-vertical-dashed' ? 'dashed' : 'solid'} #000000`, opacity: shapeOpacity }} />
-                          </div>
-                        )
-                        : (
-                          <div
-                            className="w-full h-full"
-                            style={{
-                              borderTop: shapeKind === 'line' || shapeKind === 'line-dashed' ? `${shapeStrokeWidth}px ${shapeKind === 'line-dashed' ? 'dashed' : 'solid'} #000000` : 'none',
-                              border: shapeKind === 'rect' || shapeKind === 'circle' ? `${shapeStrokeWidth}px solid #000000` : undefined,
-                              backgroundColor: 'transparent',
-                              borderRadius: shapeKind === 'circle' ? '999px' : Number(elemento.radius || 0),
-                              opacity: shapeOpacity
-                            }}
-                          />
-                        )
-                  )
-                : (isField
-                  ? (isSignatureField
-                    ? (signatureDataUrl
-                      ? <img src={signatureDataUrl} alt="Firma del medico" className="h-20 w-auto max-w-[220px] object-contain" />
-                      : <span className="italic text-slate-400">Firma pendiente</span>)
-                    : (isSignatureLineField
-                      ? <div className="mt-5 w-[320px] max-w-full border-t-2 border-slate-700 pt-2 text-center font-bold text-slate-800 mx-auto">{resolveCampoEditable('medico.nombre') || 'Firma del medico'}</div>
-                      : <div dangerouslySetInnerHTML={{ __html: texto || '&nbsp;' }} />))
-                  : <div dangerouslySetInnerHTML={{ __html: texto }} />)
-              }
-            </div>
-          );
-        })
-      ) : !documentHtml ? (
-        <>
-          {campos.filter((campo) => campo.mostrar !== false).map((campo) => {
-            const bindKey = campo.bind || campo.id;
-            const addressGuardStyle = getAddressGuardStyle(bindKey, {
-              fontSize: Number(campo.fontSize || 12),
-              lineHeight: 1.35,
-              boxHeight: Number(campo.h || 20)
-            });
+              : null;
+            const texto = getContentHtml(`element:${elemento.id}`, buildElementResolvedHtml(elemento));
 
             return (
               <div
-                key={`campo_${campo.id}`}
-                className="absolute text-slate-800 whitespace-pre-wrap"
+                key={elemento.id}
+                className="absolute whitespace-pre-wrap leading-relaxed text-slate-800"
                 style={{
-                  left: Number(campo.x || 40),
-                  top: Number(campo.y || 80),
-                  width: Number(campo.w || 510),
-                  minHeight: Number(campo.h || 20),
-                  fontSize: addressGuardStyle?.fontSize ?? Number(campo.fontSize || 12),
-                  fontWeight: campo.negrita ? 700 : 500,
-                  lineHeight: addressGuardStyle?.lineHeight ?? 1.35,
-                  textAlign: campo.align || 'left',
+                  left: isSignatureLineField ? '50%' : Number(elemento.x || 0),
+                  top: Number(elemento.y || 0),
+                  width: isSignatureLineField ? 320 : Number(elemento.w || 80),
+                  height: isShapeOrImg ? Number(elemento.h || 20) : undefined,
+                  minHeight: isShapeOrImg ? undefined : Number(elemento.h || 20),
+                  fontSize: addressGuardStyle?.fontSize ?? Number(elemento.fontSize || 12),
+                  fontFamily: elemento.fontFamily || 'Trebuchet MS',
+                  lineHeight: addressGuardStyle?.lineHeight ?? Number(elemento.lineHeight || 1.35),
+                  fontWeight: elemento.bold ? 700 : 500,
+                  textAlign: elemento.align || 'left',
                   overflow: addressGuardStyle?.overflow ?? 'visible',
-                  wordBreak: addressGuardStyle?.wordBreak ?? 'break-word',
-                  overflowWrap: addressGuardStyle?.overflowWrap ?? 'anywhere',
+                  wordBreak: addressGuardStyle?.wordBreak ?? (isShape ? 'normal' : 'break-word'),
+                  overflowWrap: addressGuardStyle?.overflowWrap ?? (isShape ? 'normal' : 'anywhere'),
                   whiteSpace: addressGuardStyle?.whiteSpace,
                   display: addressGuardStyle?.display,
                   WebkitBoxOrient: addressGuardStyle?.WebkitBoxOrient,
                   WebkitLineClamp: addressGuardStyle?.WebkitLineClamp,
-                  textOverflow: addressGuardStyle?.textOverflow
+                  textOverflow: addressGuardStyle?.textOverflow,
+                  transform: isSignatureLineField ? 'translateX(-50%)' : undefined,
+                  zIndex: getElementRenderZ(elemento),
+                  opacity: Number(elemento.opacity ?? 1)
                 }}
               >
-                <div dangerouslySetInnerHTML={{ __html: getContentHtml(`campo:${campo.id}`, buildCampoResolvedHtml(campo)) || '&nbsp;' }} />
+                {isImage
+                  ? (elemento.src ? <img src={elemento.src} alt="" className="w-full h-full" style={{ objectFit: elemento.objectFit || 'contain', opacity: Number(elemento.opacity ?? 1) }} /> : null)
+                  : isShape
+                    ? (
+                      shapeKind === 'arrow'
+                        ? (
+                          <svg width={Number(elemento.w || 200)} height={Math.max(Number(elemento.h || 20), 20)} style={{ display: 'block', overflow: 'visible' }}>
+                            <defs>
+                              <marker id={`shape_arrow_${elemento.id}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#000000" opacity={shapeOpacity} />
+                              </marker>
+                            </defs>
+                            <line x1={shapeStrokeWidth} y1={Math.max(Number(elemento.h || 20), 20) / 2} x2={Number(elemento.w || 200) - 8} y2={Math.max(Number(elemento.h || 20), 20) / 2} stroke="#000000" strokeWidth={shapeStrokeWidth} markerEnd={`url(#shape_arrow_${elemento.id})`} opacity={shapeOpacity} />
+                          </svg>
+                        )
+                        : (shapeKind === 'line-vertical' || shapeKind === 'line-vertical-dashed')
+                          ? (
+                            <div className="w-full h-full flex justify-center">
+                              <div style={{ width: shapeStrokeWidth, height: '100%', borderLeft: `${shapeStrokeWidth}px ${shapeKind === 'line-vertical-dashed' ? 'dashed' : 'solid'} #000000`, opacity: shapeOpacity }} />
+                            </div>
+                          )
+                          : (
+                            <div
+                              className="w-full h-full"
+                              style={{
+                                borderTop: shapeKind === 'line' || shapeKind === 'line-dashed' ? `${shapeStrokeWidth}px ${shapeKind === 'line-dashed' ? 'dashed' : 'solid'} #000000` : 'none',
+                                border: shapeKind === 'rect' || shapeKind === 'circle' ? `${shapeStrokeWidth}px solid #000000` : undefined,
+                                backgroundColor: 'transparent',
+                                borderRadius: shapeKind === 'circle' ? '999px' : Number(elemento.radius || 0),
+                                opacity: shapeOpacity
+                              }}
+                            />
+                          )
+                    )
+                    : (isField
+                      ? (isSignatureField
+                        ? (signatureDataUrl
+                          ? <img src={signatureDataUrl} alt="Firma del medico" className="h-20 w-auto max-w-[220px] object-contain" />
+                          : <span className="italic text-slate-400">Firma pendiente</span>)
+                        : (isSignatureLineField
+                          ? <div className="mt-5 w-[320px] max-w-full border-t-2 border-slate-700 pt-2 text-center font-bold text-slate-800 mx-auto">{resolveCampoEditable('medico.nombre') || 'Firma del medico'}</div>
+                          : <div dangerouslySetInnerHTML={{ __html: texto || '&nbsp;' }} />))
+                      : <div dangerouslySetInnerHTML={{ __html: texto }} />)
+                }
               </div>
             );
-          })}
+          })
+        ) : !documentHtml ? (
+          <>
+            {campos.filter((campo) => campo.mostrar !== false).map((campo) => {
+              const bindKey = campo.bind || campo.id;
+              const addressGuardStyle = getAddressGuardStyle(bindKey, {
+                fontSize: Number(campo.fontSize || 12),
+                lineHeight: 1.35,
+                boxHeight: Number(campo.h || 20)
+              });
 
-          {bloques.map((bloque) => (
-            <div
-              key={bloque.id}
-              className="absolute text-slate-800 leading-relaxed whitespace-pre-wrap"
-              style={{
-                left: Number(bloque.x || 40),
-                top: Number(bloque.y || 80),
-                width: Number(bloque.w || 510),
-                minHeight: Number(bloque.h || 20),
-                fontSize: Number(bloque.fontSize || 13),
-                fontWeight: bloque.negrita ? 700 : 500,
-                textAlign: bloque.align || 'left',
-                overflow: 'visible',
-                wordBreak: 'break-word',
-                overflowWrap: 'anywhere'
-              }}
-            >
-              <div dangerouslySetInnerHTML={{ __html: getContentHtml(`bloque:${bloque.id}`, buildBloqueResolvedHtml(bloque)) || '&nbsp;' }} />
-            </div>
-          ))}
-        </>
-      ) : null}
-    </>
-  );
+              return (
+                <div
+                  key={`campo_${campo.id}`}
+                  className="absolute text-slate-800 whitespace-pre-wrap"
+                  style={{
+                    left: Number(campo.x || 40),
+                    top: Number(campo.y || 80),
+                    width: Number(campo.w || 510),
+                    minHeight: Number(campo.h || 20),
+                    fontSize: addressGuardStyle?.fontSize ?? Number(campo.fontSize || 12),
+                    fontWeight: campo.negrita ? 700 : 500,
+                    lineHeight: addressGuardStyle?.lineHeight ?? 1.35,
+                    textAlign: campo.align || 'left',
+                    overflow: addressGuardStyle?.overflow ?? 'visible',
+                    wordBreak: addressGuardStyle?.wordBreak ?? 'break-word',
+                    overflowWrap: addressGuardStyle?.overflowWrap ?? 'anywhere',
+                    whiteSpace: addressGuardStyle?.whiteSpace,
+                    display: addressGuardStyle?.display,
+                    WebkitBoxOrient: addressGuardStyle?.WebkitBoxOrient,
+                    WebkitLineClamp: addressGuardStyle?.WebkitLineClamp,
+                    textOverflow: addressGuardStyle?.textOverflow
+                  }}
+                >
+                  <div dangerouslySetInnerHTML={{ __html: getContentHtml(`campo:${campo.id}`, buildCampoResolvedHtml(campo)) || '&nbsp;' }} />
+                </div>
+              );
+            })}
+
+            {bloques.map((bloque) => (
+              <div
+                key={bloque.id}
+                className="absolute text-slate-800 leading-relaxed whitespace-pre-wrap"
+                style={{
+                  left: Number(bloque.x || 40),
+                  top: Number(bloque.y || 80),
+                  width: Number(bloque.w || 510),
+                  minHeight: Number(bloque.h || 20),
+                  fontSize: Number(bloque.fontSize || 13),
+                  fontWeight: bloque.negrita ? 700 : 500,
+                  textAlign: bloque.align || 'left',
+                  overflow: 'visible',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere'
+                }}
+              >
+                <div dangerouslySetInnerHTML={{ __html: getContentHtml(`bloque:${bloque.id}`, buildBloqueResolvedHtml(bloque)) || '&nbsp;' }} />
+              </div>
+            ))}
+          </>
+        ) : null}
+      </>
+    );
   };
 
   const waitForPrintableAssets = async () => {
@@ -4343,6 +4803,125 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
         // Continue even if font API fails in older browsers.
       }
     }
+
+    // Espera dos frames para asegurar layout final antes de capturar/imprimir.
+    await new Promise((resolve) => {
+      if (typeof requestAnimationFrame !== 'function') {
+        setTimeout(resolve, 16);
+        return;
+      }
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  };
+
+  const captureElementAsCanvas = async (element, scale = 2, options = {}) => {
+    if (!element) return null;
+
+    const forcedWidth = Number(options?.width || 0);
+    const forcedHeight = Number(options?.height || 0);
+
+    const rect = element.getBoundingClientRect();
+    const captureWidth = forcedWidth > 0
+      ? Math.max(1, Math.ceil(forcedWidth))
+      : Math.max(1, Math.ceil(rect.width || element.clientWidth || element.offsetWidth || element.scrollWidth || LETTER_WIDTH));
+    const captureHeight = forcedHeight > 0
+      ? Math.max(1, Math.ceil(forcedHeight))
+      : Math.max(1, Math.ceil(rect.height || element.clientHeight || element.offsetHeight || element.scrollHeight || LETTER_HEIGHT));
+
+    return html2canvas(element, {
+      scale,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      imageTimeout: 0,
+      width: captureWidth,
+      height: captureHeight,
+      windowWidth: captureWidth,
+      windowHeight: captureHeight,
+      scrollX: 0,
+      scrollY: 0
+    });
+  };
+
+  const trimCanvasWhitespace = (sourceCanvas, threshold = 248) => {
+    if (!sourceCanvas) return sourceCanvas;
+
+    try {
+      const width = Number(sourceCanvas.width || 0);
+      const height = Number(sourceCanvas.height || 0);
+      if (width <= 0 || height <= 0) return sourceCanvas;
+
+      const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+      if (!sourceCtx) return sourceCanvas;
+
+      const pixels = sourceCtx.getImageData(0, 0, width, height).data;
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const idx = (y * width + x) * 4;
+          const alpha = pixels[idx + 3];
+          if (alpha === 0) continue;
+
+          const r = pixels[idx];
+          const g = pixels[idx + 1];
+          const b = pixels[idx + 2];
+          const isNearWhite = r >= threshold && g >= threshold && b >= threshold;
+          if (isNearWhite) continue;
+
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+
+      if (maxX < minX || maxY < minY) return sourceCanvas;
+
+      const cropWidth = Math.max(1, maxX - minX + 1);
+      const cropHeight = Math.max(1, maxY - minY + 1);
+      const widthCoverage = cropWidth / width;
+      const heightCoverage = cropHeight / height;
+
+      // Si casi todo ya está ocupado, no recortar.
+      if (widthCoverage > 0.985 && heightCoverage > 0.985) return sourceCanvas;
+
+      const trimmedCanvas = document.createElement('canvas');
+      trimmedCanvas.width = cropWidth;
+      trimmedCanvas.height = cropHeight;
+
+      const trimmedCtx = trimmedCanvas.getContext('2d');
+      if (!trimmedCtx) return sourceCanvas;
+      trimmedCtx.drawImage(sourceCanvas, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+      return trimmedCanvas;
+    } catch {
+      return sourceCanvas;
+    }
+  };
+
+  const prepareCanvasForPdf = (canvas) => {
+    if (!canvas) return canvas;
+    // En receta, la mayor fuente de desproporción es espacio en blanco extra alrededor del contenido.
+    return isRecipeTemplate ? trimCanvasWhitespace(canvas) : canvas;
+  };
+
+  const addCanvasToPdfPage = (pdfDoc, canvas) => {
+    if (!pdfDoc || !canvas) return;
+
+    const pageWidth = Number(pdfDoc.internal?.pageSize?.getWidth?.() || 612);
+    const pageHeight = Number(pdfDoc.internal?.pageSize?.getHeight?.() || 792);
+    const scale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
+    const drawWidth = canvas.width * scale;
+    const drawHeight = canvas.height * scale;
+    const offsetX = (pageWidth - drawWidth) / 2;
+    const offsetY = (pageHeight - drawHeight) / 2;
+    const imageData = canvas.toDataURL('image/png', 1.0);
+
+    pdfDoc.addImage(imageData, 'PNG', offsetX, offsetY, drawWidth, drawHeight, undefined, 'FAST');
   };
 
   const openPrintWindow = async (mode = 'print') => {
@@ -4357,18 +4936,14 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
       let archivoPath = '';
       if (pacienteId && printPageRef.current) {
         try {
-          const canvas = await html2canvas(printPageRef.current, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            logging: false,
-            imageTimeout: 0
+          const rawCanvas = await captureElementAsCanvas(printPageRef.current, 2, {
+            width: finalPrintWidth,
+            height: finalPrintHeight
           });
+          const canvas = prepareCanvasForPdf(rawCanvas);
+          if (!canvas) throw new Error('No fue posible capturar el documento en canvas.');
           const capturePdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter', compress: true });
-          const pW = 612, pH = 792;
-          const s = Math.min(pW / canvas.width, pH / canvas.height);
-          const imgData = canvas.toDataURL('image/png', 1.0);
-          capturePdf.addImage(imgData, 'PNG', (pW - canvas.width * s) / 2, (pH - canvas.height * s) / 2, canvas.width * s, canvas.height * s, undefined, 'FAST');
+          addCanvasToPdfPage(capturePdf, canvas);
           const pdfBlob = capturePdf.output('blob');
           const result = await uploadDocumentoPDF({
             pacienteId,
@@ -4388,7 +4963,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
         nombre: docNombre,
         plantillaId: plantilla?.id || '',
         plantillaNombre: plantilla?.nombre || '',
-        formato: mode === 'pdf' ? 'pdf_print' : 'impresion',
+        formato: mode === 'pdf' ? 'pdf_download' : 'impresion',
         origen: 'plantilla_dinamica',
         editadoManualmente: hasManualEdits,
         archivoUrl,
@@ -4396,11 +4971,37 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
       });
 
       if (mode === 'pdf') {
-        onNotify?.('Para fidelidad legal: Destino "Guardar como PDF", Escala 100 y Margenes "Ninguno".', 'info');
+        // Generar PDF directamente con html2canvas + jsPDF para evitar problemas
+        // de escala, márgenes o tamaño de papel del diálogo de impresión del sistema.
+        const pageElements = printScrollRef.current
+          ? Array.from(printScrollRef.current.querySelectorAll('.tpl-print-page'))
+          : (printPageRef.current ? [printPageRef.current] : []);
+
+        if (pageElements.length === 0) {
+          onNotify?.('No se encontró contenido para generar el PDF.', 'error');
+          return;
+        }
+
+        onNotify?.('Generando PDF, espera un momento…', 'info');
+        const downloadPdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter', compress: true });
+        for (let i = 0; i < pageElements.length; i++) {
+          const pageEl = pageElements[i];
+          const rawPageCanvas = await captureElementAsCanvas(pageEl, 2, {
+            width: finalPrintWidth,
+            height: finalPrintHeight
+          });
+          const pageCanvas = prepareCanvasForPdf(rawPageCanvas);
+          if (!pageCanvas) continue;
+          if (i > 0) downloadPdf.addPage('letter', 'portrait');
+          addCanvasToPdfPage(downloadPdf, pageCanvas);
+        }
+        const safeFileName = docNombre.replace(/[^\w\sáéíóúÁÉÍÓÚñÑ-]/g, '_').trim();
+        downloadPdf.save(`${safeFileName}.pdf`);
+        onNotify?.('PDF descargado correctamente.', 'success');
+        return;
       }
 
       // Cambiar título del documento para evitar "about:blank" en headers del navegador
-      const originalTitle = document.title;
       document.title = docNombre;
 
       document.documentElement.classList.add('printing-plantilla');
@@ -4548,6 +5149,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
             <button onClick={() => setShowSignatureModal(true)} className="h-10 px-4 rounded-xl border border-blue-200 bg-blue-50/60 text-blue-700 text-sm font-semibold hover:bg-blue-50 inline-flex items-center gap-2 whitespace-nowrap shadow-sm transition-all">
               <FileSignature size={15} /> {signatureDataUrl ? 'Editar firma' : 'Firmar'}
             </button>
+            <button onClick={() => openPrintWindow('pdf')} className="h-10 px-4 rounded-xl border border-blue-200 bg-blue-50/70 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition-all whitespace-nowrap shadow-sm inline-flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>PDF</button>
             <button onClick={() => openPrintWindow('print')} className="h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-all whitespace-nowrap shadow-sm">Imprimir</button>
             <button onClick={onClose} className="h-10 w-10 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300 transition-all inline-flex items-center justify-center shadow-sm"><X size={18} /></button>
           </div>
@@ -4694,7 +5296,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
           </div>
         )}
 
-        <div className="flex-1 overflow-auto bg-slate-50 p-6 print:p-0 print:bg-white tpl-print-scroll">
+        <div ref={printScrollRef} className="flex-1 overflow-auto bg-slate-50 p-6 print:p-0 print:bg-white tpl-print-scroll">
           {isRecipeTemplate && recipeContentPages.length > 1 ? (
             /* --- MULTI-PAGE RECIPE --- */
             recipeContentPages.map((pageOverrides, rpIdx) => {
@@ -4841,42 +5443,42 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
 };
 
 const ActionCard = ({ title, subtitle, icon, color, onClick }) => (
-  <button title={title} onClick={onClick} className="group bg-white p-6 rounded-2xl border text-left flex flex-col gap-3 transition-all hover:-translate-y-0.5" style={{borderColor: 'rgba(226,232,240,.8)', boxShadow: '0 1px 2px rgba(15,23,42,.05)'}}>
-    <div className={`w-12 h-12 rounded-xl ${color} text-white flex items-center justify-center`} style={{boxShadow: '0 4px 8px rgba(0,0,0,.12)'}}>
+  <button title={title} onClick={onClick} className="group bg-white p-6 rounded-2xl border text-left flex flex-col gap-3 transition-all hover:-translate-y-0.5" style={{ borderColor: 'rgba(226,232,240,.8)', boxShadow: '0 1px 2px rgba(15,23,42,.05)' }}>
+    <div className={`w-12 h-12 rounded-xl ${color} text-white flex items-center justify-center`} style={{ boxShadow: '0 4px 8px rgba(0,0,0,.12)' }}>
       {icon}
     </div>
     <div>
-      <h4 className="exp-sora text-base font-semibold leading-tight transition-colors" style={{color: 'var(--slate-800)'}}>{title}</h4>
-      <p className="text-xs font-medium mt-1" style={{color: 'var(--slate-500)'}}>{subtitle}</p>
+      <h4 className="exp-sora text-base font-semibold leading-tight transition-colors" style={{ color: 'var(--slate-800)' }}>{title}</h4>
+      <p className="text-xs font-medium mt-1" style={{ color: 'var(--slate-500)' }}>{subtitle}</p>
     </div>
   </button>
 );
 
 const FormatCard = ({ label, onClick, icon }) => (
   <button title={label} onClick={onClick} className="flex flex-col items-center justify-center gap-4 p-6 rounded-2xl bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 transition-colors group aspect-square">
-  <div className="p-4 bg-slate-50 text-slate-500 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
+    <div className="p-4 bg-slate-50 text-slate-500 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
       {icon || <FileText size={28} />}
     </div>
-  <span className="font-semibold text-slate-600 text-xs text-center leading-tight group-hover:text-blue-700 uppercase tracking-wide">{label}</span>
+    <span className="font-semibold text-slate-600 text-xs text-center leading-tight group-hover:text-blue-700 uppercase tracking-wide">{label}</span>
   </button>
 );
 
 const HeaderTab = ({ icon, label, active, visited, onClick, color }) => {
-    const colors = {
-        blue:    { active: 'bg-white text-blue-700 shadow-sm', visited: 'text-blue-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
-        emerald: { active: 'bg-white text-emerald-700 shadow-sm', visited: 'text-emerald-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
-        violet:  { active: 'bg-white text-violet-700 shadow-sm', visited: 'text-violet-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
-    };
-    const c = colors[color] || colors.blue;
-    const state = active ? 'active' : visited ? 'visited' : 'idle';
-    return (
-        <button onClick={onClick} title={label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${c[state]}`}>
-            {state === 'visited' && !active ? (
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-            ) : icon}
-            <span className="hidden md:inline">{label}</span>
-        </button>
-    );
+  const colors = {
+    blue: { active: 'bg-white text-blue-700 shadow-sm', visited: 'text-blue-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
+    emerald: { active: 'bg-white text-emerald-700 shadow-sm', visited: 'text-emerald-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
+    violet: { active: 'bg-white text-violet-700 shadow-sm', visited: 'text-violet-600 hover:bg-white/60', idle: 'text-slate-400 hover:text-slate-600 hover:bg-white/40' },
+  };
+  const c = colors[color] || colors.blue;
+  const state = active ? 'active' : visited ? 'visited' : 'idle';
+  return (
+    <button onClick={onClick} title={label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${c[state]}`}>
+      {state === 'visited' && !active ? (
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+      ) : icon}
+      <span className="hidden md:inline">{label}</span>
+    </button>
+  );
 };
 
 export default ExpedienteClinico;

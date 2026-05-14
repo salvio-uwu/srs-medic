@@ -1,6 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 import logoImg from '../../assets/logo_azul.png'; 
+import { getPatientDisplayName } from '../../utils/patientName';
 
 const styles = StyleSheet.create({
   page: { 
@@ -146,7 +147,7 @@ const InfluenzaPDF = ({ paciente, doctor, resultados }) => {
     day: 'numeric', month: 'long', year: 'numeric' 
   }).toUpperCase();
 
-  const nombrePaciente = `${paciente?.nombre || ''} ${paciente?.apellidoPaterno || ''} ${paciente?.apellidoMaterno || ''}`.trim().toUpperCase() || "PACIENTE";
+  const nombrePaciente = getPatientDisplayName(paciente || {}).toUpperCase() || "PACIENTE";
   
   // --- CORRECCIÓN DE EDAD ---
   // Limpiamos "años" si ya viene en el string para evitar "24 AÑOS AÑOS"

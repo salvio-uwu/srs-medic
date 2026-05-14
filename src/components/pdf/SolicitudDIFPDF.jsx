@@ -1,6 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 import logoImg from '../../assets/logo_azul.png'; 
+import { getPatientDisplayName } from '../../utils/patientName';
 
 const styles = StyleSheet.create({
   page: { 
@@ -100,7 +101,7 @@ const SolicitudDIFPDF = ({ paciente, doctor, apoyos }) => {
     day: 'numeric', month: 'long', year: 'numeric' 
   }); 
 
-  const nombrePaciente = `${paciente.nombre} ${paciente.apellidoPaterno} ${paciente.apellidoMaterno || ''}`.trim().toUpperCase();
+  const nombrePaciente = getPatientDisplayName(paciente || {}).toUpperCase();
   // Validar edad para que no salga "undefined"
   const edad = paciente.edad ? paciente.edad : "___ años";
 

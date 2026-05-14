@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, Search, GitMerge, AlertTriangle, CheckCircle2, User, Calendar, Phone, ArrowRight, Loader2 } from 'lucide-react';
 import { db } from '../config/firebase';
 import { collection, query, where, getDocs, updateDoc, doc, getDoc, writeBatch, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { getPatientDisplayName } from '../utils/patientName';
 
 /**
  * Modal para unificar dos perfiles de paciente duplicados.
@@ -42,7 +43,7 @@ const ModalUnificarExpedientes = ({ pacienteId, pacienteNombre, onClose, showToa
         if (d.id === pacienteId) return; // excluir el propio paciente
         if (d.data().mergedIntoPacienteId) return; // excluir ya fusionados
         const data = d.data();
-        const nombre = (data.nombreCompleto || `${data.nombre || ''} ${data.apellidoPaterno || ''} ${data.apellidoMaterno || ''}`).toUpperCase();
+        const nombre = getPatientDisplayName(data).toUpperCase();
         const curp = (data.curp || '').toUpperCase();
         const tel = (data.telefonoMovil || '');
         const idPx = (data.idPaciente || '').toUpperCase();
@@ -64,8 +65,8 @@ const ModalUnificarExpedientes = ({ pacienteId, pacienteNombre, onClose, showToa
     setPaso('procesando');
 
     const dupId = duplicadoSeleccionado.id;
-    const dupNombre = duplicadoSeleccionado.nombreCompleto || `${duplicadoSeleccionado.nombre || ''} ${duplicadoSeleccionado.apellidoPaterno || ''}`.trim();
-    const primNombre = pacienteNombre || primarioData?.nombreCompleto || '';
+    const dupNombre = getPatientDisplayName(duplicadoSeleccionado);
+    const primNombre = pacienteNombre || getPatientDisplayName(primarioData || {});
 
     try {
       let totalHistorial = 0, totalCitas = 0, totalTriage = 0, totalLinks = 0;
@@ -165,7 +166,7 @@ const ModalUnificarExpedientes = ({ pacienteId, pacienteNombre, onClose, showToa
     }
   };
 
-  const getNombreCompleto = (px) => px.nombreCompleto || `${px.nombre || ''} ${px.apellidoPaterno || ''} ${px.apellidoMaterno || ''}`.trim();
+  const getNombreCompleto = (px) => getPatientDisplayName(px);
   const formatFecha = (f) => {
     if (!f) return '--';
     if (f.toDate) return f.toDate().toLocaleDateString('es-MX');

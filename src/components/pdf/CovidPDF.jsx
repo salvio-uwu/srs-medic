@@ -1,6 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 import logoImg from '../../assets/logo_azul.png'; 
+import { getPatientDisplayName } from '../../utils/patientName';
 
 const styles = StyleSheet.create({
   page: { 
@@ -146,7 +147,7 @@ const CovidPDF = ({ paciente, doctor, horaMuestra, resultado }) => {
     day: 'numeric', month: 'long', year: 'numeric' 
   }).toUpperCase();
 
-  const nombrePaciente = `${paciente?.nombre || ''} ${paciente?.apellidoPaterno || ''} ${paciente?.apellidoMaterno || ''}`.trim().toUpperCase() || "PACIENTE";
+  const nombrePaciente = getPatientDisplayName(paciente || {}).toUpperCase() || "PACIENTE";
   const edad = paciente?.edad ? `${paciente.edad} Años` : "___ Años";
   
   const nombreDoctor = doctor?.nombre || "DR. GENERAL";

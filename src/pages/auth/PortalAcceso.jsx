@@ -2,7 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useSessionLocation } from '../../context/SessionLocationContext';
 import { resolveUserHomePath } from '../../services/permissionService';
+import LocationSelector from '../../components/LocationSelector';
 
 /* ─────────────────────────────────────────────
    SVG Icons — médicos, sin lucide
@@ -124,6 +126,7 @@ const DotGrid = () => (
    ───────────────────────────────────────────── */
 const PortalAcceso = () => {
   const { user, logout, loading } = useAuth(); // Importante traer 'loading' del context
+  const { locationConfirmed, catalogosReady } = useSessionLocation();
   const navigate = useNavigate();
   const [mounted, setMounted] = useState(false);
 
@@ -521,15 +524,29 @@ const getRoleConfig = (rol) => {
               </div>
             </div>
 
+            {/* Selector de ubicación */}
+            {catalogosReady && (
+              <div style={{ marginBottom: 16 }}>
+                <LocationSelector accentColor={config.color} />
+              </div>
+            )}
+
             {/* Botón principal */}
             <div className="fade-up-3">
               <button
                 className="btn-main font-jakarta"
                 onClick={() => navigate(config.path)}
-                style={{ background: config.color, boxShadow: `0 8px 28px -6px ${config.color}55` }}
+                disabled={!locationConfirmed}
+                style={{
+                  background: locationConfirmed ? config.color : '#94a3b8',
+                  boxShadow: locationConfirmed ? `0 8px 28px -6px ${config.color}55` : 'none',
+                  cursor: locationConfirmed ? 'pointer' : 'not-allowed',
+                  opacity: locationConfirmed ? 1 : 0.7,
+                  transition: 'all 0.3s ease'
+                }}
               >
-                Ingresar al Portal
-                <IconArrow />
+                {locationConfirmed ? 'Ingresar al Portal' : 'Selecciona tu ubicación'}
+                {locationConfirmed && <IconArrow />}
               </button>
             </div>
 

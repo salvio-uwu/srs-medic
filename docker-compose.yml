@@ -8,3 +8,21 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    container_name: srs-meilisearch
+    restart: unless-stopped
+    profiles:
+      - meili
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-srs-medic-master-key}
+      MEILI_ENV: production
+      MEILI_HTTP_ADDR: 0.0.0.0:7700
+    volumes:
+      - meili_data:/meili_data
+
+volumes:
+  meili_data:

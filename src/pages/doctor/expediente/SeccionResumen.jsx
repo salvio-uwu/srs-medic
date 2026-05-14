@@ -1,14 +1,16 @@
 // src/pages/doctor/expediente/SeccionResumen.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { 
   History, Activity, Clock, FileText, Calendar, 
   Stethoscope, ChevronRight, X, Pill, TrendingUp, CheckCircle,
-    Sparkles, Download, Printer
+    Sparkles, Download, Printer, Upload, UploadCloud, AlertCircle
 } from 'lucide-react';
 import { db } from '../../../config/firebase'; 
-import { functions } from '../../../config/firebase';
-import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
+import { functions, storage } from '../../../config/firebase';
+import { collection, query, where, orderBy, getDocs, doc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useAuth } from '../../../context/AuthContext';
 import { listLegacyLinksByPaciente } from '../../../services/patientLinkService';
 import {
     calculateHomologationMetrics,
@@ -36,11 +38,18 @@ const SeccionResumen = ({
     onImprimirReceta,
     onCargarConsultaHistorica
 }) => {
+  const { user } = useAuth();
+  const fileInputRef = useRef(null);
+
   // --- ESTADOS ---
   const [activeResumenTab, setActiveResumenTab] = useState('consulta_previa');
   const [historial, setHistorial] = useState([]);
     const [loading, setLoading] = useState(true);
   const [consultaSeleccionada, setConsultaSeleccionada] = useState(null);
+  const [dragOverHistorial, setDragOverHistorial] = useState(false);
+  const [uploadingDocumento, setUploadingDocumento] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState({ type: '', text: '' });
+  const [localRefreshKey, setLocalRefreshKey] = useState(0);
 
   // --- ESTADOS IA ---
   const [analizando, setAnalizando] = useState(false);
@@ -230,7 +239,7 @@ const SeccionResumen = ({
     return () => {
         cancelled = true;
     };
-    }, [pacienteId, historialRefreshKey]);
+    }, [pacienteId, historialRefreshKey, localRefreshKey]);
 
     useEffect(() => {
         const dataPeso = [];
@@ -326,6 +335,13 @@ const SeccionResumen = ({
     const buildUnifiedTimeline = () => {
         const platformRows = historial.flatMap((item) => {
             const fechaOrden = Number(item.fechaOrden || 0);
+
+            const tieneConsultaReal = Boolean(
+                item.consulta?.diagnostico?.enfermedad_actual ||
+                item.consulta?.padecimiento ||
+                (item.consulta?.exploracion && Object.keys(item.consulta.exploracion).length > 0)
+            );
+
             const baseRow = {
                 id: `platform_${item.id}`,
                 sourceId: item.id,
@@ -337,12 +353,22 @@ const SeccionResumen = ({
                 tipoNota: item.tipoNota || 'Consulta General',
                 titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
                 descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
-                confianza: 'alta'
+                confianza: 'alta',
+                medicoNombre: item.medicoNombre || ''
             };
 
             const recetasEventos = Array.isArray(item.recetasGeneradas) ? item.recetasGeneradas : [];
             const documentosEventos = Array.isArray(item.documentosGenerados) ? item.documentosGenerados : [];
 
+            // Si hay nota clínica real, la consulta es el único evento del timeline.
+            // Las recetas y documentos se muestran dentro del panel de detalle al abrirla,
+            // evitando duplicados confusos para auditoría.
+            if (tieneConsultaReal) {
+                return [baseRow];
+            }
+
+            // Sin nota clínica: mostrar cada receta/documento como evento independiente
+            // (ej. documentos subidos por enfermería sin consulta asociada).
             const recetaRows = recetasEventos.map((receta, idx) => ({
                 id: `platform_receta_${item.id}_${idx}`,
                 sourceId: item.id,
@@ -358,7 +384,8 @@ const SeccionResumen = ({
                     receta?.formato ? `Formato: ${receta.formato}` : ''
                 ].filter(Boolean).join(' • ') || 'Receta guardada en historial clínico',
                 confianza: 'alta',
-                archivoUrl: receta?.archivoUrl || ''
+                archivoUrl: receta?.archivoUrl || '',
+                medicoNombre: item.medicoNombre || ''
             }));
 
             const documentoRows = documentosEventos.map((docEvent, idx) => ({
@@ -369,17 +396,19 @@ const SeccionResumen = ({
                 fechaFormato: item.fechaFormato,
                 horaFormato: item.horaFormato,
                 origen: 'plataforma',
-                tipoNota: 'Documento',
+                tipoNota: docEvent?.tipo === 'estudio' ? 'Estudio' : 'Documento',
                 titulo: docEvent?.nombre || 'Documento generado',
                 descripcion: [
                     docEvent?.formato ? `Formato: ${docEvent.formato}` : '',
-                    docEvent?.origen ? `Origen: ${docEvent.origen}` : ''
+                    docEvent?.enfermeroNombre ? `Cargado por: ${docEvent.enfermeroNombre}` : '',
+                    docEvent?.origen ? `Desde: ${docEvent.origen === 'carga_enfermeria' ? 'Enfermería' : docEvent.origen}` : ''
                 ].filter(Boolean).join(' • ') || 'Documento guardado en historial clínico',
                 confianza: 'alta',
-                archivoUrl: docEvent?.archivoUrl || ''
+                archivoUrl: docEvent?.archivoUrl || '',
+                medicoNombre: item.medicoNombre || docEvent?.enfermeroNombre || ''
             }));
 
-            return [baseRow, ...recetaRows, ...documentoRows];
+            return [...recetaRows, ...documentoRows];
         });
 
                 const legacyRows = homologationRows.flatMap((row) => {
@@ -601,6 +630,100 @@ const SeccionResumen = ({
     setAnalizando(false);
   };
 
+    const procesarDocumentoParaPaciente = async (file) => {
+        if (!pacienteId || !file) return;
+        setUploadingDocumento(true);
+        setUploadMsg({ type: '', text: '' });
+
+        try {
+            const timestamp = Date.now();
+            const safeName = file.name
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-zA-Z0-9._-]/g, '_');
+            const storagePath = `expedientes/${pacienteId}/documentos/${timestamp}_${safeName}`;
+            const storageRefItem = ref(storage, storagePath);
+
+            await uploadBytes(storageRefItem, file, {
+                customMetadata: {
+                    tipo: 'estudio',
+                    nombre: file.name,
+                    generadoAt: new Date().toISOString(),
+                    origen: 'carga_expediente'
+                }
+            });
+
+            const downloadURL = await getDownloadURL(storageRefItem);
+            const ext = file.name.split('.').pop()?.toLowerCase() || 'archivo';
+
+            const eventoDocumental = {
+                tipo: 'estudio',
+                nombre: file.name,
+                formato: ext,
+                origen: 'carga_expediente',
+                archivoUrl: downloadURL,
+                archivoPath: storagePath,
+                generadoAt: new Date().toISOString(),
+                medicoNombre: user?.nombre || 'Médico'
+            };
+
+            await addDoc(collection(db, 'historial_clinico'), {
+                pacienteId,
+                pacienteNombre: expediente?.px_info?.nombre || '',
+                medicoNombre: user?.nombre || 'Médico',
+                fecha: serverTimestamp(),
+                medicoId: user?.uid || 'anonimo',
+                tipoNota: 'Carga de Documento',
+                documentosGenerados: [eventoDocumental],
+                origenRegistro: 'expediente_medico',
+                subidoPor: user?.nombre || 'Médico',
+                subidoPorRol: user?.rol || 'medico'
+            });
+
+            setUploadMsg({ type: 'success', text: 'Documento cargado correctamente al expediente.' });
+            setLocalRefreshKey(k => k + 1);
+            setTimeout(() => setUploadMsg({ type: '', text: '' }), 4000);
+        } catch (e) {
+            console.error('Error al cargar documento:', e);
+            setUploadMsg({ type: 'error', text: 'Error al cargar el documento. Intenta de nuevo.' });
+            setTimeout(() => setUploadMsg({ type: '', text: '' }), 5000);
+        }
+
+        setUploadingDocumento(false);
+    };
+
+    const handleDropOnHistorial = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverHistorial(false);
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        procesarDocumentoParaPaciente(file);
+    };
+
+    const handleDragOverHistorial = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!dragOverHistorial) setDragOverHistorial(true);
+    };
+
+    const handleDragLeaveHistorial = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverHistorial(false);
+    };
+
+    const handleUploadClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileInputChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        procesarDocumentoParaPaciente(file);
+    };
+
     const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-full w-full flex flex-col overflow-hidden";
     const unifiedTimeline = buildUnifiedTimeline();
 
@@ -634,8 +757,40 @@ const SeccionResumen = ({
           <div className="flex h-full w-full gap-6">
             
             <div className="flex-[3] flex flex-col h-full">
-                <div className={sectionClass}>
+                <div 
+                    className={`${sectionClass} relative transition-all duration-200 ${dragOverHistorial ? 'border-2 border-teal-500 shadow-lg shadow-teal-500/20 bg-teal-50/50' : ''}`}
+                    onDragOver={handleDragOverHistorial}
+                    onDragLeave={handleDragLeaveHistorial}
+                    onDrop={handleDropOnHistorial}
+                >
                     {/* ... (Resto del código del timeline se mantiene igual) ... */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        onChange={handleFileInputChange}
+                        className="hidden"
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt,.dcm"
+                    />
+
+                    {dragOverHistorial && (
+                        <div className="absolute inset-0 z-20 flex items-center justify-center bg-teal-50/90 rounded-2xl pointer-events-none">
+                            <div className="text-center">
+                                <UploadCloud size={48} className="text-teal-500 mx-auto mb-2" />
+                                <p className="text-teal-700 font-bold text-lg">Suelta el documento aquí</p>
+                                <p className="text-teal-500 text-sm mt-1">Se agregará al historial clínico</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {uploadingDocumento && (
+                        <div className="absolute inset-0 z-30 flex items-center justify-center bg-white/80 rounded-2xl">
+                            <div className="text-center">
+                                <Upload size={32} className="text-teal-500 mx-auto mb-2 animate-bounce" />
+                                <p className="text-teal-700 font-bold text-sm">Subiendo documento...</p>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex items-center justify-between mb-4 shrink-0">
                         <div className="flex items-center gap-3">
                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl"><History size={20}/></div>
@@ -644,13 +799,33 @@ const SeccionResumen = ({
                                 <p className="text-xs text-slate-400 mt-1">Consultas, recetas y documentos generados</p>
                             </div>
                         </div>
-                        <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm flex items-center gap-2">
-                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total eventos:</span>
-                             <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black shadow-md shadow-blue-200">
-                                {unifiedTimeline.length}
-                             </span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleUploadClick}
+                                disabled={uploadingDocumento}
+                                className="bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-teal-100 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                title="Subir documento al historial del paciente"
+                            >
+                                <Upload size={13} />
+                                {uploadingDocumento ? 'Subiendo...' : 'Subir doc'}
+                            </button>
+                            <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm flex items-center gap-2">
+                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total eventos:</span>
+                                 <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black shadow-md shadow-blue-200">
+                                    {unifiedTimeline.length}
+                                 </span>
+                            </div>
                         </div>
                     </div>
+
+                    {uploadMsg.text && (
+                        <div className={`mb-3 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                            uploadMsg.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                            {uploadMsg.type === 'success' ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
+                            {uploadMsg.text}
+                        </div>
+                    )}
                     
                     <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 relative">
                         {unifiedTimeline.length > 0 && <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>}

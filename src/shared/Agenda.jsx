@@ -5,17 +5,22 @@ import {
   AlertTriangle, Activity, CalendarDays, LayoutGrid,
   ShieldCheck, AlertCircle, Zap, FileText, Check, Info,
   Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, RefreshCw, Newspaper, ExternalLink, Send, BellRing, LogOut,
-  CalendarClock, MessageSquare, LogIn, GitMerge, Edit3
+  CalendarClock, MessageSquare, LogIn, GitMerge, Edit3, Pill, Upload
 } from 'lucide-react';
-import { db, functions } from '../config/firebase'; 
-import { collection, addDoc, query, where, orderBy, updateDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, setDoc, deleteField } from 'firebase/firestore';
+import { db, functions, storage } from '../config/firebase'; 
+import { collection, addDoc, query, where, orderBy, updateDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, setDoc, deleteField, increment } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { useAuth } from '../context/AuthContext';
+import { useSessionLocation } from '../context/SessionLocationContext';
 import { useNavigate } from 'react-router-dom';
 import { hasPermission } from '../services/permissionService';
 import ModalPaciente from '../components/ModalPaciente';
 import ModalUnificarExpedientes from '../components/ModalUnificarExpedientes';
+import CustomDropdown from '../components/CustomDropdown';
+import ModalCatalogoMedicamentos from '../components/ModalCatalogoMedicamentos';
 import sonidoCampana from '../assets/notificaciondeconsulta.wav';
+import { getEstadoDetallado } from '../utils/citaStatus';
 
 const NOTICIAS_FALLBACK = [
   {
@@ -747,6 +752,7 @@ const STYLES = `
     animation: node-pulse 1.8s ease infinite;
   }
   .node-done { background: var(--emerald-500); box-shadow: 0 0 0 2px var(--slate-200); }
+  .node-cancelled { background: #f87171; box-shadow: 0 0 0 2px #fecaca; }
 
   @keyframes node-pulse {
     0%, 100% { box-shadow: 0 0 0 3px rgba(41,152,198,.2); }
@@ -763,6 +769,13 @@ const STYLES = `
     gap: 16px;
   }
   .cita-card:hover { border-color: var(--slate-300); box-shadow: var(--shadow-sm); }
+  .cita-card.cancelled {
+    background: #fef2f2 !important; border-color: #fecaca !important;
+    opacity: 0.55;
+  }
+  .cita-card.cancelled:hover { opacity: 0.8; border-color: #f87171 !important; }
+  .cita-card.cancelled .cita-name { text-decoration: line-through; color: var(--red-400); }
+  .cita-card.cancelled .cita-actions { opacity: 0.3; pointer-events: none; }
   .cita-card.waiting {
     background: var(--blue-50); border-color: var(--blue-200);
   }
@@ -806,15 +819,18 @@ const STYLES = `
 
   .tag {
     display: inline-flex; align-items: center; gap: 4px;
-    font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
     text-transform: uppercase; letter-spacing: .04em;
   }
-  .tag-motivo { color: var(--slate-600); background: var(--slate-100); border: 1px solid var(--slate-200); }
-  .tag-waiting { background: white; color: var(--blue-700); border: 1px solid var(--blue-200); }
-  .tag-pending { background: white; color: var(--amber-500); border: 1px solid #fde68a; }
-  .tag-overdue { background: #fff7ed; color: #c2410c; border: 1px solid #fdba74; }
-  .tag-done    { background: transparent; color: var(--emerald-500); border: 1px solid #a7f3d0; }
-  .tag-tele    { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+  .tag-motivo    { color: var(--slate-600); background: var(--slate-100); border: 1px solid var(--slate-200); }
+  .tag-waiting   { background: white; color: var(--blue-700); border: 1px solid var(--blue-200); }
+  .tag-en-espera { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+  .tag-pending   { background: white; color: var(--amber-500); border: 1px solid #fde68a; }
+  .tag-overdue   { background: #fff7ed; color: #c2410c; border: 1px solid #fdba74; }
+  .tag-done      { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+  .tag-tele      { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+  .tag-triage    { background: #f5f3ff; color: #5b21b6; border: 1px solid #ddd6fe; }
+  .tag-en-consulta { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
 
   /* ── CITA ACTIONS ── */
   .cita-actions {
@@ -903,6 +919,37 @@ const STYLES = `
     height: 100%; gap: 8px; color: var(--emerald-500); opacity: .7;
   }
   .inv-empty-text { font-size: 11px; font-weight: 700; text-align: center; text-transform: uppercase; letter-spacing: .06em; }
+
+  /* ── TOOL BUTTONS ── */
+  .tool-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 16px 8px;
+    background: white; border: 1px solid var(--slate-200);
+    border-radius: 10px; cursor: pointer;
+    transition: all .18s ease;
+    box-shadow: var(--shadow-sm);
+  }
+  .tool-btn:hover {
+    border-color: var(--blue-200); background: var(--blue-50);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .tool-btn:active { transform: translateY(0); }
+  .tool-btn-icon {
+    width: 36px; height: 36px; border-radius: 9px;
+    background: var(--slate-50); border: 1px solid var(--slate-100);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--slate-500); transition: all .18s ease;
+  }
+  .tool-btn:hover .tool-btn-icon {
+    background: var(--blue-100); border-color: var(--blue-200);
+    color: var(--blue-600);
+  }
+  .tool-btn-label {
+    font-size: 10px; font-weight: 700; color: var(--slate-600);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .tool-btn:hover .tool-btn-label { color: var(--blue-700); }
 
   /* ── NOTIF DROPDOWN ── */
   .notif-dropdown {
@@ -1596,7 +1643,15 @@ const Toast = ({ msg, type, onClose }) => (
 
 /* ─── MAIN COMPONENT ──────────────────────────────────────────── */
 const Agenda = () => {
+  const [showCatalogoMedicamentos, setShowCatalogoMedicamentos] = useState(false);
   const { user, logout } = useAuth();
+  const {
+    sessionSucursal, sessionConsultorio,
+    catalogoSucursales: sessionCatSucursales,
+    catalogoConsultorios: sessionCatConsultorios,
+    updateConsultorio: sessionUpdateConsultorio,
+    updateSucursal: sessionUpdateSucursal
+  } = useSessionLocation();
   const navigate = useNavigate();
   const normalizedRole = String(user?.rol || '')
     .toLowerCase()
@@ -1651,7 +1706,8 @@ const Agenda = () => {
   const INTERVALO_MINUTOS = 10;
   const START_HOUR = 0;
   const END_HOUR   = 23;
-  const hours      = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+  // Sumamos 2 al length para que dibuje hasta el bloque que contiene la última hora
+  const hours      = Array.from({ length: END_HOUR - START_HOUR + 2 }, (_, i) => START_HOUR + i);
 
   /* ── STATES ── */
   const [citas, setCitas]                   = useState([]);
@@ -1684,6 +1740,8 @@ const Agenda = () => {
   const [pacienteAEditar, setPacienteAEditar] = useState(null);
   const [showReprogramar, setShowReprogramar] = useState(false);
   const [reprogramarData, setReprogramarData] = useState({ fecha: '', hora: '', horaFin: '' });
+  const [showEditarCita, setShowEditarCita] = useState(false);
+  const [editarCitaData, setEditarCitaData] = useState({ paciente: '', motivo: '', motivoId: '', tipoConsulta: '', doctorUid: '', doctorAsignado: '', notas: '' });
   const [showCancelarConfirm, setShowCancelarConfirm] = useState(false);
   const [cancelarMotivo, setCancelarMotivo] = useState('');
   const [actionLoading, setActionLoading] = useState('');
@@ -1696,8 +1754,12 @@ const Agenda = () => {
   const [catalogoConsultorios, setCatalogoConsultorios] = useState(CATALOGO_CONSULTORIOS_FALLBACK);
   const [catalogoSucursales, setCatalogoSucursales] = useState(CATALOGO_SUCURSALES_FALLBACK);
   const [catalogoEnfermeros, setCatalogoEnfermeros] = useState([]);
+  const [catalogoDoctores, setCatalogoDoctores] = useState([]);
   const [consultorioActivoId, setConsultorioActivoId] = useState('');
   const [guardandoConsultorio, setGuardandoConsultorio] = useState(false);
+  const [dragOverCitaId, setDragOverCitaId] = useState(null);
+  const [uploadingEstudio, setUploadingEstudio] = useState(false);
+  const fileInputRef = useRef(null);
   const toInputDateValue = (dateValue = new Date()) => {
     const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
     if (Number.isNaN(date.getTime())) return '';
@@ -1717,6 +1779,7 @@ const Agenda = () => {
     sucursalId: '',
     esTeleconsulta: false,
     doctorAsignado: isDoctorRole ? user.nombre : '',
+    doctorUid: isDoctorRole ? user.uid : '',
     enfermeroAsignadoId: '',
     enfermeroAsignadoNombre: ''
   });
@@ -1726,7 +1789,7 @@ const Agenda = () => {
     [catalogoConsultorios, consultorioActivoId]
   );
 
-  const sucursalActivaLabel = consultorioActivo?.sucursal || user?.sucursalActual || user?.sucursal || 'Central';
+  const sucursalActivaLabel = sessionSucursal?.nombre || consultorioActivo?.sucursal || user?.sucursalActual || user?.sucursal || 'Central';
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -1818,6 +1881,8 @@ const Agenda = () => {
           fecha: fechaStr,
           slots: slotsKeys,
           slotsDetalle: nuevoSlots,
+          consultorioId: consultorioActivo?.id || '',
+          consultorioNombre: consultorioActivo?.nombre || '',
           actualizadoAt: serverTimestamp()
         });
       }
@@ -1942,7 +2007,7 @@ const Agenda = () => {
 
   /* ── CITAS (TIEMPO REAL) ── */
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return;
     setLoading(true);
     const citasRef = collection(db, "citas");
     const now = new Date();
@@ -1953,7 +2018,7 @@ const Agenda = () => {
     futuro.setDate(futuro.getDate() + 60);
     const hasta = `${toInputDateValue(futuro)}T23:59`;
 
-    const q = user?.rol === 'medico'
+    const q = user.rol === 'medico'
       ? query(
           citasRef,
           where("doctorUid", "==", user.uid),
@@ -1971,7 +2036,8 @@ const Agenda = () => {
     }, () => { setLoading(false); });
 
     return () => unsub();
-  }, [user, audio]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, user?.rol]);
 
   /* ── INVENTARIO (TIEMPO REAL) ── */
   useEffect(() => {
@@ -2020,26 +2086,16 @@ const Agenda = () => {
   }, [showNotifications, user?.uid]);
 
   /* ── PACIENTES ── */
-  const fetchPacientes = async () => {
+  const fetchPacientesSugerencias = async (txt) => {
     try {
-      const snapshot = await getDocs(collection(db, "pacientes"));
-      const pacientes = snapshot.docs
-        .map((d) => {
-          const row = d.data() || {};
-          return {
-            id: d.id,
-            nombre: row.nombreCompleto || row.nombre || '',
-            telefono: row.telefonoMovil || row.telefono || '',
-            idPaciente: row.idPaciente || row.idPacienteMigrado || ''
-          };
-        })
-        .filter((p) => Boolean(p.nombre))
-        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
-
-      setTodosLosPacientes(pacientes);
-    } catch {}
+      const { searchPatientsForAutocomplete } = await import('../services/patientSearchService');
+      const results = await searchPatientsForAutocomplete(txt, 20);
+      setSugerencias(results);
+      setMostrarSugerencias(results.length > 0);
+    } catch {
+      setMostrarSugerencias(false);
+    }
   };
-  useEffect(() => { if (user) fetchPacientes(); }, [user]);
 
   useEffect(() => {
     const parseMotivos = (docs) => docs
@@ -2054,8 +2110,11 @@ const Agenda = () => {
         duracionMin: Number(item.duracionMin || 20),
         teleconsultaPermitida: item.teleconsultaPermitida !== false,
         prioridadTriage: item.prioridadTriage || 'media',
-        versionPrecio: Number(item.versionPrecio || 1)
-      }));
+        versionPrecio: Number(item.versionPrecio || 1),
+        usoCount: Number(item.usoCount || 0),
+        atendidoPorEnfermeria: Boolean(item.atendidoPorEnfermeria)
+      }))
+      .sort((a, b) => b.usoCount - a.usoCount || (a.nombre || '').localeCompare(b.nombre || ''));
 
     const parseConsultorios = (docs) => docs
       .map((item) => ({
@@ -2110,7 +2169,11 @@ const Agenda = () => {
       setCatalogoEnfermeros(snap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id, rol: d.data().rol || '' })));
     }, () => {});
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+    const unsub5 = onSnapshot(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor'])), (snap) => {
+      setCatalogoDoctores(snap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id })).filter((item) => item.nombre));
+    }, () => {});
+
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
   }, [user?.sucursal]);
 
   /* ── HORARIOS BLOQUEADOS (TIEMPO REAL) ── */
@@ -2175,28 +2238,81 @@ const Agenda = () => {
     }));
   }, [catalogoConsultorios, nuevaCita.consultorioId, nuevaCita.sucursalId]);
 
-  useEffect(() => {
-    if (!canRotateConsultorio || catalogoConsultorios.length === 0) return;
-    if (consultorioActivoId) return;
+  // Inicializar consultorioActivoId desde el contexto de sesión primero, luego fallback al perfil
+  const consultorioInitRef = useRef(false);
+  const sessionConsultorioId = sessionConsultorio?.id;
+  const userConsultorioActualId = user?.consultorioActualId;
+  const userConsultorioRecurrenteId = user?.consultorioRecurrenteId;
+  const userConsultorioId = user?.consultorioId;
+  const userConsultorioActual = user?.consultorioActual;
+  const userConsultorioRecurrente = user?.consultorioRecurrente;
+  const userConsultorio = user?.consultorio;
 
-    const byId = String(user?.consultorioActualId || user?.consultorioRecurrenteId || user?.consultorioId || '').trim();
-    const byName = String(user?.consultorioActual || user?.consultorioRecurrente || user?.consultorio || '').trim().toLowerCase();
+  useEffect(() => {
+    if (!canRotateConsultorio) return;
+    
+    // Resetear el flag de inicialización si el catálogo local cambió de tamaño
+    // (pasó de fallback a datos reales de Firestore)
+    if (catalogoConsultorios.length === 0) return;
+
+    console.log('[DEBUG Agenda init] sessionConsultorio?.id:', sessionConsultorio?.id);
+    console.log('[DEBUG Agenda init] catalogoConsultorios length:', catalogoConsultorios.length);
+    console.log('[DEBUG Agenda init] catalogoConsultorios IDs:', catalogoConsultorios.map(c => c.id));
+    console.log('[DEBUG Agenda init] user.consultorioActualId:', user?.consultorioActualId);
+
+    // Prioridad 1: Contexto de sesión (SessionLocationContext)
+    if (sessionConsultorioId) {
+      // Buscar en catálogo local Y en catálogo del contexto de sesión
+      const foundLocal = catalogoConsultorios.find((item) => item.id === sessionConsultorioId);
+      const foundSession = (sessionCatConsultorios || []).find((item) => item.id === sessionConsultorioId);
+      const found = foundLocal || foundSession;
+      console.log('[DEBUG Agenda init] foundLocal:', foundLocal?.id, 'foundSession:', foundSession?.id);
+      if (found?.id) {
+        console.log('[DEBUG Agenda init] seteando desde sesión:', found.id, found.nombre);
+        setConsultorioActivoId(found.id);
+        consultorioInitRef.current = true;
+        return;
+      }
+    }
+
+    // Si ya se inicializó desde sesión, no seguir con fallbacks
+    if (consultorioInitRef.current) return;
+
+    // Prioridad 2: Perfil de usuario en Firestore (fallback)
+    const byId = String(userConsultorioActualId || userConsultorioRecurrenteId || userConsultorioId || '').trim();
+    const byName = String(userConsultorioActual || userConsultorioRecurrente || userConsultorio || '').trim().toLowerCase();
 
     const found = catalogoConsultorios.find((item) => item.id === byId)
-      || catalogoConsultorios.find((item) => String(item.nombre || '').trim().toLowerCase() === byName)
-      || catalogoConsultorios[0];
+      || catalogoConsultorios.find((item) => String(item.nombre || '').trim().toLowerCase() === byName);
 
-    if (found?.id) setConsultorioActivoId(found.id);
-  }, [canRotateConsultorio, catalogoConsultorios, consultorioActivoId, user?.consultorioActualId, user?.consultorioRecurrenteId, user?.consultorioId, user?.consultorioActual, user?.consultorioRecurrente, user?.consultorio]);
+    console.log('[DEBUG Agenda init] fallback byId:', byId, 'byName:', byName, 'found:', found?.id);
+
+    if (found?.id) {
+      setConsultorioActivoId(found.id);
+      consultorioInitRef.current = true;
+      return;
+    }
+
+    // Solo tomar el primer consultorio si el catálogo ya es real (no fallback)
+    // El fallback solo tiene 1 item con id fijo 'consultorio-1'
+    if (catalogoConsultorios.length > 0 && catalogoConsultorios[0]?.id !== 'consultorio-1') {
+      console.log('[DEBUG Agenda init] tomando primer consultorio del catálogo real:', catalogoConsultorios[0]?.id);
+      setConsultorioActivoId(catalogoConsultorios[0].id);
+      consultorioInitRef.current = true;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRotateConsultorio, catalogoConsultorios, sessionConsultorioId,
+      userConsultorioActualId, userConsultorioRecurrenteId, userConsultorioId,
+      userConsultorioActual, userConsultorioRecurrente, userConsultorio]);
 
   useEffect(() => {
     if (!isDoctorRole || !consultorioActivo) return;
     setNuevaCita((prev) => ({
       ...prev,
       consultorioId: consultorioActivo.id,
-      sucursalId: consultorioActivo.sucursalId || prev.sucursalId
+      sucursalId: consultorioActivo.sucursalId || sessionSucursal?.id || prev.sucursalId
     }));
-  }, [isDoctorRole, consultorioActivo]);
+  }, [isDoctorRole, consultorioActivo, sessionSucursal?.id]);
 
   /* ── DATE UTILS ── */
   const getStartOfWeek = (date) => {
@@ -2219,8 +2335,21 @@ const Agenda = () => {
       telefono: nuevoPaciente.telefonoMovil,
       idPaciente: nuevoPaciente.idPaciente || ''
     };
-    setTodosLosPacientes(prev => [...prev, p]);
-    seleccionarPaciente(p);
+
+    if (pacienteAEditar) {
+      // Modo edición: reemplazar la entrada existente en la lista local
+      setTodosLosPacientes(prev => prev.map(px => px.id === p.id ? p : px));
+      // Si la cita abierta en el drawer corresponde al paciente editado, actualizar al instante
+      if (selectedCita?.pacienteId === p.id) {
+        setSelectedCita(prev => prev ? { ...prev, paciente: p.nombre } : null);
+        // Actualizar el documento de la cita en Firestore para que el calendario también lo refleje
+        updateDoc(doc(db, 'citas', selectedCita.id), { paciente: p.nombre }).catch(() => {});
+      }
+    } else {
+      // Modo creación: agregar a la lista y pre-seleccionar en el formulario
+      setTodosLosPacientes(prev => [...prev, p]);
+      seleccionarPaciente(p);
+    }
     setShowPacienteModal(false);
   };
 
@@ -2440,18 +2569,18 @@ const Agenda = () => {
     if (!siguiente) return;
 
     const prevId = consultorioActivoId;
+    // Guardar sucursal anterior antes de que sessionUpdateConsultorio la actualice
+    const sucursalAnterior = previo?.sucursal || sessionSucursal?.nombre || user?.sucursalActual || user?.sucursal || '';
     setConsultorioActivoId(nextConsultorioId);
     setGuardandoConsultorio(true);
 
     try {
+      // Actualizar el contexto de sesión global (fuente única de verdad)
+      // sessionUpdateConsultorio ya persiste todos los campos de ubicación en Firestore
+      await sessionUpdateConsultorio(nextConsultorioId);
+
+      // Solo agregar el timestamp de cambio; los campos de ubicación ya fueron escritos por sessionUpdateConsultorio
       await updateDoc(doc(db, 'users', user.uid), {
-        consultorioActualId: siguiente.id,
-        consultorioActual: siguiente.nombre || '',
-        consultorioId: siguiente.id,
-        consultorio: siguiente.nombre || '',
-        sucursalActual: siguiente.sucursal || '',
-        sucursalActualId: siguiente.sucursalId || '',
-        consultorioUbicacion: siguiente.ubicacion || '',
         consultorioUltimoCambioAt: serverTimestamp()
       });
 
@@ -2464,7 +2593,7 @@ const Agenda = () => {
         actorRol: user.rol || '',
         consultorioAnteriorId: previo?.id || '',
         consultorioAnterior: previo?.nombre || user?.consultorioActual || user?.consultorioRecurrente || '',
-        sucursalAnterior: previo?.sucursal || user?.sucursalActual || user?.sucursal || '',
+        sucursalAnterior,
         consultorioNuevoId: siguiente.id,
         consultorioNuevo: siguiente.nombre || '',
         sucursalNueva: siguiente.sucursal || '',
@@ -2506,6 +2635,11 @@ const Agenda = () => {
         return;
       }
 
+      if (!nuevaCita.doctorUid && !motivoSeleccionado?.atendidoPorEnfermeria) {
+        showToast('Selecciona un médico responsable antes de agendar.', 'warning');
+        return;
+      }
+
       if (nuevaCita.esTeleconsulta && motivoSeleccionado?.teleconsultaPermitida === false) {
         showToast('Este motivo no permite teleconsulta. Cambia a presencial o elige otro motivo.', 'warning');
         return;
@@ -2537,6 +2671,17 @@ const Agenda = () => {
         }
       }
 
+      if (!nuevaCita.pacienteId) {
+        showToast('Selecciona un paciente de la lista. Si no aparece, regístralo primero con el botón +.', 'warning');
+        return;
+      }
+
+      const pacienteDoc = await getDoc(doc(db, 'pacientes', nuevaCita.pacienteId));
+      if (!pacienteDoc.exists()) {
+        showToast('El paciente no está dado de alta en el sistema. Regístralo primero.', 'warning');
+        return;
+      }
+
       let meetLink = '';
       if (nuevaCita.esTeleconsulta) {
         const roomId = `srs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2547,6 +2692,8 @@ const Agenda = () => {
         motivo: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
         motivoNombreSnapshot: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
         motivoId: motivoSeleccionado?.id || nuevaCita.motivoId || '',
+        // Campo 'consultorio' (nombre) requerido por AgendaEnfermeria para filtrar correctamente
+        consultorio: consultorioSeleccionado?.nombre || nuevaCita.consultorio || '',
         motivoPrecio: Number(motivoSeleccionado?.precio || 0),
         motivoPrecioSnapshot: Number(motivoSeleccionado?.precio || 0),
         motivoPrecioMin: Number(motivoSeleccionado?.precioMin ?? motivoSeleccionado?.precio ?? 0),
@@ -2564,8 +2711,8 @@ const Agenda = () => {
         consultorioHoraFin: consultorioSeleccionado?.horaFin || '18:00',
         consultorioDiasAtencion: consultorioSeleccionado?.diasAtencion || [],
         consultorioCapacidadSimultanea: Number(consultorioSeleccionado?.capacidadSimultanea || 1),
-        sucursalId: sucursalSeleccionada?.id || nuevaCita.sucursalId || '',
-        sucursal: sucursalSeleccionada?.nombre || user.sucursal || "Central",
+        sucursalId: sucursalSeleccionada?.id || sessionSucursal?.id || nuevaCita.sucursalId || '',
+        sucursal: sucursalSeleccionada?.nombre || sessionSucursal?.nombre || user.sucursal || "Central",
         sucursalUbicacion: sucursalSeleccionada?.ubicacion || '',
         sucursalHoraApertura: sucursalSeleccionada?.horaApertura || '08:00',
         sucursalHoraCierre: sucursalSeleccionada?.horaCierre || '20:00',
@@ -2573,14 +2720,20 @@ const Agenda = () => {
         fechaHora: `${nuevaCita.fecha}T${horaInicioCita}`,
         fechaHoraFin: `${nuevaCita.fecha}T${horaFin}`,
         horaFin,
-        doctorUid: isDoctorRole ? user.uid : "uid_generico",
+        doctorUid: nuevaCita.doctorUid || user.uid,
         estado: 'pendiente',
         creadoPor: user?.uid || 'anonimo',
         creadoPorRol: user?.rol || 'desconocido',
         esCitaEnfermeria: Boolean(motivoSeleccionado?.atendidoPorEnfermeria),
         enfermeroAsignadoId: motivoSeleccionado?.atendidoPorEnfermeria ? (nuevaCita.enfermeroAsignadoId || '') : '',
-        enfermeroAsignadoNombre: motivoSeleccionado?.atendidoPorEnfermeria ? (nuevaCita.enfermeroAsignadoNombre || '') : ''
+        enfermeroAsignadoNombre: motivoSeleccionado?.atendidoPorEnfermeria ? (nuevaCita.enfermeroAsignadoNombre || '') : '',
+        formaPago: nuevaCita.formaPago || 'efectivo'
       });
+
+      // Incrementar contador de uso del motivo
+      if (motivoSeleccionado?.id) {
+        updateDoc(doc(db, 'catalogo_motivos_consulta', motivoSeleccionado.id), { usoCount: increment(1) }).catch(() => {});
+      }
 
       // Si es cita de enfermería, abrir orden de servicio en nueva pestaña
       const esCitaEnfermeria = Boolean(motivoSeleccionado?.atendidoPorEnfermeria);
@@ -2596,7 +2749,8 @@ const Agenda = () => {
         consultorioId: catalogoConsultorios[0]?.id || '',
         sucursalId: catalogoConsultorios[0]?.sucursalId || catalogoSucursales[0]?.id || '',
         esTeleconsulta:false,
-        doctorAsignado:'',
+        doctorAsignado: isDoctorRole ? user.nombre : '',
+        doctorUid: isDoctorRole ? user.uid : '',
         enfermeroAsignadoId: '',
         enfermeroAsignadoNombre: ''
       });
@@ -2652,6 +2806,31 @@ const Agenda = () => {
   };
 
   // ─── ACCIONES DEL DRAWER ───
+  const handleGuardarEditarCita = async () => {
+    if (!selectedCita) return;
+    setActionLoading('editarCita');
+    try {
+      const motivoSeleccionado = catalogoMotivos.find(m => m.id === editarCitaData.motivoId) || null;
+      const cambios = {
+        paciente: editarCitaData.paciente.trim(),
+        motivo: motivoSeleccionado?.nombre || editarCitaData.motivo || selectedCita.motivo,
+        motivoId: editarCitaData.motivoId || selectedCita.motivoId || '',
+        tipoConsulta: editarCitaData.tipoConsulta || selectedCita.tipoConsulta || 'primera_vez',
+        doctorUid: editarCitaData.doctorUid || selectedCita.doctorUid || '',
+        doctorAsignado: editarCitaData.doctorAsignado || selectedCita.doctorAsignado || '',
+        notas: editarCitaData.notas,
+      };
+      await updateDoc(doc(db, 'citas', selectedCita.id), cambios);
+      setSelectedCita(prev => prev ? { ...prev, ...cambios } : null);
+      setShowEditarCita(false);
+      showToast('Cita actualizada correctamente.', 'success');
+    } catch (err) {
+      showToast('Error al guardar los cambios.', 'error');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
   const handleReprogramar = async () => {
     if (!selectedCita || !reprogramarData.fecha || !reprogramarData.hora) {
       showToast("Selecciona fecha y hora para reprogramar.", "error");
@@ -2778,6 +2957,114 @@ const Agenda = () => {
     });
   };
 
+  const procesarArchivoParaPaciente = async ({ file, pacienteId, pacienteNombre, citaId, motivo }) => {
+    setUploadingEstudio(true);
+    try {
+      const timestamp = Date.now();
+      const safeName = file.name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `expedientes/${pacienteId}/documentos/${timestamp}_${safeName}`;
+      const storageRefItem = ref(storage, storagePath);
+
+      await uploadBytes(storageRefItem, file, {
+        customMetadata: {
+          tipo: 'estudio',
+          nombre: file.name,
+          generadoAt: new Date().toISOString(),
+          origen: 'carga_medico'
+        }
+      });
+
+      const downloadURL = await getDownloadURL(storageRefItem);
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'archivo';
+      const eventoDocumental = {
+        tipo: 'estudio',
+        nombre: file.name,
+        formato: ext,
+        origen: 'carga_medico',
+        plantillaId: '',
+        archivoUrl: downloadURL,
+        archivoPath: storagePath,
+        generadoAt: new Date().toISOString(),
+        medicoNombre: user?.nombre || 'Médico'
+      };
+
+      await addDoc(collection(db, 'historial_clinico'), {
+        pacienteId,
+        pacienteNombre,
+        medicoNombre: user?.nombre || 'Médico',
+        fecha: serverTimestamp(),
+        medicoId: user?.uid || 'anonimo',
+        citaId: citaId || null,
+        tipoNota: 'Carga de Estudio',
+        documentosGenerados: [eventoDocumental],
+        motivo: motivo || '',
+        origenRegistro: 'agenda_medico',
+        subidoPor: user?.nombre || 'Médico',
+        subidoPorRol: user?.rol || 'medico'
+      });
+
+      showToast('Estudio cargado correctamente al expediente clínico.', 'success');
+    } catch (e) {
+      console.error('Error al cargar estudio:', e);
+      showToast('Error al cargar el estudio. Intenta de nuevo.', 'error');
+    }
+    setUploadingEstudio(false);
+  };
+
+  const handleUploadEstudioClick = () => {
+    if (!selectedCita?.pacienteId) {
+      showToast("No hay paciente vinculado a esta cita.", "error");
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedCita?.pacienteId) return;
+    e.target.value = '';
+    await procesarArchivoParaPaciente({
+      file,
+      pacienteId: selectedCita.pacienteId,
+      pacienteNombre: selectedCita.pacienteNombre || selectedCita.paciente || '',
+      citaId: selectedCita.id,
+      motivo: selectedCita.motivo || ''
+    });
+  };
+
+  const handleDropOnCard = async (e, cita) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverCitaId(null);
+    if (cita.estado === 'cancelada') return;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    await procesarArchivoParaPaciente({
+      file,
+      pacienteId: cita.pacienteId,
+      pacienteNombre: cita.pacienteNombre || cita.paciente || '',
+      citaId: cita.id,
+      motivo: cita.motivo || ''
+    });
+  };
+
+  const handleDragOverCard = (e, citaId, cita) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (cita?.estado === 'cancelada') return;
+    setDragOverCitaId(citaId);
+  };
+
+  const handleDragLeaveCard = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverCitaId(null);
+  };
+
   const getCitasPorHora = (date, hour) => {
     const dateStr = toInputDateValue(date);
     return citas.filter(c => {
@@ -2850,10 +3137,12 @@ const Agenda = () => {
   const totalNotificaciones = noticiasNoLeidas;
   const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
 
-  const isCurrentDateToday = currentDate.toDateString() === currentTime.toDateString();
+ const isCurrentDateToday = currentDate.toDateString() === currentTime.toDateString();
   const timeSlots = useMemo(() => {
     const slots = [];
-    for (let total = START_HOUR * 60; total <= END_HOUR * 60; total += INTERVALO_MINUTOS) {
+    const limiteMinutos = (END_HOUR * 60) + 50; // Hasta las 23:50
+
+    for (let total = START_HOUR * 60; total <= limiteMinutos; total += INTERVALO_MINUTOS) {
       const startMinutes = total;
       const endMinutes = total + INTERVALO_MINUTOS;
       const startTime = formatMinutes(startMinutes);
@@ -3389,8 +3678,11 @@ const Agenda = () => {
                       }
                       return true;
                     });
+                    const todasCanceladas = citasFiltradas.length > 0 && citasFiltradas.every(c => c.estado === 'cancelada');
                     const nodeClass = esBloqueado
                       ? 'node-blocked'
+                      : todasCanceladas
+                      ? 'node-cancelled'
                       : slot.isCurrent
                       ? 'node-waiting'
                       : (citasFiltradas.length > 0 && citasFiltradas.every(c => c.estado === 'completada'))
@@ -3426,115 +3718,140 @@ const Agenda = () => {
                         </div>
 
                         <div style={{ flex: 1 }}>
-                          {citasFiltradas.length === 0 ? (
-                            esBloqueado ? (
-                              <div
-                                className="slot-empty"
-                                style={{ borderColor: 'var(--red-200, #fecaca)', background: 'var(--red-50, #fef2f2)', color: 'var(--red-500, #ef4444)', fontWeight: 700, cursor: 'default' }}
-                              >
-                                <Lock size={14} style={{ marginRight: 6, opacity: .7 }}/>
-                                Horario bloqueado{justificacionSlot ? ` — ${justificacionSlot}` : ''}
-                              </div>
-                            ) : (
-                            <div
-                              className="slot-empty"
-                              style={{ cursor: 'pointer', transition: 'all .15s' }}
-                              onClick={() => {
-                                const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
-                                setNuevaCita(prev => ({
-                                  ...prev,
-                                  fecha: toInputDateValue(currentDate),
-                                  hora: slot.startTime,
-                                  horaFin: calcularHoraFin(slot.startTime, duracionMotivo)
-                                }));
-                                setShowCitaModal(true);
-                              }}
-                              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue-300)'; e.currentTarget.style.background = 'var(--blue-50, #eff6ff)'; }}
-                              onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.background = ''; }}
-                            >
-                              <Plus size={14} style={{ marginRight: 6, opacity: .5 }}/>
-                              Agendar en este horario
-                            </div>
-                            )
-                          ) : citasFiltradas.map((cita) => {
-                            const isDone = cita.estado === 'completada';
-                            const isWaiting = cita.estado === 'en_espera';
-                            const isSiguiente = cita.id === siguienteCitaId;
-                            const isVencida = citasVencidasSet.has(cita.id);
-
+                          {(() => {
+                            const citasActivas = citasFiltradas.filter(c => c.estado !== 'cancelada');
+                            
                             return (
-                              <div key={cita.id} className={`cita-card ${isWaiting ? 'waiting' : isDone ? 'done' : ''} ${isSiguiente ? 'siguiente' : ''} ${isVencida && !isDone ? 'overdue' : ''}`}>
-                                {isSiguiente && (
-                                  <div className="badge-siguiente">
-                                    <Stethoscope size={12}/> Turno Actual
-                                  </div>
+                              <>
+                                {citasFiltradas.map((cita) => {
+                                  const estadoKey = getEstadoDetallado(cita).key;
+                                  const isDone = estadoKey === 'completada';
+                                  const isWaiting = estadoKey === 'esperando_consulta';
+                                  const isCancelada = estadoKey === 'cancelada';
+                                  const isEnTriage = estadoKey === 'en_triage';
+                                  const isEnConsulta = estadoKey === 'en_consulta';
+                                  const isSiguiente = cita.id === siguienteCitaId;
+                                  const isVencida = citasVencidasSet.has(cita.id) && !isCancelada;
+
+                                  return (
+                                    <div
+                                      key={cita.id}
+                                      className={`cita-card ${isCancelada ? 'cancelled' : isEnConsulta ? 'waiting' : isWaiting ? 'waiting' : isDone ? 'done' : ''} ${isSiguiente && !isCancelada ? 'siguiente' : ''} ${isVencida && !isDone ? 'overdue' : ''}`}
+                                      onDragOver={(e) => handleDragOverCard(e, cita.id, cita)}
+                                      onDragLeave={handleDragLeaveCard}
+                                      onDrop={(e) => handleDropOnCard(e, cita)}
+                                      style={dragOverCitaId === cita.id && !isCancelada ? { border: '2px solid #14b8a6', boxShadow: '0 0 0 4px rgba(20,184,166,0.15)', background: 'rgba(240,253,250,0.6)', transform: 'scale(1.02)', transition: 'all .15s ease' } : {}}
+                                    >
+                                      {isSiguiente && !isCancelada && (
+                                        <div className="badge-siguiente">
+                                          <Stethoscope size={12}/> Turno Actual
+                                        </div>
+                                      )}
+
+                                      <div>
+                                        <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>{cita.paciente}</div>
+                                        <div className="cita-tags">
+                                          <span className="tag tag-motivo">{cita.motivo}</span>
+                                          {isCancelada && <span className="tag" style={{ background: 'var(--red-100)', color: 'var(--red-700)' }}><XCircle size={10}/> Cancelada</span>}
+                                          {slot.isCurrent && !isCancelada && <span className="tag tag-waiting"><Clock size={10}/> En horario</span>}
+                                          {slot.isPast && !isDone && !isCancelada && <span className="tag tag-pending"><AlertTriangle size={10}/> Reprogramar</span>}
+                                          {isVencida && !isDone && !isCancelada && <span className="tag tag-overdue"><AlertTriangle size={10}/> Vencida</span>}
+                                          {/* Estado detallado del paciente */}
+                                          {isEnTriage && !isCancelada && <span className="tag tag-triage"><Activity size={10}/> En triage</span>}
+                                          {isWaiting && !isCancelada && <span className="tag tag-en-espera"><Clock size={10}/> Esperando consulta</span>}
+                                          {isEnConsulta && !isCancelada && !isDone && <span className="tag tag-en-consulta"><Stethoscope size={10}/> En consulta</span>}
+                                          {cita.estado === 'pendiente' && !isEnTriage && !isDone && !isCancelada && <span className="tag tag-pending">Esperando triage</span>}
+                                          {cita.notificadoWhatsApp && !isCancelada && <span className="tag tag-done"><Send size={10}/> Notificado</span>}
+                                          {isDone && !isCancelada && <span className="tag tag-done"><Check size={10}/> Terminado</span>}
+                                          {cita.esTeleconsulta && <span className="tag tag-tele"><Video size={10}/> Teleconsulta</span>}
+                                        </div>
+                                      </div>
+
+                                      <div className="cita-actions">
+                                        {!isCancelada && cita.pacienteTelefono && !isDone && !cita.notificadoWhatsApp && (
+                                          <button
+                                            className="act-btn green"
+                                            onClick={() => notificarPaciente(cita)}
+                                            disabled={notificandoCitaId === cita.id}
+                                            title="Notificar por WhatsApp"
+                                          >
+                                            {notificandoCitaId === cita.id ? <RefreshCw size={15} className="spin-icon"/> : <Send size={15}/>}
+                                          </button>
+                                        )}
+                                        {!isCancelada && cita.pacienteTelefono && !isDone && cita.notificadoWhatsApp && (
+                                          <button className="act-btn" style={{color:'var(--green-600)',cursor:'default'}} title="Ya notificado">
+                                            <Check size={15}/>
+                                          </button>
+                                        )}
+                                        {!isDone && cita.estado !== 'pendiente' && !isCancelada && (
+                                          <button className="act-btn green" onClick={() => cambiarEstado(cita.id, 'completada')} title="Marcar finalizada">
+                                            <ShieldCheck size={15}/>
+                                          </button>
+                                        )}
+                                        {cita.estado === 'pendiente' && !isCancelada && (
+                                          <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
+                                            <AlertTriangle size={12}/> Urgencia
+                                          </button>
+                                        )}
+                                        {cita.estado !== 'pendiente' && !isCancelada && (
+                                          <button
+                                            className="act-pill act-pill-blue"
+                                            onClick={() => navigate('/doctor/expediente', {
+                                              state: {
+                                                pacienteId: cita.pacienteId,
+                                                citaId: cita.id,
+                                                pacienteNombre:
+                                                  cita.pacienteNombre
+                                                  || cita.paciente
+                                                  || [cita.nombre, cita.apellidoPaterno, cita.apellidoMaterno].filter(Boolean).join(' ').trim()
+                                              }
+                                            })}
+                                          >
+                                            {isDone ? 'Ver expediente' : 'Iniciar consulta'}
+                                          </button>
+                                        )}
+                                        <button className="act-pill" style={{background:'white',color:'var(--blue-700)',border:'1px solid var(--blue-200)'}} onClick={() => setSelectedCita(cita)}>
+                                          {isCancelada ? 'Detalles' : isDone ? 'Ver' : cita.estado === 'pendiente' ? 'Ver' : 'Detalles'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+
+                                {citasActivas.length === 0 && (
+                                  esBloqueado ? (
+                                    <div
+                                      className="slot-empty"
+                                      style={{ borderColor: 'var(--red-200, #fecaca)', background: 'var(--red-50, #fef2f2)', color: 'var(--red-500, #ef4444)', fontWeight: 700, cursor: 'default' }}
+                                    >
+                                      <Lock size={14} style={{ marginRight: 6, opacity: .7 }}/>
+                                      Horario bloqueado{justificacionSlot ? ` — ${justificacionSlot}` : ''}
+                                    </div>
+                                  ) : (
+                                    <div
+                                      className="slot-empty"
+                                      style={{ cursor: 'pointer', transition: 'all .15s' }}
+                                      onClick={() => {
+                                        const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
+                                        setNuevaCita(prev => ({
+                                          ...prev,
+                                          fecha: toInputDateValue(currentDate),
+                                          hora: slot.startTime,
+                                          horaFin: calcularHoraFin(slot.startTime, duracionMotivo)
+                                        }));
+                                        setShowCitaModal(true);
+                                      }}
+                                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue-300)'; e.currentTarget.style.background = 'var(--blue-50, #eff6ff)'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.background = ''; }}
+                                    >
+                                      <Plus size={14} style={{ marginRight: 6, opacity: .5 }}/>
+                                      Agendar en este horario
+                                    </div>
+                                  )
                                 )}
-
-                                <div>
-                                  <div className={`cita-name ${isDone ? 'done-name' : ''}`}>{cita.paciente}</div>
-                                  <div className="cita-tags">
-                                    <span className="tag tag-motivo">{cita.motivo}</span>
-                                    {slot.isCurrent && <span className="tag tag-waiting"><Clock size={10}/> En horario</span>}
-                                    {slot.isPast && !isDone && <span className="tag tag-pending"><AlertTriangle size={10}/> Reprogramar</span>}
-                                    {isVencida && !isDone && <span className="tag tag-overdue"><AlertTriangle size={10}/> Vencida</span>}
-                                    {isWaiting && <span className="tag tag-waiting"><ShieldCheck size={10}/> En sala</span>}
-                                    {cita.estado === 'pendiente' && !isDone && <span className="tag tag-pending">Por llegar</span>}
-                                    {cita.notificadoWhatsApp && <span className="tag tag-done"><Send size={10}/> Notificado</span>}
-                                    {isDone && <span className="tag tag-done"><Check size={10}/> Terminado</span>}
-                                    {cita.esTeleconsulta && <span className="tag tag-tele"><Video size={10}/> Teleconsulta</span>}
-                                  </div>
-                                </div>
-
-                                <div className="cita-actions">
-                                  {cita.pacienteTelefono && !isDone && !cita.notificadoWhatsApp && (
-                                    <button
-                                      className="act-btn green"
-                                      onClick={() => notificarPaciente(cita)}
-                                      disabled={notificandoCitaId === cita.id}
-                                      title="Notificar por WhatsApp"
-                                    >
-                                      {notificandoCitaId === cita.id ? <RefreshCw size={15} className="spin-icon"/> : <Send size={15}/>}
-                                    </button>
-                                  )}
-                                  {cita.pacienteTelefono && !isDone && cita.notificadoWhatsApp && (
-                                    <button className="act-btn" style={{color:'var(--green-600)',cursor:'default'}} title="Ya notificado">
-                                      <Check size={15}/>
-                                    </button>
-                                  )}
-                                  {!isDone && cita.estado !== 'pendiente' && (
-                                    <button className="act-btn green" onClick={() => cambiarEstado(cita.id, 'completada')} title="Marcar finalizada">
-                                      <ShieldCheck size={15}/>
-                                    </button>
-                                  )}
-                                  {cita.estado === 'pendiente' && (
-                                    <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
-                                      <AlertTriangle size={12}/> Urgencia
-                                    </button>
-                                  )}
-                                  {cita.estado !== 'pendiente' && (
-                                    <button
-                                      className="act-pill act-pill-blue"
-                                      onClick={() => navigate('/doctor/expediente', {
-                                        state: {
-                                          pacienteId: cita.pacienteId,
-                                          citaId: cita.id,
-                                          pacienteNombre:
-                                            cita.pacienteNombre
-                                            || cita.paciente
-                                            || [cita.nombre, cita.apellidoPaterno, cita.apellidoMaterno].filter(Boolean).join(' ').trim()
-                                        }
-                                      })}
-                                    >
-                                      {isDone ? 'Ver expediente' : 'Iniciar consulta'}
-                                    </button>
-                                  )}
-                                  <button className="act-pill" style={{background:'white',color:'var(--blue-700)',border:'1px solid var(--blue-200)'}} onClick={() => setSelectedCita(cita)}>
-                                    {isDone ? 'Ver' : cita.estado === 'pendiente' ? 'Ver' : 'Detalles'}
-                                  </button>
-                                </div>
-                              </div>
+                              </>
                             );
-                          })}
+                          })()}
                         </div>
                       </div>
                     );
@@ -3593,14 +3910,14 @@ const Agenda = () => {
                 )}
               </div>
 
-              {/* RIGHT SIDEBAR: INVENTORY */}
-              <div className="sidebar-right">
-                <div className="panel inv-panel">
-                  <div className="inv-header">
+              {/* RIGHT SIDEBAR: INVENTORY & TOOLS */}
+              <div className="sidebar-right" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="panel inv-panel" style={{ flex: '1 1 50%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <div className="inv-header" style={{ flexShrink: 0 }}>
                     <div className="inv-title"><Syringe size={14}/> Alertas de Inventario</div>
                     <div className="inv-sub">Medicamentos próximos a caducar</div>
                   </div>
-                  <div className="inv-list scroll">
+                  <div className="inv-list scroll" style={{ flex: 1, overflowY: 'auto' }}>
                     {alertasCaducidad.length > 0 ? alertasCaducidad.map(item => (
                       <div key={item.id} className="inv-item">
                         <div style={{ flex:1, overflow:'hidden' }}>
@@ -3618,6 +3935,37 @@ const Agenda = () => {
                         <div className="inv-empty-text">Sin medicamentos<br/>en riesgo</div>
                       </div>
                     )}
+                  </div>
+                </div>
+
+                {/* NUEVA SECCIÓN: HERRAMIENTAS / ACCIONES */}
+                <div className="panel tools-panel" style={{ flex: '1 1 50%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <div className="inv-header">
+                    <div className="inv-title"><Syringe size={14}/> Herramientas</div>
+                    <div className="inv-sub">Accesos rápidos</div>
+                  </div>
+                  <div className="tools-list scroll" style={{ padding: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', overflowY: 'auto', flex: 1, alignContent: 'start' }}>
+                    
+                    <button className="tool-btn" onClick={() => setShowCatalogoMedicamentos(true)}>
+                      <div className="tool-btn-icon"><Pill size={18}/></div>
+                      <div className="tool-btn-label sora">Catálogo</div>
+                    </button>
+
+                    <button className="tool-btn">
+                      <div className="tool-btn-icon"><ClipboardList size={18}/></div>
+                      <div className="tool-btn-label sora">Insumos</div>
+                    </button>
+
+                    <button className="tool-btn">
+                      <div className="tool-btn-icon"><AlertTriangle size={18}/></div>
+                      <div className="tool-btn-label sora">Mermas</div>
+                    </button>
+
+                    <button className="tool-btn">
+                      <div className="tool-btn-icon"><Users size={18}/></div>
+                      <div className="tool-btn-label sora">Directorio</div>
+                    </button>
+
                   </div>
                 </div>
               </div>
@@ -3695,6 +4043,14 @@ const Agenda = () => {
           <div className="detail-drawer">
             {selectedCita && (
               <>
+                {/* Hidden file input for upload */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileSelected}
+                  className="hidden"
+                  accept="*/*"
+                />
                 <div className="drawer-hdr">
                   <button className="drawer-close" onClick={() => setSelectedCita(null)}><XCircle size={18}/></button>
                   <div className="drawer-meta">
@@ -3847,6 +4203,23 @@ const Agenda = () => {
                           </button>
                         )}
 
+                        {/* Cargar Estudio (upload) */}
+                        {selectedCita.pacienteId && (
+                          <button
+                            onClick={handleUploadEstudioClick}
+                            disabled={uploadingEstudio}
+                            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: 14, border: '1px solid #ccfbf1', background: '#f0fdfa', cursor: uploadingEstudio ? 'default' : 'pointer', transition: 'all .15s', textAlign: 'center', opacity: uploadingEstudio ? 0.6 : 1 }}
+                          >
+                            <div style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#ccfbf1', color: '#0d9488' }}>
+                              {uploadingEstudio ? <RefreshCw size={16} className="spin-icon"/> : <Upload size={16}/>}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#0f766e' }}>Cargar Estudio</div>
+                              <div style={{ fontSize: 9, color: '#5eead4', marginTop: 2 }}>{uploadingEstudio ? 'Subiendo...' : 'Arrastra o haz clic'}</div>
+                            </div>
+                          </button>
+                        )}
+
                         {/* Unificar */}
                         {selectedCita.pacienteId && (
                           <button
@@ -3860,6 +4233,29 @@ const Agenda = () => {
                             </div>
                           </button>
                         )}
+
+                        {/* Editar cita */}
+                        <button
+                          onClick={() => {
+                            setEditarCitaData({
+                              paciente: selectedCita.paciente || '',
+                              motivo: selectedCita.motivo || '',
+                              motivoId: selectedCita.motivoId || '',
+                              tipoConsulta: selectedCita.tipoConsulta || 'primera_vez',
+                              doctorUid: selectedCita.doctorUid || '',
+                              doctorAsignado: selectedCita.doctorAsignado || '',
+                              notas: selectedCita.notas || ''
+                            });
+                            setShowEditarCita(true);
+                          }}
+                          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: 14, border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', transition: 'all .15s', textAlign: 'center' }}
+                        >
+                          <div style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', color: '#64748b' }}><Edit3 size={16}/></div>
+                          <div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#334155' }}>Editar cita</div>
+                            <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 2 }}>Corregir datos</div>
+                          </div>
+                        </button>
 
                         {/* Abrir Orden Enfermeria */}
                         {selectedCita.esCitaEnfermeria && (
@@ -3936,6 +4332,90 @@ const Agenda = () => {
         )}
 
         {/* ═══ SUB-MODAL CANCELAR ═══ */}
+        {/* ═══ SUB-MODAL EDITAR CITA ═══ */}
+        {showEditarCita && selectedCita && (
+          <div className="modal-overlay" onClick={() => setShowEditarCita(false)}>
+            <div className="modal-box" style={{ maxWidth: 420, padding: 24 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 8 }}><Edit3 size={17} style={{ color: '#6366f1' }}/> Editar Cita</div>
+                <button onClick={() => setShowEditarCita(false)} style={{ padding: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}><XCircle size={18}/></button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Nombre del paciente</label>
+                  <input
+                    type="text"
+                    value={editarCitaData.paciente}
+                    onChange={e => setEditarCitaData(p => ({ ...p, paciente: e.target.value }))}
+                    style={{ width: '100%', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 500, color: '#334155', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Motivo de consulta</label>
+                  <select
+                    value={editarCitaData.motivoId}
+                    onChange={e => {
+                      const m = catalogoMotivos.find(x => x.id === e.target.value);
+                      setEditarCitaData(p => ({ ...p, motivoId: e.target.value, motivo: m?.nombre || p.motivo }));
+                    }}
+                    style={{ width: '100%', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 500, color: '#334155', outline: 'none', boxSizing: 'border-box' }}
+                  >
+                    <option value="">— Sin cambiar —</option>
+                    {catalogoMotivos.map(m => (
+                      <option key={m.id} value={m.id}>{m.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Tipo de consulta</label>
+                  <select
+                    value={editarCitaData.tipoConsulta}
+                    onChange={e => setEditarCitaData(p => ({ ...p, tipoConsulta: e.target.value }))}
+                    style={{ width: '100%', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 500, color: '#334155', outline: 'none', boxSizing: 'border-box' }}
+                  >
+                    <option value="primera_vez">Primera vez</option>
+                    <option value="seguimiento">Seguimiento</option>
+                    <option value="urgencia">Urgencia</option>
+                  </select>
+                </div>
+                {catalogoDoctores.length > 0 && (
+                  <div>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Médico responsable</label>
+                    <select
+                      value={editarCitaData.doctorUid}
+                      onChange={e => {
+                        const d = catalogoDoctores.find(x => x.id === e.target.value);
+                        setEditarCitaData(p => ({ ...p, doctorUid: e.target.value, doctorAsignado: d?.nombre || p.doctorAsignado }));
+                      }}
+                      style={{ width: '100%', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 500, color: '#334155', outline: 'none', boxSizing: 'border-box' }}
+                    >
+                      <option value="">— Sin cambiar —</option>
+                      {catalogoDoctores.map(d => (
+                        <option key={d.id} value={d.id}>{d.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Notas adicionales</label>
+                  <textarea
+                    value={editarCitaData.notas}
+                    onChange={e => setEditarCitaData(p => ({ ...p, notas: e.target.value }))}
+                    placeholder="Notas u observaciones..."
+                    style={{ width: '100%', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#334155', outline: 'none', resize: 'none', height: 60, boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleGuardarEditarCita}
+                disabled={actionLoading === 'editarCita' || !editarCitaData.paciente.trim()}
+                style={{ width: '100%', marginTop: 16, padding: '12px 0', background: '#4f46e5', color: 'white', borderRadius: 10, fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (actionLoading === 'editarCita' || !editarCitaData.paciente.trim()) ? 0.6 : 1 }}>
+                {actionLoading === 'editarCita' ? <><RefreshCw size={14} className="spin-icon"/> Guardando...</> : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {showCancelarConfirm && selectedCita && (
           <div className="modal-overlay" onClick={() => { setShowCancelarConfirm(false); setCancelarMotivo(''); }}>
             <div className="modal-box" style={{ maxWidth: 380, padding: 24 }} onClick={e => e.stopPropagation()}>
@@ -4011,212 +4491,330 @@ const Agenda = () => {
         )}
 
         {/* ══ MODAL NUEVA CITA ══════════════════════════════════════ */}
-        {showCitaModal && (
-          <div className="modal-overlay">
-            <div className="modal-box">
-              <div className="modal-hdr">
-                <span className="modal-title">Nueva Cita</span>
-                <button className="modal-close" onClick={() => setShowCitaModal(false)}><XCircle size={22}/></button>
-              </div>
-              <form onSubmit={handleGuardarCita} className="modal-body">
+        {showCitaModal && (() => {
+          const inputStyle = "w-full p-3 bg-white/50 border border-slate-200/60 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm font-medium text-slate-700 placeholder:text-slate-400";
+          const labelStyle = "text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5 ml-1";
 
-                {/* Paciente */}
-                <div className="form-group">
-                  <label className="form-label">Paciente</label>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <div style={{ flex:1, position:'relative' }}>
-                      <div className="form-input-icon">
-                        <Search size={15}/>
-                        <input required type="text" placeholder="Buscar paciente..."
-                          className="form-input"
-                          value={nuevaCita.paciente}
-                          onChange={e => {
-                            setNuevaCita({ ...nuevaCita, paciente: e.target.value });
-                            const txt = e.target.value.toLowerCase().trim();
-                            if (txt.length > 1) {
-                              const filtered = todosLosPacientes
-                                .filter((p) => {
-                                  const nombre = (p.nombre || '').toLowerCase();
-                                  const idPaciente = String(p.idPaciente || '').toLowerCase();
-                                  return nombre.includes(txt) || idPaciente.includes(txt);
-                                })
-                                .slice(0, 20);
-                              setSugerencias(filtered);
-                              setMostrarSugerencias(true);
-                            } else setMostrarSugerencias(false);
-                          }}
-                        />
-                      </div>
-                      {mostrarSugerencias && (
-                        <div className="suggest-list scroll">
-                          {sugerencias.map(p => (
-                            <div key={p.id} className="suggest-item" onClick={() => seleccionarPaciente(p)}>
-                              {p.nombre}{p.idPaciente ? ` (${p.idPaciente})` : ''}
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200" style={{ margin: 0 }}>
+              <div className="bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.08)] rounded-[2rem] w-full max-w-[600px] flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
+                
+                {/* Header */}
+                <div className="px-6 py-5 border-b border-white/40 flex justify-between items-center bg-white/40 shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center border border-indigo-100">
+                      <CalendarClock size={20} className="text-indigo-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-800 leading-tight">Agendar Cita</h2>
+                      <p className="text-xs font-medium text-slate-500">Complete los detalles de la consulta</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowCitaModal(false)}
+                    className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-50 shadow-sm border border-slate-100 transition-all"
+                  >
+                    <XCircle size={18} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <form onSubmit={handleGuardarCita} className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-5">
+                  
+                  {/* 1. Paciente */}
+                  <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm space-y-4">
+                    <div>
+                        <label className={labelStyle}>Paciente</label>
+                        <div className="flex gap-2 relative">
+                            <div className="relative flex-1">
+                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input 
+                                    required 
+                                    type="text" 
+                                    placeholder="Buscar paciente por nombre o ID..."
+                                    className={`${inputStyle} pl-10`}
+                                    value={nuevaCita.paciente}
+                                    onChange={e => {
+                                        setNuevaCita({ ...nuevaCita, paciente: e.target.value, pacienteId: '', pacienteTelefono: '' });
+                                        const txt = e.target.value.toLowerCase().trim();
+                                        if (txt.length > 1) {
+                                            fetchPacientesSugerencias(txt);
+                                        } else setMostrarSugerencias(false);
+                                    }}
+                                />
+                                {mostrarSugerencias && (
+                                    <div className="absolute top-full left-0 w-full mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-50 max-h-48 overflow-y-auto custom-scrollbar py-1">
+                                        {sugerencias.length > 0 ? sugerencias.map(p => (
+                                            <div 
+                                                key={p.id} 
+                                                className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 transition-colors"
+                                                onClick={() => { seleccionarPaciente(p); setMostrarSugerencias(false); }}
+                                            >
+                                                {p.nombre}{p.idPaciente ? <span className="text-slate-400 text-xs ml-1">({p.idPaciente})</span> : ''}
+                                            </div>
+                                        )) : (
+                                            <div className="px-4 py-3 text-xs text-slate-400 text-center font-medium">No hay coincidencias</div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                          ))}
+                            <button 
+                                type="button" 
+                                onClick={() => setShowPacienteModal(true)}
+                                className="w-[46px] h-[46px] shrink-0 rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white flex items-center justify-center transition-all border border-indigo-100 hover:shadow-md"
+                                title="Nuevo Paciente"
+                            >
+                                <Plus size={20} />
+                            </button>
+                        </div>
+                    </div>
+                  </div>
+
+                  {/* 2. Fecha y Horarios */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                          <label className={labelStyle}>Fecha</label>
+                          <input 
+                              required 
+                              type="date" 
+                              className={inputStyle}
+                              value={nuevaCita.fecha}
+                              onChange={e => setNuevaCita({ ...nuevaCita, fecha: e.target.value })}
+                          />
+                      </div>
+                      <div className="flex gap-2">
+                          <div className="flex-1">
+                              <label className={labelStyle}>Inicio</label>
+                              <input 
+                                  required 
+                                  type="time" 
+                                  className={inputStyle}
+                                  value={nuevaCita.hora}
+                                  onChange={e => {
+                                      const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
+                                      setNuevaCita({ ...nuevaCita, hora: e.target.value, horaFin: calcularHoraFin(e.target.value, duracionMotivo) });
+                                  }}
+                              />
+                          </div>
+                          <div className="flex-1">
+                              <label className={labelStyle}>Fin</label>
+                              <input 
+                                  required 
+                                  type="time" 
+                                  className={`${inputStyle} bg-slate-50/50 cursor-not-allowed text-slate-400`}
+                                  value={nuevaCita.horaFin || ''}
+                                  readOnly
+                              />
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* 3. Motivo */}
+                  <div>
+                      <label className={labelStyle}>Motivo de consulta</label>
+                      <CustomDropdown 
+                          options={catalogoMotivos.map(m => ({ 
+                              value: m.id, 
+                              label: isAdminRole 
+                                  ? `${m.nombre} • $${Number(m.precio || 0).toFixed(2)} • ${m.area} • ${Number(m.duracionMin || INTERVALO_MINUTOS)} min${m.atendidoPorEnfermeria ? ' • Enfermería' : ''}`
+                                  : m.nombre 
+                          }))}
+                          value={nuevaCita.motivoId}
+                          onChange={val => {
+                              const selected = catalogoMotivos.find(m => m.id === val);
+                              const duracionMotivo = Number(selected?.duracionMin || INTERVALO_MINUTOS);
+                              const horaFin = nuevaCita.hora ? calcularHoraFin(nuevaCita.hora, duracionMotivo) : nuevaCita.horaFin;
+                              setNuevaCita({
+                                  ...nuevaCita,
+                                  motivoId: val,
+                                  motivo: selected?.nombre || 'Consulta',
+                                  horaFin,
+                                  esTeleconsulta: selected?.teleconsultaPermitida === false ? false : nuevaCita.esTeleconsulta,
+                                  enfermeroAsignadoId: selected?.atendidoPorEnfermeria ? nuevaCita.enfermeroAsignadoId : '',
+                                  enfermeroAsignadoNombre: selected?.atendidoPorEnfermeria ? nuevaCita.enfermeroAsignadoNombre : ''
+                              });
+                          }}
+                          placeholder="Seleccionar motivo..."
+                          inputStyle={inputStyle}
+                      />
+                  </div>
+
+                  {/* 4. Médico/Enfermero, Tipo, Sucursal, Consultorio */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Enfermero */}
+                      {catalogoMotivos.find(m => m.id === nuevaCita.motivoId)?.atendidoPorEnfermeria && (
+                          <div>
+                              <label className={`${labelStyle} text-indigo-600`}>Enfermero/a asignado/a</label>
+                              <CustomDropdown 
+                                  options={catalogoEnfermeros.map(enf => ({ value: enf.id, label: enf.nombre }))}
+                                  value={nuevaCita.enfermeroAsignadoId}
+                                  onChange={val => {
+                                      const enf = catalogoEnfermeros.find(en => en.id === val);
+                                      setNuevaCita({ ...nuevaCita, enfermeroAsignadoId: val, enfermeroAsignadoNombre: enf?.nombre || '' });
+                                  }}
+                                  placeholder="Seleccionar enfermero/a..."
+                                  inputStyle={`${inputStyle} border-indigo-200 bg-indigo-50/30`}
+                              />
+                          </div>
+                      )}
+
+                      {/* Médico responsable (visible para no-doctores) */}
+                      {!isDoctorRole && !catalogoMotivos.find(m => m.id === nuevaCita.motivoId)?.atendidoPorEnfermeria && (
+                          <div>
+                              <label className={`${labelStyle} text-blue-700`}>Médico responsable</label>
+                              <CustomDropdown 
+                                  options={catalogoDoctores.map(doc => ({ value: doc.id, label: doc.nombre }))}
+                                  value={nuevaCita.doctorUid}
+                                  onChange={val => {
+                                      const docSelected = catalogoDoctores.find(d => d.id === val);
+                                      setNuevaCita({ ...nuevaCita, doctorUid: val, doctorAsignado: docSelected?.nombre || '' });
+                                  }}
+                                  placeholder="Seleccionar médico..."
+                                  inputStyle={`${inputStyle} border-blue-200 bg-blue-50/30`}
+                              />
+                          </div>
+                      )}
+
+                      {/* Tipo de Consulta */}
+                      <div>
+                          <label className={labelStyle}>Tipo de Consulta</label>
+                          <CustomDropdown 
+                              options={[
+                                  { value: 'primera_vez', label: 'Primera vez' },
+                                  { value: 'subsecuente', label: 'Subsecuente' }
+                              ]}
+                              value={nuevaCita.tipoConsulta}
+                              onChange={val => setNuevaCita({ ...nuevaCita, tipoConsulta: val })}
+                              placeholder="Seleccionar..."
+                              inputStyle={inputStyle}
+                          />
+                      </div>
+
+                      {/* Sucursal */}
+                      {!consultorioSeleccionadoModal && (
+                          <div>
+                              <label className={labelStyle}>Sucursal</label>
+                              <CustomDropdown 
+                                  options={catalogoSucursales.map(s => ({ value: s.id, label: `${s.nombre} • ${s.ubicacion}` }))}
+                                  value={nuevaCita.sucursalId}
+                                  onChange={val => setNuevaCita({ ...nuevaCita, sucursalId: val })}
+                                  placeholder="Seleccionar sucursal..."
+                                  inputStyle={inputStyle}
+                              />
+                          </div>
+                      )}
+
+                      {/* Consultorio */}
+                      {!consultorioSeleccionadoModal && (
+                          <div>
+                              <label className={labelStyle}>Consultorio</label>
+                              <CustomDropdown 
+                                    options={[...catalogoConsultorios].sort((a, b) => {
+                                        const aEs = String(a.sucursalId || '') === String(nuevaCita.sucursalId || '');
+                                        const bEs = String(b.sucursalId || '') === String(nuevaCita.sucursalId || '');
+                                        if(aEs && !bEs) return -1;
+                                        if(!aEs && bEs) return 1;
+                                        return (a.nombre || '').localeCompare(b.nombre || '');
+                                    }).map(c => {
+                                        const sucursalDeConsultorio = catalogoSucursales.find(s => String(s.id) === String(c.sucursalId))?.nombre || 'General';
+                                        const esDeSucursalSeleccionada = String(c.sucursalId || '') === String(nuevaCita.sucursalId || '');
+                                        const labelAdmin = isAdminRole ? `${c.nombre} • ${c.especialidad} • ${c.horaInicio || '08:00'}-${c.horaFin || '18:00'}` : c.nombre;
+                                        return { 
+                                            value: c.id, 
+                                            label: labelAdmin,
+                                            sucursalNombre: sucursalDeConsultorio,
+                                            esDeSucursalSeleccionada
+                                        };
+                                    })}
+                                    value={nuevaCita.consultorioId}
+                                    onChange={val => {
+                                        const consultorio = catalogoConsultorios.find(c => c.id === val);
+                                        setNuevaCita(prev => ({ 
+                                            ...prev, 
+                                            consultorioId: val, 
+                                            sucursalId: consultorio?.sucursalId || prev.sucursalId 
+                                        }));
+                                    }}
+                                    placeholder="Asignar Sala..."
+                                    inputStyle={inputStyle}
+                                    renderOption={(opt) => (
+                                        <div className="flex flex-col w-full">
+                                            <span className={`text-sm font-bold ${nuevaCita.consultorioId === opt.value ? 'text-indigo-700' : 'text-slate-700'}`}>{opt.label}</span>
+                                            <div className="flex items-center mt-0.5">
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider ${opt.esDeSucursalSeleccionada ? 'text-indigo-500' : 'text-slate-400'}`}>
+                                                    {opt.sucursalNombre}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                />
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Alertas de Sucursal/Consultorio */}
+                  <div className="space-y-2">
+                      {consultorioSeleccionadoModal && (
+                        <div className="flex items-start gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-600">
+                          <Info size={14} className="mt-0.5 shrink-0" />
+                          <span className="text-[11px] font-medium leading-relaxed">
+                            Consultorio: {consultorioSeleccionadoModal.nombre} • {formatScheduleLabel(horarioConsultorioModal)}
+                          </span>
                         </div>
                       )}
-                    </div>
-                    <button type="button" onClick={() => setShowPacienteModal(true)}
-                      style={{ width:44, height:44, borderRadius:8, background:'var(--blue-600)', color:'white', border:'none', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0, boxShadow:'0 2px 8px rgba(0,119,182,.2)' }}>
-                      <Plus size={18}/>
-                    </button>
+                      {sucursalSeleccionadaModal && (
+                        <div className={`flex items-start gap-2 p-3 rounded-xl border ${consultorioFueraDeHorarioSucursal ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                          {consultorioFueraDeHorarioSucursal ? <AlertTriangle size={14} className="mt-0.5 shrink-0" /> : <Info size={14} className="mt-0.5 shrink-0" />}
+                          <span className="text-[11px] font-medium leading-relaxed">
+                            Sucursal: {sucursalSeleccionadaModal.nombre} • {formatScheduleLabel(horarioSucursalModal)}
+                            {consultorioSeleccionadoModal?.sucursalId ? ' (Ligada al consultorio)' : ''}
+                            {consultorioFueraDeHorarioSucursal ? ' • ADVERTENCIA: El horario es menor al del consultorio.' : ''}
+                          </span>
+                        </div>
+                      )}
                   </div>
-                </div>
 
-                {/* Fecha / Hora */}
-                <div className="form-group">
-                  <div className="form-grid">
-                    <div>
-                      <label className="form-label">Fecha</label>
-                      <input required type="date" className="form-input"
-                        value={nuevaCita.fecha}
-                        onChange={e => setNuevaCita({ ...nuevaCita, fecha: e.target.value })}/>
-                    </div>
-                    <div>
-                      <label className="form-label">Hora</label>
-                      <input required type="time" className="form-input"
-                        value={nuevaCita.hora}
-                        onChange={e => {
-                          const duracionMotivo = getDuracionMotivo(nuevaCita.motivoId);
-                          setNuevaCita({ ...nuevaCita, hora: e.target.value, horaFin: calcularHoraFin(e.target.value, duracionMotivo) });
-                        }}/>
-                    </div>
+                  {/* 6. Teleconsulta */}
+                  <div className="pt-2">
+                      <label className="flex items-center p-4 rounded-2xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group">
+                          <div className="relative flex items-center">
+                              <input 
+                                  type="checkbox" 
+                                  className="peer sr-only"
+                                  checked={nuevaCita.esTeleconsulta}
+                                  onChange={e => setNuevaCita({ ...nuevaCita, esTeleconsulta: e.target.checked })}
+                              />
+                              <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                          </div>
+                          <div className="ml-4 flex items-center gap-2">
+                              <div className={`p-1.5 rounded-lg ${nuevaCita.esTeleconsulta ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-500'} transition-colors`}>
+                                  <Video size={16} />
+                              </div>
+                              <div>
+                                  <div className="text-sm font-bold text-slate-700 group-hover:text-slate-900 transition-colors">Teleconsulta</div>
+                                  <div className="text-[10px] text-slate-500 font-medium">Generar enlace de Google Meet</div>
+                              </div>
+                          </div>
+                      </label>
                   </div>
-                  <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--blue-700)' }}>
-                    Horario seleccionado: {rangoNuevaCita}
-                  </div>
+
+                </form>
+
+                {/* Footer */}
+                <div className="p-5 border-t border-white/40 bg-slate-50/50 shrink-0">
+                  <button 
+                      type="submit" 
+                      onClick={handleGuardarCita}
+                      className="w-full py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold shadow-lg shadow-slate-900/20 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+                  >
+                      <CheckCircle size={18} />
+                      Confirmar Cita
+                  </button>
                 </div>
-
-                <div className="form-group">
-                  <label className="form-label">Tipo de consulta</label>
-                  <select className="form-input" style={{ cursor:'pointer' }}
-                    value={nuevaCita.tipoConsulta}
-                    onChange={e => setNuevaCita({ ...nuevaCita, tipoConsulta: e.target.value })}>
-                    <option value="primera_vez">Primera vez</option>
-                    <option value="subsecuente">Subsecuente</option>
-                  </select>
-                </div>
-
-                {/* Motivo */}
-                <div className="form-group">
-                  <label className="form-label">Motivo de consulta</label>
-                  <select className="form-input" style={{ cursor:'pointer' }}
-                    value={nuevaCita.motivoId}
-                    onChange={e => {
-                      const selected = catalogoMotivos.find(m => m.id === e.target.value);
-                      const duracionMotivo = Number(selected?.duracionMin || INTERVALO_MINUTOS);
-                      const horaFin = nuevaCita.hora ? calcularHoraFin(nuevaCita.hora, duracionMotivo) : nuevaCita.horaFin;
-                      setNuevaCita({
-                        ...nuevaCita,
-                        motivoId: e.target.value,
-                        motivo: selected?.nombre || 'Consulta',
-                        horaFin,
-                        esTeleconsulta: selected?.teleconsultaPermitida === false ? false : nuevaCita.esTeleconsulta,
-                        enfermeroAsignadoId: selected?.atendidoPorEnfermeria ? nuevaCita.enfermeroAsignadoId : '',
-                        enfermeroAsignadoNombre: selected?.atendidoPorEnfermeria ? nuevaCita.enfermeroAsignadoNombre : ''
-                      });
-                    }}>
-                    {catalogoMotivos.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {isAdminRole
-                          ? `${m.nombre} • $${Number(m.precio || 0).toFixed(2)} • ${m.area} • ${Number(m.duracionMin || INTERVALO_MINUTOS)} min${m.atendidoPorEnfermeria ? ' • Enfermería' : ''}`
-                          : m.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Asignación de enfermero si el motivo es de enfermería */}
-                {catalogoMotivos.find(m => m.id === nuevaCita.motivoId)?.atendidoPorEnfermeria && (
-                  <div className="form-group">
-                    <label className="form-label" style={{ color: 'var(--blue-700)' }}>Enfermero/a asignado/a</label>
-                    <select className="form-input" style={{ cursor: 'pointer', borderColor: '#818cf8' }}
-                      value={nuevaCita.enfermeroAsignadoId}
-                      onChange={e => {
-                        const enf = catalogoEnfermeros.find(en => en.id === e.target.value);
-                        setNuevaCita({ ...nuevaCita, enfermeroAsignadoId: e.target.value, enfermeroAsignadoNombre: enf?.nombre || '' });
-                      }}>
-                      <option value="">— Seleccionar enfermero/a —</option>
-                      {catalogoEnfermeros.map(enf => (
-                        <option key={enf.id} value={enf.id}>{enf.nombre}</option>
-                      ))}
-                    </select>
-                    {catalogoEnfermeros.length === 0 && (
-                      <p style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>No hay enfermeros registrados en el sistema.</p>
-                    )}
-                  </div>
-                )}
-
-                <div className="form-group">
-                  <div className="form-grid">
-                    <div>
-                      <label className="form-label">Consultorio</label>
-                      <select className="form-input" style={{ cursor:'pointer' }}
-                        value={nuevaCita.consultorioId}
-                        onChange={e => {
-                          const consultorio = catalogoConsultorios.find((c) => c.id === e.target.value);
-                          setNuevaCita({
-                            ...nuevaCita,
-                            consultorioId: e.target.value,
-                            sucursalId: consultorio?.sucursalId || nuevaCita.sucursalId
-                          });
-                        }}>
-                        {catalogoConsultorios.map(item => (
-                          <option key={item.id} value={item.id}>
-                            {isAdminRole ? `${item.nombre} • ${item.especialidad} • ${item.horaInicio || '08:00'}-${item.horaFin || '18:00'}` : item.nombre}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label">Sucursal</label>
-                      <select className="form-input" style={{ cursor: consultorioSeleccionadoModal?.sucursalId ? 'not-allowed' : 'pointer', opacity: consultorioSeleccionadoModal?.sucursalId ? 0.75 : 1 }}
-                        value={nuevaCita.sucursalId}
-                        disabled={Boolean(consultorioSeleccionadoModal?.sucursalId)}
-                        onChange={e => setNuevaCita({ ...nuevaCita, sucursalId: e.target.value })}>
-                        {catalogoSucursales.map(item => (
-                          <option key={item.id} value={item.id}>{item.nombre} • {item.ubicacion}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                    {consultorioSeleccionadoModal && (
-                      <div style={{ fontSize: 12, padding: '10px 12px', borderRadius: 12, border: '1px solid var(--slate-200)', background: 'var(--slate-50)', color: 'var(--slate-600)', fontWeight: 600 }}>
-                        Consultorio seleccionado: {consultorioSeleccionadoModal.nombre} • {formatScheduleLabel(horarioConsultorioModal)}
-                      </div>
-                    )}
-                    {sucursalSeleccionadaModal && (
-                      <div style={{ fontSize: 12, padding: '10px 12px', borderRadius: 12, border: `1px solid ${consultorioFueraDeHorarioSucursal ? 'rgba(245, 158, 11, .35)' : 'var(--slate-200)'}`, background: consultorioFueraDeHorarioSucursal ? 'rgba(245, 158, 11, .09)' : 'var(--slate-50)', color: consultorioFueraDeHorarioSucursal ? 'var(--amber-800)' : 'var(--slate-600)', fontWeight: 600 }}>
-                        Sucursal que valida la cita: {sucursalSeleccionadaModal.nombre} • {formatScheduleLabel(horarioSucursalModal)}
-                        {consultorioSeleccionadoModal?.sucursalId ? ' • ligada automáticamente al consultorio' : ''}
-                        {consultorioFueraDeHorarioSucursal ? ' • este rango es menor al del consultorio y bloqueará citas fuera de ese horario' : ''}
-                      </div>
-                    )}
-                    {consultorioSeleccionadoModal?.sucursalId && !sucursalSeleccionadaModal && (
-                      <div style={{ fontSize: 12, padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(245, 158, 11, .35)', background: 'rgba(245, 158, 11, .09)', color: 'var(--amber-800)', fontWeight: 600 }}>
-                        El consultorio tiene una sucursal ligada, pero no se encontró su configuración activa en el catálogo.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Teleconsulta */}
-                <div className="form-group">
-                  <label className="tele-toggle">
-                    <input type="checkbox"
-                      checked={nuevaCita.esTeleconsulta}
-                      onChange={e => setNuevaCita({ ...nuevaCita, esTeleconsulta: e.target.checked })}/>
-                    <span><Video size={15} style={{ color:'var(--blue-600)' }}/> Teleconsulta vía Google Meet</span>
-                  </label>
-                </div>
-
-                <button type="submit" className="btn-submit">Confirmar cita</button>
-              </form>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {showPacienteModal && (
           <ModalPaciente onClose={() => { setShowPacienteModal(false); setPacienteAEditar(null); }} onPacienteCreado={(p) => { handlePacienteCreado(p); setPacienteAEditar(null); }} pacienteAEditar={pacienteAEditar}/>
@@ -4297,6 +4895,10 @@ const Agenda = () => {
               </div>
             </div>
           </div>
+        )}
+        {/* ══ MODAL CATÁLOGO MEDICAMENTOS ══════════════════════════════════════ */}
+        {showCatalogoMedicamentos && (
+          <ModalCatalogoMedicamentos onClose={() => setShowCatalogoMedicamentos(false)} />
         )}
       </div>
     </>

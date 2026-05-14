@@ -4,8 +4,11 @@
 # CONFIGURACIÓN DEL DESPLIEGUE
 # ==============================================================================
 SERVIDORES=("100.122.4.91" "100.122.11.120" "100.95.63.70" "100.119.224.75")
+SERVIDOR_MEILISEARCH="100.95.63.70"
 USUARIO="prometeo"
 RUTA_DESTINO="/home/prometeo/srs-medic"
+DOCKER_MAX_RETRIES="${SRS_MEDIC_DOCKER_RETRIES:-3}"
+DOCKER_RETRY_DELAY="${SRS_MEDIC_DOCKER_RETRY_DELAY:-6}"
 
 # Logs fuera del proyecto para no contaminar el repositorio.
 OS_NAME="$(uname -s)"
@@ -530,7 +533,12 @@ for IP in "${SERVIDORES[@]}"; do
     # PASO 2: Reconstrucción de contenedor (solo nginx, sin build de JS)
     if [ $ERROR_EN_NODO -eq 0 ]; then
         MENSAJE_DOCKER="Reconstruyendo e iniciando contenedores"
-        COMANDO_DOCKER="ssh '$USUARIO@$IP' 'cd $RUTA_DESTINO && docker compose down && docker compose up -d --build'"
+        PERFIL_EXTRA=""
+        if [ "$IP" = "$SERVIDOR_MEILISEARCH" ]; then
+            PERFIL_EXTRA="--profile meili"
+            MENSAJE_DOCKER="Reconstruyendo e iniciando contenedores (+ Meilisearch)"
+        fi
+        COMANDO_DOCKER="ssh '$USUARIO@$IP' 'cd $RUTA_DESTINO || exit 1; docker compose down || true; intento=1; while [ \$intento -le $DOCKER_MAX_RETRIES ]; do docker pull nginx:1.27-alpine >/dev/null 2>&1 || true; if docker compose $PERFIL_EXTRA up -d --build; then exit 0; fi; if [ \$intento -lt $DOCKER_MAX_RETRIES ]; then echo \"[deploy] Reintento \$intento/$DOCKER_MAX_RETRIES en ${DOCKER_RETRY_DELAY}s...\"; sleep $DOCKER_RETRY_DELAY; fi; intento=\$((intento + 1)); done; exit 1'"
 
         if ! ejecutar_paso "$IP" "$MENSAJE_DOCKER" "$COMANDO_DOCKER"; then
             ERROR_EN_NODO=1

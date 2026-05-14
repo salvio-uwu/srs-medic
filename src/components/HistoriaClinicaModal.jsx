@@ -10,7 +10,9 @@ import {
   Download,
   Eye,
   FileText,
-  Loader2
+  Loader2,
+  Microscope,
+  ImageIcon
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import DocumentoHistoriaPDF from './pdf/DocumentoHistoriaPDF';
@@ -261,18 +263,25 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
                   onClick={() => setActiveTab(row.id)}
                   className={`w-full text-left p-3 rounded-xl border transition-colors ${
                     activeTab === row.id
-                      ? 'border-blue-300 bg-blue-50'
+                      ? row.origen === 'estudio_previo' ? 'border-teal-300 bg-teal-50' : 'border-blue-300 bg-blue-50'
                       : 'border-slate-200 bg-white hover:border-blue-200'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] font-black text-slate-500 uppercase">{row.fecha}</p>
+                    <p className="text-[11px] font-black text-slate-500 uppercase flex items-center gap-1.5">
+                      {row.origen === 'estudio_previo' && <Microscope size={12} className="text-teal-500" />}
+                      {row.fecha}
+                    </p>
                     {activeTab === row.id && <ChevronRight size={14} className="text-blue-600" />}
                   </div>
-                  <p className="text-xs font-bold text-slate-800 truncate mt-1">{row.motivo || 'Consulta'}</p>
-                  <p className="text-[10px] font-semibold text-slate-500 mt-1">
-                    Auditoria: {getAuditLabel(row?.auditSnapshot?.status)}
-                  </p>
+                  <p className="text-xs font-bold text-slate-800 truncate mt-1">{row.origen === 'estudio_previo' ? (row.estudiosPrevios?.join(', ') || row.motivo) : (row.motivo || 'Consulta')}</p>
+                  {row.origen === 'estudio_previo' ? (
+                    <p className="text-[10px] font-semibold text-teal-600 mt-1">Estudio previo</p>
+                  ) : (
+                    <p className="text-[10px] font-semibold text-slate-500 mt-1">
+                      Auditoria: {getAuditLabel(row?.auditSnapshot?.status)}
+                    </p>
+                  )}
                 </button>
               ))}
             </div>
@@ -315,19 +324,82 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
                   <div className="max-w-4xl mx-auto">
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                        <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                          {consultaActiva?.origen === 'estudio_previo' && <Microscope size={20} className="text-teal-500" />}
                           {consultaActiva?.motivo || 'Consulta medica'}
                         </h3>
                         <p className="text-xs font-semibold text-blue-700 mt-1">{consultaActiva?.fecha || '--/--/----'}</p>
+                        {consultaActiva?.origen === 'estudio_previo' && consultaActiva?.medicoNombre && (
+                          <p className="text-xs text-slate-500 mt-0.5">Registrado por: {consultaActiva.medicoNombre}</p>
+                        )}
                       </div>
-                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
-                        <p className="text-[10px] uppercase font-black text-blue-700">Auditoria</p>
-                        <p className="text-xs font-bold text-slate-700 mt-0.5">
-                          {getAuditLabel(consultaActiva?.auditSnapshot?.status)}
-                          {typeof consultaActiva?.auditSnapshot?.score === 'number' ? ` (${consultaActiva.auditSnapshot.score}%)` : ''}
-                        </p>
-                      </div>
+                      {consultaActiva?.origen !== 'estudio_previo' && (
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                          <p className="text-[10px] uppercase font-black text-blue-700">Auditoria</p>
+                          <p className="text-xs font-bold text-slate-700 mt-0.5">
+                            {getAuditLabel(consultaActiva?.auditSnapshot?.status)}
+                            {typeof consultaActiva?.auditSnapshot?.score === 'number' ? ` (${consultaActiva.auditSnapshot.score}%)` : ''}
+                          </p>
+                        </div>
+                      )}
                     </div>
+
+                    {consultaActiva?.origen === 'estudio_previo' && (
+                      <div className="mt-6 space-y-4">
+                        {consultaActiva?.estudiosPrevios?.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-bold text-teal-700 uppercase tracking-wide mb-2">Estudios</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {consultaActiva.estudiosPrevios.map((est, i) => (
+                                <span key={i} className="bg-teal-50 text-teal-700 px-3 py-1.5 rounded-full text-xs font-bold border border-teal-100">
+                                  {est}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {consultaActiva?.clasificacion && consultaActiva.clasificacion !== 'GENERAL' && (
+                          <div>
+                            <h4 className="text-sm font-bold text-teal-700 uppercase tracking-wide mb-1">Clasificación</h4>
+                            <p className="text-sm font-semibold text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-lg border border-slate-200">
+                              {consultaActiva.clasificacion}
+                            </p>
+                          </div>
+                        )}
+
+                        <div>
+                          <h4 className="text-sm font-bold text-teal-700 uppercase tracking-wide mb-2">Interpretación</h4>
+                          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-700 font-medium whitespace-pre-wrap">
+                            {consultaActiva?.interpretacion || 'Sin interpretación registrada'}
+                          </div>
+                        </div>
+
+                        {consultaActiva?.adjuntos?.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-bold text-teal-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                              <ImageIcon size={14} /> Adjuntos ({consultaActiva.adjuntos.length})
+                            </h4>
+                            <div className="grid grid-cols-3 gap-3">
+                              {consultaActiva.adjuntos.map((url, i) => (
+                                <a
+                                  key={i}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block p-3 rounded-xl border border-slate-200 bg-white hover:bg-teal-50 hover:border-teal-200 transition-colors"
+                                >
+                                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                    {url.includes('.pdf') ? <FileText size={14} className="text-red-400" /> : <ImageIcon size={14} className="text-teal-400" />}
+                                    <span className="truncate">Abrir adjunto {i + 1}</span>
+                                  </div>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

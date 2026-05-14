@@ -910,11 +910,16 @@ const renderPsicomotor = () => {
   const renderVacunas = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><Shield size={16} className="text-blue-500"/> Esquema de Vacunación</h4>
-      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.vacunas?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.vacunas.preguntados_y_negados', e.target.checked)} />
-          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
-          <span className="text-xs text-amber-600 ml-1">— El paciente niega vacunación</span>
+      <div className={`p-4 rounded-2xl border mb-6 w-full shrink-0 transition-all duration-200 cursor-pointer ${expediente.antecedentes.vacunas?.completo_para_la_edad ? 'bg-emerald-50 border-emerald-300 shadow-sm shadow-emerald-100' : 'bg-slate-50 border-slate-200 hover:border-emerald-200 hover:bg-emerald-50/30'}`} onClick={() => updateCampo('antecedentes.vacunas.completo_para_la_edad', !(expediente.antecedentes.vacunas?.completo_para_la_edad || false))}>
+        <label className="flex items-center gap-3 cursor-pointer" onClick={e => e.stopPropagation()}>
+          <input type="checkbox" className="w-5 h-5 rounded accent-emerald-600" checked={expediente.antecedentes.vacunas?.completo_para_la_edad || false} onChange={e => updateCampo('antecedentes.vacunas.completo_para_la_edad', e.target.checked)} />
+          <div className="flex flex-col">
+            <span className="font-bold text-sm text-emerald-800 flex items-center gap-1.5">
+              <CheckCircle size={15} className="text-emerald-500" />
+              Completo para la edad
+            </span>
+            <span className="text-xs text-emerald-600">El paciente tiene el esquema de vacunación completo para su edad</span>
+          </div>
         </label>
       </div>
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">

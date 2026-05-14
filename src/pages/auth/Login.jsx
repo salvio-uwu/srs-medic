@@ -2,7 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useSessionLocation } from '../../context/SessionLocationContext';
 import { resolveUserHomePath } from '../../services/permissionService';
+import LocationSelector from '../../components/LocationSelector';
 import logoImg from '../../assets/logo_azul.png';
 
 /* ══════════════════════════════════════════
@@ -182,7 +184,7 @@ const CSS = `
     max-height: 0; opacity: 0; overflow: hidden;
     transition: max-height 0.58s cubic-bezier(.4,0,.2,1) 0.18s, opacity 0.42s ease 0.22s;
   }
-  .ac-portal.open { max-height: 560px; opacity: 1; }
+  .ac-portal.open { max-height: 860px; opacity: 1; overflow: visible; }
 
   /* Dot pulsante */
   .ac-pulse {
@@ -365,6 +367,7 @@ const getRoleConfig = (rol) => {
 ══════════════════════════════════════════ */
 const Login = () => {
   const { login, logout, user, loading } = useAuth();
+  const { locationConfirmed, catalogosReady } = useSessionLocation();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -580,7 +583,7 @@ const Login = () => {
                 <div className="ap2" style={{
                   background: config.colorLight, border: '1px solid ' + config.colorMid,
                   borderRadius: 14, padding: '13px 16px',
-                  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+                  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4,
                 }}>
                   <div className="ac-pulse" style={{ background: config.color, '--pr': hexToRgb(config.color) }} />
                   <div style={{ textAlign: 'left' }}>
@@ -593,14 +596,29 @@ const Login = () => {
                   </div>
                 </div>
 
+                {/* Selector de ubicación */}
+                {catalogosReady && (
+                  <div className="ap2" style={{ marginBottom: 16 }}>
+                    <LocationSelector accentColor={config.color} />
+                  </div>
+                )}
+
                 {/* Boton ingresar */}
                 <div className="ap3">
                   <button
                     className="ac-btn-role"
                     onClick={() => navigate(config.path)}
-                    style={{ background: config.color, boxShadow: '0 8px 24px -6px ' + config.color + '55' }}
+                    disabled={!locationConfirmed}
+                    style={{
+                      background: locationConfirmed ? config.color : '#94a3b8',
+                      boxShadow: locationConfirmed ? '0 8px 24px -6px ' + config.color + '55' : 'none',
+                      cursor: locationConfirmed ? 'pointer' : 'not-allowed',
+                      opacity: locationConfirmed ? 1 : 0.7,
+                      transition: 'all 0.3s ease'
+                    }}
                   >
-                    Ingresar al Portal <IconArrow />
+                    {locationConfirmed ? 'Ingresar al Portal' : 'Selecciona tu ubicación'}
+                    {locationConfirmed && <IconArrow />}
                   </button>
                 </div>
 

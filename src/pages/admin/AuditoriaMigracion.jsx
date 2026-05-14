@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, doc, getDocs, limit, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
-import { AlertCircle, CheckCircle2, ClipboardCheck, ExternalLink, Eye, Filter, Search, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ClipboardCheck, Database, ExternalLink, Eye, Filter, Search, ShieldCheck } from 'lucide-react';
+import ImportadorXlsx from './ImportadorXlsx';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { upsertPatientLegacyLink } from '../../services/patientLinkService';
@@ -147,6 +148,7 @@ const buildBadgeClass = (status) => {
 
 const AuditoriaMigracion = () => {
   const { user } = useAuth();
+  const [activeView, setActiveView] = useState('xlsx'); // 'xlsx' | 'html'
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('todos');
@@ -622,14 +624,42 @@ const AuditoriaMigracion = () => {
 
   return (
     <div className="p-6 max-w-[1800px] mx-auto pb-16 space-y-5">
-      <header className="space-y-1">
+      <header className="space-y-3">
         <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'Sora, sans-serif' }}>
-          Auditoria de migracion de expedientes
+          Migracion de datos MedicalManik
         </h1>
         <p className="text-sm text-slate-500">
-          Vista administrativa para revisar, filtrar y validar historiales clinicos migrados desde MedicalManik.
+          Importa pacientes desde el archivo XLSX o audita historiales clinicos migrados.
         </p>
-        <div className="pt-1 flex flex-wrap items-center gap-2">
+        <div className="flex gap-1 border-b border-slate-200">
+          <button
+            onClick={() => setActiveView('xlsx')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-t-lg border-t border-l border-r transition-colors flex items-center gap-2 ${
+              activeView === 'xlsx'
+                ? 'bg-indigo-50 text-indigo-700 border-indigo-200 border-b-transparent relative top-[1px]'
+                : 'bg-white text-slate-400 border-transparent hover:text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Database size={15} /> Importar XLSX
+          </button>
+          <button
+            onClick={() => setActiveView('html')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-t-lg border-t border-l border-r transition-colors flex items-center gap-2 ${
+              activeView === 'html'
+                ? 'bg-blue-50 text-blue-700 border-blue-200 border-b-transparent relative top-[1px]'
+                : 'bg-white text-slate-400 border-transparent hover:text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <ClipboardCheck size={15} /> Auditoria HTML
+          </button>
+        </div>
+      </header>
+
+      {activeView === 'xlsx' && <ImportadorXlsx />}
+
+      {activeView === 'html' && (
+      <>
+      <div className="pt-1 flex flex-wrap items-center gap-2">
           <button
             onClick={handleSyncAllPacientes}
             disabled={syncingAll}
@@ -661,7 +691,6 @@ const AuditoriaMigracion = () => {
             </span>
           )}
         </div>
-      </header>
 
       <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -1047,6 +1076,8 @@ const AuditoriaMigracion = () => {
           <p className="text-slate-500 mt-1">Usa estado observado cuando falte informacion critica o detectes registros duplicados/inconsistentes.</p>
         </div>
       </section>
+      </> /* end html view */
+      )}
     </div>
   );
 };

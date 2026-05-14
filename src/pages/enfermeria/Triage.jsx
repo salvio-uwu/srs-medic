@@ -5,7 +5,7 @@ import {
   Wind, CheckCircle, AlertCircle, XCircle, FlaskConical, Trash2, Plus, Stethoscope
 } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
-import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
 import AvatarPaciente from '../../components/AvatarPaciente';
 
 const Triage = () => {
@@ -45,8 +45,34 @@ const Triage = () => {
   });
   const [tempEnfermedad, setTempEnfermedad] = useState('');
 
-  const [cargandoDatos, setCargandoDatos] = useState(!!editMode);
+  const [_cargandoDatos, setCargandoDatos] = useState(!!editMode);
   const [pacienteMeta, setPacienteMeta] = useState({ sexo: '', fechaNacimiento: '' });
+  const [pacienteNombreFallback, setPacienteNombreFallback] = useState(String(pacienteNombre || '').trim());
+
+  useEffect(() => {
+    setPacienteNombreFallback(String(pacienteNombre || '').trim());
+  }, [pacienteNombre]);
+
+  // Marcar inicio de triage en Firestore (solo en modo nuevo, no edición)
+  // Esto permite que las otras agendas muestren "En triage" en tiempo real.
+  useEffect(() => {
+    if (!citaId || editMode) return;
+    let cancelled = false;
+    const marcarInicio = async () => {
+      try {
+        const citaRef = doc(db, 'citas', citaId);
+        const snap = await getDoc(citaRef);
+        if (!snap.exists() || cancelled) return;
+        if (!snap.data().triageIniciadoAt) {
+          await updateDoc(citaRef, { triageIniciadoAt: serverTimestamp() });
+        }
+      } catch (e) {
+        console.error('Error marcando inicio de triage:', e);
+      }
+    };
+    marcarInicio();
+    return () => { cancelled = true; };
+  }, [citaId, editMode]);
 
   // Precargar datos existentes en modo edición
   useEffect(() => {
@@ -94,6 +120,15 @@ const Triage = () => {
                     sexo: data.sexo || '',
                     fechaNacimiento: data.fechaNacimiento || data.fecha_nacimiento || ''
                 });
+                const nombreCompleto = String(data.nombreCompleto || '').trim();
+                const nombreCompuesto = [data.nombre, data.apellidoPaterno, data.apellidoMaterno]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim();
+                const nombrePacienteDoc = nombreCompleto || nombreCompuesto || String(data.nombre || '').trim();
+                if (nombrePacienteDoc) {
+                  setPacienteNombreFallback((prev) => prev || nombrePacienteDoc);
+                }
             } catch (e) {
                 console.error('Error cargando paciente para avatar', e);
             }
@@ -125,9 +160,11 @@ const Triage = () => {
 
 // ... (imports y estados anteriores se mantienen igual)
 
+  const pacienteNombreFinal = String(pacienteNombre || pacienteNombreFallback || '').trim();
+
   const guardarTriage = async () => {
     // Validación interna
-    if (!pacienteNombre) {
+    if (!pacienteNombreFinal && !pacienteId) {
         setErrorMsg("Error: No se ha identificado al paciente.");
         return;
     }
@@ -155,7 +192,7 @@ const Triage = () => {
         // 1. Guardar Triage (Histórico para enfermería)
         await addDoc(collection(db, "triage_enfermeria"), {
             pacienteId: pacienteId || "externo",
-            pacienteNombre,
+          pacienteNombre: pacienteNombreFinal || 'Paciente sin nombre',
             signos,
             alergias: alergiasTexto,
             alergias_struct: alergias,
@@ -175,7 +212,8 @@ const Triage = () => {
                 signos_vitales: signos,
                 triage_alergias: alergiasTexto,
                 triage_alergias_struct: alergias,
-                triage_enfermedades: enfermedades
+                triage_enfermedades: enfermedades,
+                triageIniciadoAt: deleteField(), // limpia el marcador de "En triage" al completar
             });
         }
 
@@ -258,7 +296,7 @@ const Triage = () => {
         <AvatarPaciente sexo={pacienteMeta.sexo} fechaNacimiento={pacienteMeta.fechaNacimiento} size="sm" className="shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Paciente</p>
-          <p className="text-sm font-bold text-slate-800 truncate">{pacienteNombre || 'Sin paciente seleccionado'}</p>
+          <p className="text-sm font-bold text-slate-800 truncate">{pacienteNombreFinal || 'Sin paciente seleccionado'}</p>
         </div>
       </div>
 

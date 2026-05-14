@@ -1,7 +1,7 @@
 // src/context/AuthContext.jsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword } from 'firebase/auth'; 
-import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore'; 
+import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'; 
 import { auth, db } from '../config/firebase';
 
 const AuthContext = createContext();
@@ -66,7 +66,22 @@ export const AuthProvider = ({ children }) => {
         await setDoc(doc(db, 'users', user.uid), {
           isOnline: false,
           statusOperativo: 'offline', 
-          lastSeen: new Date().toISOString()
+          lastSeen: new Date().toISOString(),
+          // Limpiar ubicación de sesión para forzar re-selección al próximo login
+          sessionSucursalId: '',
+          sessionSucursalNombre: '',
+          sessionConsultorioId: '',
+          sessionConsultorioNombre: '',
+          // Limpiar también campos legacy para evitar que datos viejos persistan
+          sucursalActual: '',
+          sucursalActualId: '',
+          consultorioActualId: '',
+          consultorioActual: '',
+          consultorioId: '',
+          consultorio: '',
+          consultorioUbicacion: '',
+          consultorioRecurrenteId: '',
+          consultorioRecurrente: ''
         }, { merge: true });
       } catch (error) {
         console.error('Error en logout:', error);
@@ -96,16 +111,24 @@ export const AuthProvider = ({ children }) => {
   };
 
   // --- EFECTO 2: SISTEMA DE PRESENCIA (Heartbeat) ---
+  const hasSetLastLogin = useRef(false);
+
   useEffect(() => {
     let interval;
 
     if (user?.uid) {
       const reportarPresencia = async () => {
         try {
-          await setDoc(doc(db, 'users', user.uid), { 
-              lastSeen: new Date().toISOString(),
-              isOnline: true
-          }, { merge: true });
+          const payload = { 
+            lastSeen: new Date().toISOString(),
+            isOnline: true,
+          };
+          // Escribir lastLogin solo en el primer latido de la sesión
+          if (!hasSetLastLogin.current) {
+            payload.lastLogin = serverTimestamp();
+            hasSetLastLogin.current = true;
+          }
+          await setDoc(doc(db, 'users', user.uid), payload, { merge: true });
         } catch (e) {
           console.log('Heartbeat skip'); 
         }
@@ -113,6 +136,8 @@ export const AuthProvider = ({ children }) => {
 
       reportarPresencia();
       interval = setInterval(reportarPresencia, 2 * 60 * 1000);
+    } else {
+      hasSetLastLogin.current = false; // resetear al desloguear
     }
 
     return () => {

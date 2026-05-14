@@ -5,9 +5,13 @@ import AvatarPaciente from './AvatarPaciente';
 import { db } from '../config/firebase';
 import { collection, addDoc, updateDoc, doc, getDocs, limit, query, where } from 'firebase/firestore';
 import { buildPatientHumanId } from '../utils/patientId';
+import { getPatientDisplayName, sanitizePatientNameFields } from '../utils/patientName';
+import { normalizeForSearch } from '../utils/searchUtils';
 
 const normalizeText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
 const normalizeUpper = (value = '') => normalizeText(value).toUpperCase();
+const normalizeTitleCase = (value = '') =>
+    normalizeText(value).replace(/(^|\s)(\S)/g, (_, space, char) => `${space}${char.toLocaleUpperCase('es-MX')}`);
 const normalizeDigits = (value = '') => String(value || '').replace(/\D/g, '');
 const normalizeDateIso = (value = '') => {
     const raw = String(value || '').trim();
@@ -21,8 +25,7 @@ const normalizeDateIso = (value = '') => {
 };
 
 const buildPatientName = (row = {}) => {
-    const fallback = `${row.nombre || ''} ${row.apellidoPaterno || ''} ${row.apellidoMaterno || ''}`;
-    return normalizeText(row.nombreCompleto || fallback);
+    return normalizeText(getPatientDisplayName(row));
 };
 
 const summarizeMatchNames = (rows = []) => rows
@@ -44,6 +47,10 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
     const [toast, setToast] = useState({ show: false, msg: '', type: 'error' });
     const [duplicateBypass, setDuplicateBypass] = useState({ fingerprint: '', expiresAt: 0 });
     const toastTimerRef = useRef(null);
+    // Keep a stable ref to the latest onPacienteCreado so the async handleGuardar
+    // always calls the most recent version even if the parent re-renders mid-save.
+    const onPacienteCreadoRef = useRef(onPacienteCreado);
+    useEffect(() => { onPacienteCreadoRef.current = onPacienteCreado; }, [onPacienteCreado]);
 
   // Estado inicial
   const initialState = {
@@ -69,7 +76,16 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
   // Si recibimos un paciente para editar, llenamos el formulario
   useEffect(() => {
     if (pacienteAEditar) {
-      setFormData(prev => ({ ...prev, ...pacienteAEditar }));
+            const normalizedNames = sanitizePatientNameFields(pacienteAEditar);
+      setFormData(prev => ({
+        ...prev, 
+        ...pacienteAEditar,
+                nombre: normalizedNames.nombre,
+                apellidoPaterno: normalizedNames.apellidoPaterno,
+                apellidoMaterno: normalizedNames.apellidoMaterno,
+                nombreCompleto: normalizedNames.nombreCompleto,
+        notasPersonales: pacienteAEditar.notasPersonales || pacienteAEditar.resumenClinico?.notas_previas || ''
+      }));
     }
   }, [pacienteAEditar]);
 
@@ -167,7 +183,14 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
 
   const handleGuardar = async (e) => {
     e.preventDefault();
-    if (!formData.nombre || !formData.apellidoPaterno) {
+        const normalizedNames = sanitizePatientNameFields({
+            nombre: normalizeTitleCase(formData.nombre),
+            apellidoPaterno: normalizeTitleCase(formData.apellidoPaterno),
+            apellidoMaterno: normalizeTitleCase(formData.apellidoMaterno),
+            nombreCompleto: normalizeTitleCase(formData.nombreCompleto)
+        });
+
+        if (!normalizedNames.nombre || !normalizedNames.apellidoPaterno) {
         showToast('Nombre y apellido paterno son obligatorios.', 'error');
         return;
     }
@@ -178,7 +201,7 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
     
     setLoading(true);
     try {
-      const nombreCompleto = `${formData.nombre} ${formData.apellidoPaterno} ${formData.apellidoMaterno || ''}`.trim();
+            const nombreCompleto = normalizedNames.nombreCompleto;
             const fechaReferencia = formData.fechaNacimiento || pacienteAEditar?.fechaNacimiento || null;
             const idPaciente = buildPatientHumanId(nombreCompleto, fechaReferencia);
             const curpNormalizada = normalizeUpper(formData.curp);
@@ -246,7 +269,11 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
 
       const datosFinales = { 
                 ...formData,
+        nombre: normalizedNames.nombre,
+        apellidoPaterno: normalizedNames.apellidoPaterno,
+        apellidoMaterno: normalizedNames.apellidoMaterno,
         nombreCompleto,
+        searchName: normalizeForSearch(nombreCompleto),
                 idPaciente,
                 curp: curpNormalizada,
                 fechaNacimiento: normalizeDateIso(formData.fechaNacimiento) || '',
@@ -267,11 +294,11 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
         docId = docRef.id;
       }
 
-            setDuplicateBypass({ fingerprint: '', expiresAt: 0 });
+      setDuplicateBypass({ fingerprint: '', expiresAt: 0 });
 
       // Notificamos al padre (Agenda o Pacientes)
-      if (onPacienteCreado) {
-        onPacienteCreado({ id: docId, ...datosFinales });
+      if (onPacienteCreadoRef.current) {
+        onPacienteCreadoRef.current({ id: docId, ...datosFinales });
       } else {
         onClose();
       }
@@ -307,7 +334,7 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
             )}
 
        {/* Backdrop */}
-       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
+       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={loading ? undefined : onClose} />
        
        {/* Modal Card */}
        <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100">

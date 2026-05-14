@@ -3,8 +3,9 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Activity, UserPlus, Package, Tags, FileText, BarChart3,
-  ClipboardCheck, Calendar, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle
+  ClipboardCheck, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle, FlaskConical
 } from 'lucide-react';
+import { CalendarBlank } from '@phosphor-icons/react';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
@@ -417,6 +418,7 @@ const NAV = [
   { label: 'Dashboard',   icon: Activity,       to: '/admin/dashboard' },
   { label: 'Personal',    icon: UserPlus,        to: '/admin/usuarios' },
   { label: 'Pacientes',   icon: User,            to: '/pacientes' },
+  { label: 'Depuración',  icon: FlaskConical,    to: '/admin/depuracion' },
   { label: 'Migracion',   icon: Building2,       to: '/admin/migracion' },
   { label: 'Inventario',  icon: Package,         to: '/admin/inventario' },
   { label: 'Catálogos',   icon: Tags,            to: '/admin/catalogos' },
@@ -644,7 +646,7 @@ const AdminLayout = () => {
     if (actionId === 'go_catalogs') navigate('/admin/catalogos');
     if (actionId === 'go_templates') navigate('/admin/plantillas');
     if (actionId === 'go_dashboard') navigate('/admin/dashboard');
-    if (actionId === 'go_agenda') navigate('/agenda');
+    if (actionId === 'go_agenda') navigate('/admin/agenda');
   };
 
   const localAssistantDecision = (rawText) => {
@@ -875,8 +877,8 @@ Devuelve SOLO JSON:
 
             <div className="nav-divider" />
             {!collapsed && <div className="nav-section-label">Accesos</div>}
-            <NavLink to="/agenda" className="nav-lnk" title={collapsed ? 'Agenda' : undefined}>
-              <span className="ni"><Calendar size={17} /></span>
+            <NavLink to="/admin/agenda" className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`} title={collapsed ? 'Agenda' : undefined}>
+              <span className="ni"><CalendarBlank size={17} /></span>
               {!collapsed && <span className="nl">Agenda</span>}
             </NavLink>
           </nav>

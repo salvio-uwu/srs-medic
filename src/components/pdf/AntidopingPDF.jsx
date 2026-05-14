@@ -1,6 +1,7 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Image } from '@react-pdf/renderer';
 import logoImg from '../../assets/logo_azul.png'; 
+import { getPatientDisplayName } from '../../utils/patientName';
 
 const styles = StyleSheet.create({
   page: { 
@@ -48,7 +49,7 @@ const AntidopingPDF = ({ paciente, doctor, motivo, resultados }) => {
     day: '2-digit', month: 'long', year: 'numeric' 
   }).toUpperCase();
 
-  const nombrePaciente = `${paciente?.nombre || ''} ${paciente?.apellidoPaterno || ''} ${paciente?.apellidoMaterno || ''}`.trim().toUpperCase() || "PACIENTE SIN NOMBRE";
+  const nombrePaciente = getPatientDisplayName(paciente || {}).toUpperCase() || "PACIENTE SIN NOMBRE";
   const edad = paciente?.edad ? paciente.edad : "___ AÑOS";
   
   const nombreDoctor = doctor?.nombre || "DR. NO IDENTIFICADO";
