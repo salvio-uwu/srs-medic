@@ -1,8 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
+import path from 'path'
 
-const buildVersion = Date.now().toString()
+// Leer versión desde package.json o usar 1.0.0 por defecto
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
+const appVersion = packageJson.version || '1.0.0'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -10,15 +13,16 @@ export default defineConfig({
     react(),
     {
       name: 'generate-version-json',
-      // Se ejecuta al iniciar el build → escribe public/version.json con el timestamp actual
+      configureServer() {
+        fs.writeFileSync('public/version.json', JSON.stringify({ v: appVersion }))
+      },
       buildStart() {
-        fs.writeFileSync('public/version.json', JSON.stringify({ v: buildVersion }))
+        fs.writeFileSync('public/version.json', JSON.stringify({ v: appVersion }))
       }
     }
   ],
   define: {
-    // Disponible en el código como __BUILD_VERSION__
-    __BUILD_VERSION__: JSON.stringify(buildVersion)
+    __BUILD_VERSION__: JSON.stringify(appVersion)
   },
   server: {
     host: true, 

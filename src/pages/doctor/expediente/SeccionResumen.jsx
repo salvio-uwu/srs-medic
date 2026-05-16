@@ -354,7 +354,13 @@ const SeccionResumen = ({
                 titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
                 descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
                 confianza: 'alta',
-                medicoNombre: item.medicoNombre || ''
+                medicoNombre: item.medicoNombre || '',
+                es_embarazada: item.px_info?.es_embarazada || false,
+                sdg: item.px_info?.sdg || '',
+                fpp: item.px_info?.fpp || '',
+                fum: item.px_info?.fum || '',
+                requiere_cirugia_general: item.px_info?.requiere_cirugia?.general || false,
+                requiere_cirugia_ginecologica: item.px_info?.requiere_cirugia?.ginecologica || false
             };
 
             const recetasEventos = Array.isArray(item.recetasGeneradas) ? item.recetasGeneradas : [];
@@ -854,6 +860,30 @@ const SeccionResumen = ({
                                             <div className="space-y-2">
                                                 {item.titulo && <div className="flex gap-2 items-start"><Activity size={14} className="text-emerald-500 mt-0.5 shrink-0"/><p className="text-xs text-slate-600 font-medium line-clamp-1"><span className="font-bold text-slate-700">Dx:</span> {item.titulo}</p></div>}
                                                 {item.descripcion && <div className="flex gap-2 items-start"><FileText size={14} className="text-slate-400 mt-0.5 shrink-0"/><p className="text-xs text-slate-500 line-clamp-1 italic">"{item.descripcion}"</p></div>}
+                                                {(item.es_embarazada || item.requiere_cirugia_general || item.requiere_cirugia_ginecologica) && (
+                                                    <div className="flex flex-wrap gap-1.5 pt-1">
+                                                        {item.es_embarazada && (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-pink-50 text-pink-700 border border-pink-200">
+                                                                🤰 {item.sdg ? item.sdg : 'Embarazada'}
+                                                            </span>
+                                                        )}
+                                                        {item.es_embarazada && item.fpp && (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-50 text-pink-600 border border-pink-100">
+                                                                FPP: {item.fpp}
+                                                            </span>
+                                                        )}
+                                                        {item.requiere_cirugia_general && (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200">
+                                                                ✂️ Qx General
+                                                            </span>
+                                                        )}
+                                                        {item.requiere_cirugia_ginecologica && (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200">
+                                                                ✂️ Qx Ginecológica
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
                                                                                                 {item.kind === 'legacy' && item.modulePath && (
                                                                                                     <button
                                                                                                         onClick={(event) => {
@@ -1121,6 +1151,76 @@ const SeccionResumen = ({
                                 <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-2 text-sm">
                                     <span className="font-bold text-blue-700">Duración:</span> <span className="text-blue-800 font-black">{cs.duracionRealMin} min</span>
                                 </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Estado Obstétrico y QX - solo si hay datos */}
+                    {(cs.px_info?.es_embarazada || cs.px_info?.fum || cs.px_info?.requiere_cirugia?.general || cs.px_info?.requiere_cirugia?.ginecologica) && (
+                        <div>
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <span>🤰</span> Estado Obstétrico y Quirúrgico
+                            </h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {cs.px_info?.es_embarazada && (
+                                    <div className="bg-pink-50 border border-pink-200 rounded-xl p-4">
+                                        <p className="text-[10px] font-black text-pink-500 uppercase tracking-widest mb-2">Embarazo activo en esta consulta</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div className="text-center">
+                                                <p className="text-[9px] font-black text-pink-400 uppercase">FUM</p>
+                                                <p className="text-xs font-bold text-pink-800">{cs.px_info.fum || '--'}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[9px] font-black text-pink-400 uppercase">SDG</p>
+                                                <p className="text-xs font-bold text-pink-800">{cs.px_info.sdg || '--'}</p>
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-[9px] font-black text-pink-400 uppercase">FPP</p>
+                                                <p className="text-xs font-bold text-pink-800">{cs.px_info.fpp || '--'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                {(cs.px_info?.requiere_cirugia?.general || cs.px_info?.requiere_cirugia?.ginecologica) && (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                                        <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-2">Requerimientos quirúrgicos</p>
+                                        <div className="space-y-1">
+                                            {cs.px_info.requiere_cirugia.general && <p className="text-xs font-bold text-amber-800">✂️ Cirugía General</p>}
+                                            {cs.px_info.requiere_cirugia.ginecologica && <p className="text-xs font-bold text-amber-800">✂️ Cirugía Ginecológica</p>}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            {/* Control de embarazo (complicaciones) si está disponible */}
+                            {cs.px_info?.es_embarazada && cs.control_embarazo && (
+                                (() => {
+                                    const ce = cs.control_embarazo;
+                                    const comps = ce.complicaciones || {};
+                                    const compActivas = Object.entries(comps)
+                                        .filter(([, v]) => v === 'Sí')
+                                        .map(([k]) => k.replace(/_/g, ' '));
+                                    return (
+                                        <div className="mt-3 bg-white border border-pink-100 rounded-xl p-4">
+                                            <p className="text-[10px] font-black text-pink-500 uppercase tracking-widest mb-2">Control de embarazo</p>
+                                            <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                                                {ce.num_embarazo && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">Embarazo #{ce.num_embarazo}</span>}
+                                                {ce.num_bebes && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">{ce.num_bebes} bebé(s)</span>}
+                                                {ce.riesgo && ce.riesgo !== 'No aplica' && <span className="bg-rose-50 border border-rose-200 rounded px-2 py-0.5 text-rose-700 font-bold">Alto riesgo: {ce.riesgo}</span>}
+                                                {ce.acido_folico && ce.acido_folico !== 'No aplica' && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">Ácido fólico: {ce.acido_folico}</span>}
+                                            </div>
+                                            {compActivas.length > 0 && (
+                                                <div className="mt-2">
+                                                    <p className="text-[9px] font-black text-rose-500 uppercase mb-1">Complicaciones reportadas</p>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {compActivas.map((c) => (
+                                                            <span key={c} className="bg-rose-50 border border-rose-200 rounded px-2 py-0.5 text-[10px] font-bold text-rose-700 capitalize">{c}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()
                             )}
                         </div>
                     )}

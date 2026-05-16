@@ -712,10 +712,10 @@ const handleGuardarCita = async (e) => {
                 const slotKey = `${hh.toString().padStart(2, '0')}:${minInicio.toString().padStart(2, '0')}`;
                 const infoBloqueo = bloqueadosDoctor.get(slotKey);
                 if (infoBloqueo) {
-                    // Si el bloqueo tiene consultorio definido, solo bloquear si coincide con el consultorio de la cita
+                    // Solo bloquear si el bloqueo tiene consultorio definido y coincide con el de la cita
                     const consultorioCita = (nuevaCita.consultorio || '').trim();
                     const consultorioBloqueo = (infoBloqueo.consultorioNombre || '').trim();
-                    if (!consultorioBloqueo || consultorioBloqueo === consultorioCita) {
+                    if (consultorioBloqueo && consultorioBloqueo === consultorioCita) {
                         showToast(`El Dr. ${nuevaCita.doctorAsignado} bloqueó ese horario. Selecciona otro.`, "error");
                         return;
                     }
@@ -729,14 +729,13 @@ const handleGuardarCita = async (e) => {
         return;
     }
 
-    const pacienteDoc = await getDoc(doc(db, 'pacientes', nuevaCita.pacienteId));
-    if (!pacienteDoc.exists()) {
-        showToast('El paciente no está dado de alta en el sistema. Regístralo primero.', 'warning');
-        return;
-    }
-
+    setIsSavingCita(true);
     try {
-                setIsSavingCita(true);
+        const pacienteDoc = await getDoc(doc(db, 'pacientes', nuevaCita.pacienteId));
+        if (!pacienteDoc.exists()) {
+            showToast('El paciente no está dado de alta en el sistema. Regístralo primero.', 'warning');
+            return;
+        }
 
         const motivoData = catalogoMotivos.find((m) => m.id === nuevaCita.motivoId) || catalogoMotivos.find((m) => m.nombre === nuevaCita.motivo);
         const consultorioData = consultorios.find((c) => c.id === nuevaCita.consultorioId) || consultorios.find((c) => c.nombre === nuevaCita.consultorio);
@@ -1667,9 +1666,9 @@ const handleGuardarCita = async (e) => {
                               horariosBloqueadosPorDoctor.forEach((slotMap, docUid) => {
                                   const info = slotMap.get(slot.startTime);
                                   if (info) {
-                                      // Filtrar por consultorio seleccionado: si el bloqueo tiene consultorio
-                                      // y no coincide con el filtro seleccionado, se omite
-                                      if (selectedConsultorio !== 'Todos' && info.consultorioNombre && info.consultorioNombre !== selectedConsultorio) {
+                                      // Filtrar por consultorio seleccionado: solo mostrar bloqueos
+                                      // que coincidan con el consultorio del filtro (o ver todos)
+                                      if (selectedConsultorio !== 'Todos' && info.consultorioNombre !== selectedConsultorio) {
                                           return;
                                       }
                                       const docData = doctores.find(d => d.id === docUid);

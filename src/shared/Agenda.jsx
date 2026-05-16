@@ -193,6 +193,16 @@ const STYLES = `
     max-width: 180px;
   }
 
+  .badge-consultorio-name {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--blue-100); border: 1px solid var(--blue-300);
+    border-radius: 6px; padding: 2px 8px;
+    font-size: 11px; font-weight: 700; color: var(--blue-700);
+    letter-spacing: .03em; white-space: nowrap;
+    vertical-align: middle; margin-left: 8px;
+    box-shadow: 0 1px 3px rgba(0,119,182,.10);
+  }
+
   .status-online {
     display: flex; align-items: center; gap: 4px;
     font-size: 10px; font-weight: 600; color: var(--emerald-500);
@@ -1086,11 +1096,12 @@ const STYLES = `
   .wc-waiting { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
   .wc-done    { background: var(--slate-50); border-color: var(--slate-200); color: var(--slate-500); text-decoration: line-through; opacity: .8; }
 
-  /* ── DETAIL DRAWER ── */
+  /* ── DETAIL MODAL (Emergente) ── */
   .detail-overlay {
     position: fixed; inset: 0; z-index: 50;
-    display: flex; justify-content: flex-end;
+    display: flex; align-items: center; justify-content: center;
     pointer-events: none;
+    padding: 16px;
   }
   .detail-overlay.open { pointer-events: all; }
   .detail-backdrop {
@@ -1102,16 +1113,20 @@ const STYLES = `
 
   .detail-drawer {
     position: relative; z-index: 1;
-    width: 420px; background: white;
+    width: 100%; max-width: 440px; background: white;
+    max-height: calc(100vh - 32px);
+    border-radius: 24px;
     display: flex; flex-direction: column;
-    transform: translateX(100%);
-    transition: transform .35s cubic-bezier(.4,0,.2,1);
-    box-shadow: -8px 0 20px rgba(15,23,42,.08);
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    transition: all .35s cubic-bezier(.4,0,.2,1);
+    box-shadow: 0 25px 50px -12px rgba(15,23,42,.25);
+    overflow: hidden;
   }
-  .detail-overlay.open .detail-drawer { transform: translateX(0); }
+  .detail-overlay.open .detail-drawer { opacity: 1; transform: translateY(0) scale(1); }
 
   .drawer-hdr {
-    padding: 28px 28px 24px;
+    padding: 20px 24px 16px;
     border-bottom: 1px solid var(--slate-200);
     position: relative;
   }
@@ -1130,27 +1145,27 @@ const STYLES = `
   }
   .drawer-name {
     font-family: 'Sora', sans-serif;
-    font-size: 26px; font-weight: 800;
+    font-size: 20px; font-weight: 800;
     color: var(--slate-900); line-height: 1.15;
   }
 
   .vitals-grid {
     display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: 10px; padding: 20px 28px;
+    gap: 8px; padding: 16px 24px;
     border-bottom: 1px solid var(--slate-200);
     background: var(--slate-50);
   }
   .vital-card {
     background: white; border: 1px solid var(--slate-200);
-    border-radius: 10px; padding: 12px; text-align: center;
+    border-radius: 8px; padding: 10px; text-align: center;
   }
   .vital-card.alert { background: #fff1f2; border-color: #fecdd3; }
   .vital-label { font-size: 9px; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; }
   .vital-label.alert-label { color: var(--rose-500); }
-  .vital-value { font-family: 'Sora', sans-serif; font-size: 18px; font-weight: 800; color: var(--slate-900); }
+  .vital-value { font-family: 'Sora', sans-serif; font-size: 15px; font-weight: 800; color: var(--slate-900); }
   .vital-value.alert-value { color: #be123c; }
 
-  .drawer-body { flex: 1; padding: 20px 28px; }
+  .drawer-body { flex: 1; padding: 16px 24px; overflow-y: auto; }
 
   .locked-state {
     height: 100%; display: flex; flex-direction: column;
@@ -1166,15 +1181,15 @@ const STYLES = `
   .locked-title { font-family: 'Sora', sans-serif; font-size: 15px; font-weight: 700; color: var(--slate-800); }
   .locked-desc { font-size: 12px; color: var(--slate-500); }
 
-  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .action-card {
-    padding: 20px; border-radius: 10px; border: 1px solid;
-    display: flex; flex-direction: column; align-items: center; gap: 10px;
-    cursor: pointer; transition: all .15s; font-size: 13px; font-weight: 700;
+    padding: 14px; border-radius: 10px; border: 1px solid;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    cursor: pointer; transition: all .15s; font-size: 12px; font-weight: 700;
     background: white;
   }
   .action-card-icon {
-    width: 44px; height: 44px; border-radius: 10px;
+    width: 36px; height: 36px; border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
     transition: transform .15s;
   }
@@ -1789,7 +1804,9 @@ const Agenda = () => {
     [catalogoConsultorios, consultorioActivoId]
   );
 
-  const sucursalActivaLabel = sessionSucursal?.nombre || consultorioActivo?.sucursal || user?.sucursalActual || user?.sucursal || 'Central';
+  const sucursalActivaLabel = sessionSucursal?.nombre || user?.sucursalActual || user?.sucursal || 'Central';
+  // sessionConsultorio es la única fuente de verdad: se establece al iniciar sesión y elegir consultorio
+  const consultorioActivoLabel = (isDoctorRole ? sessionConsultorio?.nombre : (consultorioActivo?.nombre || '')) || '';
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -1881,8 +1898,8 @@ const Agenda = () => {
           fecha: fechaStr,
           slots: slotsKeys,
           slotsDetalle: nuevoSlots,
-          consultorioId: consultorioActivo?.id || '',
-          consultorioNombre: consultorioActivo?.nombre || '',
+          consultorioId: consultorioActivo?.id || user?.consultorioRecurrenteId || user?.consultorioActualId || user?.consultorioId || '',
+          consultorioNombre: consultorioActivo?.nombre || user?.consultorioRecurrente || user?.consultorioActual || user?.consultorio || '',
           actualizadoAt: serverTimestamp()
         });
       }
@@ -2712,7 +2729,7 @@ const Agenda = () => {
         consultorioDiasAtencion: consultorioSeleccionado?.diasAtencion || [],
         consultorioCapacidadSimultanea: Number(consultorioSeleccionado?.capacidadSimultanea || 1),
         sucursalId: sucursalSeleccionada?.id || sessionSucursal?.id || nuevaCita.sucursalId || '',
-        sucursal: sucursalSeleccionada?.nombre || sessionSucursal?.nombre || user.sucursal || "Central",
+        sucursal: sucursalSeleccionada?.nombre || sessionSucursal?.nombre || user.sucursal || '',
         sucursalUbicacion: sucursalSeleccionada?.ubicacion || '',
         sucursalHoraApertura: sucursalSeleccionada?.horaApertura || '08:00',
         sucursalHoraCierre: sucursalSeleccionada?.horaCierre || '20:00',
@@ -3386,9 +3403,18 @@ const Agenda = () => {
               {user?.nombre?.[0]?.toUpperCase() || 'D'}
             </div>
             <div className="user-info">
-              <div className="user-name">Hola, {user?.nombre?.split(' ')[0] || 'Doctor'}</div>
+              <div className="user-name">
+                Hola, {user?.nombre?.split(' ')[0] || 'Doctor'}
+                {isDoctorRole && consultorioActivoLabel && (
+                  <span className="badge-consultorio-name">
+                    <Stethoscope size={10}/> {consultorioActivoLabel}
+                  </span>
+                )}
+              </div>
               <div className="user-meta">
-                <span className="badge-branch"><MapPin size={8}/> {sucursalActivaLabel}</span>
+                <span className="badge-branch">
+                  <MapPin size={8}/> {sucursalActivaLabel}
+                </span>
                 <span className="status-online"><span className="dot-pulse"></span>En línea</span>
               </div>
             </div>
@@ -3405,23 +3431,6 @@ const Agenda = () => {
                 onClick={() => setVista('semanal')}
               ><CalendarDays size={13}/> Semana</button>
             </div>
-
-            {canRotateConsultorio && catalogoConsultorios.length > 0 && (
-              <>
-                <div className="divider-v"></div>
-                <select
-                  value={consultorioActivoId}
-                  onChange={(e) => handleCambiarConsultorioActivo(e.target.value)}
-                  disabled={guardandoConsultorio}
-                  className="header-select"
-                  title="Cambiar consultorio activo"
-                >
-                  {catalogoConsultorios.map((item) => (
-                    <option key={item.id} value={item.id}>{item.nombre}</option>
-                  ))}
-                </select>
-              </>
-            )}
           </div>
 
           <div className="header-right">
@@ -3546,6 +3555,17 @@ const Agenda = () => {
                   <div className="cal-weekday">
                     {currentDate.toLocaleDateString('es-MX', { weekday: 'long' })}
                   </div>
+                  {!isCurrentDateToday && (
+                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
+                      <button 
+                        onClick={() => setCurrentDate(new Date())}
+                        className="btn-primary"
+                        style={{ padding: '6px 14px', fontSize: '11px', borderRadius: '999px', gap: '6px', background: 'var(--blue-50)', color: 'var(--blue-700)', boxShadow: 'none', border: '1px solid var(--blue-200)' }}
+                      >
+                        <CalendarClock size={12} /> Ir a hoy
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Finance widget */}
@@ -3752,6 +3772,18 @@ const Agenda = () => {
                                         <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>{cita.paciente}</div>
                                         <div className="cita-tags">
                                           <span className="tag tag-motivo">{cita.motivo}</span>
+                                          {(() => {
+                                            const consultorioStr = cita.consultorioNombre || 
+                                              (typeof cita.consultorio === 'string' ? cita.consultorio : cita.consultorio?.nombre);
+                                            if (consultorioStr && consultorioStr.trim() !== '') {
+                                              return (
+                                                <span className="tag tag-consultorio" style={{ background: 'var(--slate-50)', color: 'var(--slate-500)', border: '1px solid var(--slate-200)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                                  <MapPin size={10}/> {consultorioStr}
+                                                </span>
+                                              );
+                                            }
+                                            return null;
+                                          })()}
                                           {isCancelada && <span className="tag" style={{ background: 'var(--red-100)', color: 'var(--red-700)' }}><XCircle size={10}/> Cancelada</span>}
                                           {slot.isCurrent && !isCancelada && <span className="tag tag-waiting"><Clock size={10}/> En horario</span>}
                                           {slot.isPast && !isDone && !isCancelada && <span className="tag tag-pending"><AlertTriangle size={10}/> Reprogramar</span>}

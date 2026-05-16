@@ -1,5 +1,6 @@
 // src/pages/doctor/ExpedienteClinico.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft, FileText, History, ClipboardList, Calendar,
   ChevronRight, Images, Send, FileOutput, FileSignature, PlusSquare,
@@ -927,6 +928,35 @@ const ExpedienteClinico = () => {
       return [...prev, nuevoEvento];
     });
 
+    // Registrar en historial_clinico cuando se genera desde enfermeria,
+    // para que aparezca en la linea de tiempo del expediente.
+    if (isEnfermeriaDocumentMode && nuevoEvento.archivoUrl) {
+      const eventoDocumental = {
+        tipo: nuevoEvento.tipo,
+        nombre: nuevoEvento.nombre,
+        formato: nuevoEvento.formato,
+        origen: nuevoEvento.origen,
+        plantillaId: nuevoEvento.plantillaId,
+        plantillaNombre: nuevoEvento.plantillaNombre,
+        archivoUrl: nuevoEvento.archivoUrl,
+        archivoPath: nuevoEvento.archivoPath,
+        generadoAt: nuevoEvento.generadoAt,
+        enfermeroNombre: user?.nombre || 'Enfermero/a'
+      };
+
+      addDoc(collection(db, 'historial_clinico'), {
+        pacienteId,
+        pacienteNombre,
+        medicoNombre: user?.nombre || 'Enfermero/a',
+        fecha: serverTimestamp(),
+        medicoId: auth.currentUser?.uid || 'anonimo',
+        citaId: citaId || null,
+        tipoNota: nuevoEvento.tipo === 'receta' ? 'Receta' : 'Documento',
+        documentosGenerados: [eventoDocumental],
+        origenRegistro: 'enfermeria_agenda'
+      }).catch((err) => console.warn('No se pudo registrar documento de enfermeria en historial_clinico:', err));
+    }
+
     if (tipo === 'receta' && pendingExitAfterRecipePrintRef.current) {
       pendingExitAfterRecipePrintRef.current = false;
       if (isEnfermeriaDocumentMode) {
@@ -1160,6 +1190,27 @@ const ExpedienteClinico = () => {
     }
     return () => clearInterval(interval);
   }, [isTimerActive]);
+
+  // --- RENOVACIÓN PERIÓDICA DEL TOKEN DE FIREBASE AUTH ---
+  // Previene que el token expire durante consultas largas (~1hr).
+  // Sin esto, al dar "Finalizar" con token expirado el guardado falla
+  // y Firebase dispara onAuthStateChanged(null) → redirect a login → pérdida de datos.
+  useEffect(() => {
+    const TOKEN_REFRESH_INTERVAL = 25 * 60 * 1000; // cada 25 minutos
+    const refreshToken = async () => {
+      try {
+        if (auth.currentUser) {
+          await auth.currentUser.getIdToken(true);
+        }
+      } catch (e) {
+        console.warn('[Expediente] No se pudo renovar token de sesión:', e.message);
+      }
+    };
+    // Renovar inmediatamente al montar y luego cada 25 min
+    refreshToken();
+    const interval = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, []);
 
   const formatTime = (s) => {
     const absSeconds = Math.abs(s);
@@ -1509,7 +1560,15 @@ const ExpedienteClinico = () => {
             id_receta: legacyId || generatedId,
             telefono: dataPx.telefonoMovil || '',
             grupo_sanguineo: dataPx.grupoSanguineo || '',
-            alergias_base: ''
+            alergias_base: '',
+            // Restaurar datos obstétricos y quirúrgicos persistidos
+            ...(dataPx.obstetriciaClinica ? {
+              fum: dataPx.obstetriciaClinica.fum || '',
+              fpp: dataPx.obstetriciaClinica.fpp || '',
+              sdg: dataPx.obstetriciaClinica.sdg || '',
+              es_embarazada: dataPx.obstetriciaClinica.es_embarazada || false,
+              requiere_cirugia: dataPx.obstetriciaClinica.requiere_cirugia || { general: false, ginecologica: false }
+            } : {})
           };
 
           if (hasMeaningfulClinicalData(dataPx.resumenClinico)) {
@@ -1533,6 +1592,7 @@ const ExpedienteClinico = () => {
           const antecedentesPersistidos = pickMostRecentClinicalSection(historialRows, 'antecedentes');
           const resumenPersistido = pickMostRecentClinicalSection(historialRows, 'resumen');
           const controlEmbarazoPersistido = pickMostRecentClinicalSection(historialRows, 'control_embarazo');
+          const pxInfoPersistida = pickMostRecentClinicalSection(historialRows, 'px_info');
 
           if (antecedentesPersistidos) {
             nuevosDatos.antecedentes = mergeClinicalSection(nuevosDatos.antecedentes, antecedentesPersistidos);
@@ -1542,6 +1602,17 @@ const ExpedienteClinico = () => {
           }
           if (controlEmbarazoPersistido) {
             nuevosDatos.control_embarazo = mergeClinicalSection(nuevosDatos.control_embarazo, controlEmbarazoPersistido);
+          }
+          // Recuperar datos obstétricos/qx desde historial solo si no vinieron del doc paciente
+          if (pxInfoPersistida && !nuevosDatos.px_info.fum && !nuevosDatos.px_info.es_embarazada) {
+            nuevosDatos.px_info = {
+              ...nuevosDatos.px_info,
+              fum: pxInfoPersistida.fum || '',
+              fpp: pxInfoPersistida.fpp || '',
+              sdg: pxInfoPersistida.sdg || '',
+              es_embarazada: pxInfoPersistida.es_embarazada || false,
+              requiere_cirugia: pxInfoPersistida.requiere_cirugia || nuevosDatos.px_info.requiere_cirugia || { general: false, ginecologica: false }
+            };
           }
         }
 
@@ -1889,6 +1960,24 @@ const ExpedienteClinico = () => {
         });
       } catch (e) {
         console.error("Error autoguardando en Firebase", e);
+        // Respaldo local silencioso: si Firestore falla (token expirado, red caída),
+        // guardar el draft en localStorage para no perder los últimos cambios.
+        try {
+          localStorage.setItem(
+            `autosave_draft_${citaId}`,
+            JSON.stringify({
+              consulta: expediente.consulta,
+              antecedentes: expediente.antecedentes,
+              resumen: expediente.resumen,
+              control_embarazo: expediente.control_embarazo,
+              meta: expediente.meta,
+              tempMed,
+              tempAlergia,
+              tempCirugia,
+              savedAt: Date.now()
+            })
+          );
+        } catch { /* localStorage lleno o no disponible */ }
       }
     }, 1500);
 
@@ -2130,6 +2219,26 @@ const ExpedienteClinico = () => {
     setLoading(true);
     setShowPrintAlert(false);
 
+    // Forzar renovación del token antes de cualquier escritura.
+    // Previene el bug donde un token expirado causa que todas las escrituras
+    // fallen y Firebase dispare signOut → redirect a login → pérdida de datos.
+    try {
+      if (auth.currentUser) {
+        await auth.currentUser.getIdToken(true);
+      } else {
+        showToast('Tu sesión expiró. Inicia sesión de nuevo para guardar.', 'error');
+        savingRef.current = false;
+        setLoading(false);
+        return;
+      }
+    } catch (tokenError) {
+      console.error('[Expediente] Token refresh falló antes de guardar:', tokenError);
+      showToast('No se pudo renovar la sesión. Verifica tu conexión e intenta de nuevo.', 'error');
+      savingRef.current = false;
+      setLoading(false);
+      return;
+    }
+
     try {
       const expedienteFinal = { ...expediente };
       const grupoSanguineoNormalizado = (expedienteFinal.px_info?.grupo_sanguineo || '').trim().toUpperCase();
@@ -2286,7 +2395,15 @@ const ExpedienteClinico = () => {
             resumenClinico: resumenClinicoSnapshot,
             antecedentesClinicos: antecedentesClinicosSnapshot,
             controlEmbarazoClinico: controlEmbarazoClinicoSnapshot,
-            notasPersonales: expedienteFinal.resumen?.notas_previas || ""
+            notasPersonales: expedienteFinal.resumen?.notas_previas || "",
+            obstetriciaClinica: {
+              fum: expedienteFinal.px_info?.fum || '',
+              fpp: expedienteFinal.px_info?.fpp || '',
+              sdg: expedienteFinal.px_info?.sdg || '',
+              es_embarazada: expedienteFinal.px_info?.es_embarazada || false,
+              requiere_cirugia: expedienteFinal.px_info?.requiere_cirugia || { general: false, ginecologica: false },
+              actualizadoAt: new Date().toISOString()
+            }
           });
           setPacienteData(prev => ({
             ...prev,
@@ -2539,12 +2656,38 @@ const ExpedienteClinico = () => {
       setTimeout(() => goBackOr(navigate, exitFallbackPath), 1500);
 
     } catch (e) {
-      console.error(e);
+      console.error('[Expediente] Error en executeSave:', e);
+
+      // Respaldo de emergencia en localStorage para no perder datos clínicos
+      try {
+        const emergencyKey = `emergency_draft_${pacienteId}_${citaId || 'nocita'}`;
+        const expedienteFallback = { ...expediente };
+        // Incluir temp forms pendientes
+        if (tempMed?.nombre?.trim()) {
+          const lista = expedienteFallback.consulta?.diagnostico?.tratamiento_lista || [];
+          expedienteFallback.consulta.diagnostico.tratamiento_lista = [...lista, tempMed];
+        }
+        localStorage.setItem(emergencyKey, JSON.stringify({
+          expediente: expedienteFallback,
+          pacienteId,
+          pacienteNombre,
+          citaId: citaId || null,
+          timestamp: new Date().toISOString(),
+          error: e.message || 'Error desconocido'
+        }));
+        console.warn('[Expediente] Datos guardados en localStorage como respaldo de emergencia:', emergencyKey);
+      } catch (lsErr) {
+        console.error('[Expediente] No se pudo guardar respaldo en localStorage:', lsErr);
+      }
+
       if (isEnfermeriaDocumentMode) {
         showToast("No se pudo guardar el expediente. Regresando a enfermería.", "info");
         setTimeout(() => goBackOr(navigate, exitFallbackPath), 800);
       } else {
-        showToast("Error al guardar el expediente", "error");
+        showToast(
+          "⚠️ Error al guardar. Se guardó una copia local de respaldo. No cierre esta ventana e intente de nuevo.",
+          "error"
+        );
       }
     }
     savingRef.current = false;
@@ -3247,6 +3390,31 @@ const ExpedienteClinico = () => {
                     {expediente.consulta.exploracion.antropometria.talla} cm
                   </span>
                 )}
+                {pacienteData?.sexo === 'Femenino' && expediente.px_info.es_embarazada && (
+                  <button
+                    onClick={() => setShowMenuQx(true)}
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-black bg-pink-50 text-pink-700 border-pink-300 uppercase tracking-wide hover:bg-pink-100 transition-all"
+                  >
+                    <Baby size={9} className="fill-pink-400" />
+                    {expediente.px_info.sdg ? expediente.px_info.sdg : 'EMBARAZADA'}
+                  </button>
+                )}
+                {expediente.px_info.requiere_cirugia?.general && (
+                  <button
+                    onClick={() => setShowMenuQx(true)}
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-black bg-amber-50 text-amber-700 border-amber-300 uppercase tracking-wide hover:bg-amber-100 transition-all"
+                  >
+                    <Scissors size={9} />QX Gral
+                  </button>
+                )}
+                {expediente.px_info.requiere_cirugia?.ginecologica && (
+                  <button
+                    onClick={() => setShowMenuQx(true)}
+                    className="inline-flex items-center gap-1 px-1.5 py-px rounded border text-[9px] font-black bg-amber-50 text-amber-700 border-amber-300 uppercase tracking-wide hover:bg-amber-100 transition-all"
+                  >
+                    <Scissors size={9} />QX Ginec
+                  </button>
+                )}
               </div>
             </div>
 
@@ -3278,77 +3446,124 @@ const ExpedienteClinico = () => {
           <div className="relative">
             <button
               onClick={() => setShowMenuQx(!showMenuQx)}
-              title="Estado del Paciente"
-              className={`p-2 rounded-lg border text-xs font-bold transition-all
-                ${(expediente.px_info.requiere_cirugia?.general || expediente.px_info.es_embarazada)
-                  ? 'bg-rose-50 text-rose-600 border-rose-200'
+              title="Requerimientos Qx / Estado Obstétrico"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-all
+                ${(expediente.px_info.requiere_cirugia?.general || expediente.px_info.requiere_cirugia?.ginecologica || expediente.px_info.es_embarazada)
+                  ? 'bg-rose-50 text-rose-600 border-rose-300 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
             >
-              {pacienteData.sexo === 'Femenino' ? <Baby size={16} /> : <Scissors size={16} />}
+              {pacienteData.sexo === 'Femenino' ? <Baby size={14} /> : <Scissors size={14} />}
+              <span className="hidden sm:inline text-[10px] font-black uppercase tracking-wide">
+                {pacienteData.sexo === 'Femenino' ? 'Obs / Qx' : 'Qx'}
+              </span>
             </button>
 
             {showMenuQx && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowMenuQx(false)}></div>
-                <div className="absolute top-full right-0 mt-3 w-80 bg-white rounded-2xl shadow-xl ring-1 ring-slate-900/5 z-20 overflow-hidden p-5 animate-in fade-in zoom-in-95 origin-top-right border border-slate-100">
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Requerimientos Qx</h4>
-                  <div className="space-y-3 mb-6">
-                    <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
-                      <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded"
-                        checked={expediente.px_info.requiere_cirugia?.general || false}
-                        onChange={(e) => updateCampo('px_info.requiere_cirugia.general', e.target.checked)} />
-                      <span className="text-sm font-bold text-slate-700">Cirugía General</span>
-                    </label>
-                    {pacienteData.sexo === 'Femenino' && (
-                      <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
-                        <input type="checkbox" className="w-4 h-4 accent-rose-500 rounded"
-                          checked={expediente.px_info.requiere_cirugia?.ginecologica || false}
-                          onChange={(e) => updateCampo('px_info.requiere_cirugia.ginecologica', e.target.checked)} />
-                        <span className="text-sm font-bold text-slate-700">Cirugía Ginecológica</span>
-                      </label>
-                    )}
+                <div className="absolute top-full right-0 mt-2 w-96 bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/8 z-20 overflow-hidden animate-in fade-in zoom-in-95 origin-top-right border border-slate-200">
+
+                  {/* Header del panel */}
+                  <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {pacienteData.sexo === 'Femenino' ? <Baby size={15} className="text-pink-500" /> : <Scissors size={15} className="text-amber-500" />}
+                      <span className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                        {pacienteData.sexo === 'Femenino' ? 'Estado Obstétrico y Quirúrgico' : 'Requerimientos Quirúrgicos'}
+                      </span>
+                    </div>
+                    <button onClick={() => setShowMenuQx(false)} className="p-1 rounded-full text-slate-400 hover:bg-slate-200 transition-colors">
+                      <X size={14} />
+                    </button>
                   </div>
 
-                  {pacienteData.sexo === 'Femenino' && (
-                    <>
-                      <div className="border-t border-slate-100 my-4"></div>
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Estado Obstétrico</h4>
+                  <div className="p-5 space-y-5">
 
-                      <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 mb-3">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase">F.U.M.</label>
-                        <input type="date" className="w-full mt-1 p-1.5 bg-white border border-slate-200 rounded text-sm font-bold text-slate-700"
-                          value={expediente.px_info.fum} onChange={(e) => updateCampo('px_info.fum', e.target.value)} />
-                      </div>
-
-                      <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-blue-50 mb-3">
-                        <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded"
-                          checked={expediente.px_info.es_embarazada || false}
-                          onChange={(e) => updateCampo('px_info.es_embarazada', e.target.checked)} />
-                        <span className="text-sm font-bold text-slate-700">¿Existe Embarazo?</span>
-                      </label>
-
-                      {expediente.px_info.es_embarazada && (
-                        <div className="space-y-3 animate-in fade-in">
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="bg-slate-50 p-2 rounded border border-slate-100">
-                              <span className="block text-[9px] font-bold text-slate-400">S.D.G.</span>
-                              <span className="text-xs font-bold text-blue-600">{expediente.px_info.sdg || '--'}</span>
-                            </div>
-                            <div className="bg-slate-50 p-2 rounded border border-slate-100">
-                              <span className="block text-[9px] font-bold text-slate-400">F.P.P.</span>
-                              <span className="text-xs font-bold text-blue-600">{expediente.px_info.fpp || '--'}</span>
-                            </div>
+                    {/* SECCIÓN: Requerimientos QX */}
+                    <div>
+                      <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        <Scissors size={10} /> Requerimientos Quirúrgicos
+                      </p>
+                      <div className="space-y-1.5">
+                        <label className="flex items-center gap-3 cursor-pointer px-3 py-2 rounded-xl border border-transparent hover:bg-amber-50 hover:border-amber-100 transition-all">
+                          <input type="checkbox" className="w-4 h-4 accent-amber-500 rounded flex-shrink-0"
+                            checked={expediente.px_info.requiere_cirugia?.general || false}
+                            onChange={(e) => updateCampo('px_info.requiere_cirugia.general', e.target.checked)} />
+                          <div>
+                            <span className="text-sm font-bold text-slate-700 block">Cirugía General</span>
+                            <span className="text-[10px] text-slate-400">Procedimiento quirúrgico no especializado</span>
                           </div>
-                          <button
-                            onClick={() => { setShowMenuQx(false); setShowEmbarazoModal(true); }}
-                            className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-blue-600 transition-all"
-                          >
-                            Detalles Control Embarazo
-                          </button>
+                        </label>
+                        {pacienteData.sexo === 'Femenino' && (
+                          <label className="flex items-center gap-3 cursor-pointer px-3 py-2 rounded-xl border border-transparent hover:bg-amber-50 hover:border-amber-100 transition-all">
+                            <input type="checkbox" className="w-4 h-4 accent-amber-500 rounded flex-shrink-0"
+                              checked={expediente.px_info.requiere_cirugia?.ginecologica || false}
+                              onChange={(e) => updateCampo('px_info.requiere_cirugia.ginecologica', e.target.checked)} />
+                            <div>
+                              <span className="text-sm font-bold text-slate-700 block">Cirugía Ginecológica</span>
+                              <span className="text-[10px] text-slate-400">Procedimiento ginecológico especializado</span>
+                            </div>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* SECCIÓN: Estado Obstétrico (solo Femenino) */}
+                    {pacienteData.sexo === 'Femenino' && (
+                      <>
+                        <div className="border-t border-slate-100"></div>
+                        <div>
+                          <p className="text-[10px] font-black text-pink-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                            <Baby size={10} /> Estado Obstétrico
+                          </p>
+
+                          {/* FUM */}
+                          <div className="mb-3">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Fecha de Última Menstruación (F.U.M.)</label>
+                            <input
+                              type="date"
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-pink-300 focus:border-pink-300"
+                              value={expediente.px_info.fum}
+                              onChange={(e) => updateCampo('px_info.fum', e.target.value)}
+                            />
+                          </div>
+
+                          {/* Checkbox embarazo */}
+                          <label className="flex items-center gap-3 cursor-pointer px-3 py-2.5 rounded-xl border border-transparent hover:bg-pink-50 hover:border-pink-100 transition-all mb-3">
+                            <input type="checkbox" className="w-4 h-4 accent-pink-600 rounded flex-shrink-0"
+                              checked={expediente.px_info.es_embarazada || false}
+                              onChange={(e) => updateCampo('px_info.es_embarazada', e.target.checked)} />
+                            <div>
+                              <span className="text-sm font-bold text-slate-700 block">¿Existe Embarazo?</span>
+                              <span className="text-[10px] text-slate-400">Marcar si la paciente está actualmente embarazada</span>
+                            </div>
+                          </label>
+
+                          {/* SDG + FPP (solo si embarazada) */}
+                          {expediente.px_info.es_embarazada && (
+                            <div className="space-y-3 animate-in fade-in">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 text-center">
+                                  <span className="block text-[9px] font-black text-pink-400 uppercase tracking-widest mb-1">Semanas de Gestación</span>
+                                  <span className="text-base font-black text-pink-700">{expediente.px_info.sdg || '--'}</span>
+                                </div>
+                                <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 text-center">
+                                  <span className="block text-[9px] font-black text-pink-400 uppercase tracking-widest mb-1">Fecha Probable de Parto</span>
+                                  <span className="text-xs font-black text-pink-700">{expediente.px_info.fpp || '--'}</span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => { setShowMenuQx(false); setShowEmbarazoModal(true); }}
+                                className="w-full py-2.5 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-xs font-bold shadow-md shadow-pink-600/20 transition-all flex items-center justify-center gap-2"
+                              >
+                                <Baby size={14} />
+                                Ver / Editar Control de Embarazo y Alto Riesgo
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -3982,6 +4197,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [showContentEditor, setShowContentEditor] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [contentEditorUnified, setContentEditorUnified] = useState(true);
   const [showEditMenu, setShowEditMenu] = useState(false);
   const [signatureDataUrl, setSignatureDataUrl] = useState('');
@@ -4498,38 +4714,74 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
     return items;
   };
 
+  /**
+   * Estimate visual weight of a text item.
+   * A single text line wraps at ~65 characters in a typical receta column.
+   * Each raw '\n' line is measured for wrap, then totalled.
+   * This is more accurate than just counting '\n' occurrences because
+   * long medication names (e.g. "Alin / Cryometasona 1 INYECTABLE 8mg/ 2ml")
+   * visually wrap to 2+ lines on the printed half-letter page.
+   */
+  const RECIPE_CHARS_PER_LINE = 80;
+  const estimateVisualWeight = (text = '') => {
+    if (!text) return 0;
+    const rawLines = text.split('\n');
+    let weight = 0;
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // Each raw line occupies at least 1 visual line, plus wraps
+      weight += Math.max(1, Math.ceil(trimmed.length / RECIPE_CHARS_PER_LINE));
+    }
+    return weight;
+  };
+
   const recipeContentPages = useMemo(() => {
     if (!isRecipeTemplate) return [null];
 
-    const fullContent = resolverCampo('consulta.receta_contenido') || '';
     const medsText = resolverCampo('consulta.medicamentos_texto') || '';
     const estText = resolverCampo('consulta.estudios_texto') || '';
     const procText = resolverCampo('consulta.procedimientos_texto') || '';
     const tratText = resolverCampo('consulta.tratamiento_texto') || '';
+    const indicacionesText = resolverCampo('consulta.indicaciones') || '';
+    const diagnosticoText = resolverCampo('consulta.diagnostico') || '';
 
-    const tag = (items, src) => items.map(t => ({ text: t, src, lines: t.split('\n').length }));
+    const tag = (items, src) => items.map(t => ({
+      text: t,
+      src,
+      lines: t.split('\n').length,
+      weight: estimateVisualWeight(t)
+    }));
     const medsItems = tag(splitRecipeTextIntoItems(medsText), 'meds');
     const estItems = tag(splitRecipeTextIntoItems(estText), 'est');
     const procItems = tag(splitRecipeTextIntoItems(procText), 'proc');
     const tratItems = splitRecipeTextIntoItems(tratText);
 
     const allItems = [...medsItems, ...estItems, ...procItems];
-    const totalLines = allItems.reduce((s, i) => s + i.lines, 0);
-    const MAX_LINES = 16;
+    const totalWeight = allItems.reduce((s, i) => s + i.weight, 0);
 
-    if (totalLines <= MAX_LINES || allItems.length === 0) return [null];
+    // Base budget: ~14 visual lines for content in a half-letter page.
+    // Header + vitals + patient data + footer + firma consume the rest.
+    // Subtract space for indicaciones/diagnostico if present (they also print in the body).
+    const BASE_MAX_WEIGHT = 14;
+    const indicacionesWeight = estimateVisualWeight(indicacionesText);
+    const diagnosticoWeight = estimateVisualWeight(diagnosticoText);
+    const reservedWeight = Math.min(3, indicacionesWeight + diagnosticoWeight);
+    const MAX_WEIGHT = Math.max(5, BASE_MAX_WEIGHT - reservedWeight);
+
+    if (totalWeight <= MAX_WEIGHT || allItems.length === 0) return [null];
 
     const pages = [];
     let page = [];
     let used = 0;
     for (const item of allItems) {
-      if (used + item.lines > MAX_LINES && page.length > 0) {
+      if (used + item.weight > MAX_WEIGHT && page.length > 0) {
         pages.push(page);
         page = [];
         used = 0;
       }
       page.push(item);
-      used += item.lines;
+      used += item.weight;
     }
     if (page.length > 0) pages.push(page);
 
@@ -4551,9 +4803,21 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
 
       return {
         'consulta.medicamentos_texto': medsPage,
+        'consulta.medicamentos_html': pm.length > 0
+          ? resolverCampo('consulta.medicamentos_html') || ''
+          : '',
         'consulta.estudios_texto': estPage,
+        'consulta.estudios_html': pe.length > 0
+          ? resolverCampo('consulta.estudios_html') || ''
+          : '',
         'consulta.procedimientos_texto': procPage,
+        'consulta.procedimientos_html': pp.length > 0
+          ? resolverCampo('consulta.procedimientos_html') || ''
+          : '',
         'consulta.tratamiento_texto': pageTrat,
+        'consulta.tratamiento_html': pageTrat
+          ? resolverCampo('consulta.tratamiento_html') || ''
+          : '',
         'consulta.receta_contenido': seccionesPage.join('\n'),
       };
     });
@@ -4603,7 +4867,7 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
               fontSize: `${docBaseFontPt}pt`,
               lineHeight: documentLineHeight,
               fontFamily: documentFontFamily,
-              overflow: 'visible',
+              overflow: isRecipeTemplate ? 'hidden' : 'visible',
               wordBreak: 'break-word',
               overflowWrap: 'anywhere',
               zIndex: 10
@@ -4926,6 +5190,8 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
 
   const openPrintWindow = async (mode = 'print') => {
     const originalTitle = document.title;
+    if (mode === 'print') setIsPrinting(true);
+
     try {
       await waitForPrintableAssets();
       const docBaseName = plantilla?.nombre || (isRecipeTemplate ? 'Receta medica' : 'Documento medico');
@@ -5001,9 +5267,11 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
         return;
       }
 
-      // Cambiar título del documento para evitar "about:blank" en headers del navegador
+      // mode === 'print': imprimimos contra el PrintPortal montado como hijo
+      // directo de <body>. El @media print oculta todo lo demás y deja al
+      // portal como único contenido en flujo de bloque normal, permitiendo
+      // que el navegador pagine libremente sin flex/fixed/overflow del modal.
       document.title = docNombre;
-
       document.documentElement.classList.add('printing-plantilla');
       document.body.classList.add('printing-plantilla');
       const cleanupPrintScope = () => {
@@ -5012,6 +5280,14 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
         document.title = originalTitle;
       };
       window.addEventListener('afterprint', cleanupPrintScope, { once: true });
+
+      // Doble rAF: garantiza que React aplicó la clase printing-plantilla y
+      // el navegador pintó el portal antes de abrir el diálogo de impresión.
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+
+      setIsPrinting(false);
       window.print();
       // Fallback: algunos navegadores no siempre disparan afterprint.
       setTimeout(cleanupPrintScope, 5000);
@@ -5021,80 +5297,73 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
       document.body.classList.remove('printing-plantilla');
       document.documentElement.classList.remove('printing-plantilla');
       document.title = originalTitle;
+      setIsPrinting(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-[220] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 print:bg-white print:p-0 tpl-print-overlay">
       <style>{`
-        html.printing-plantilla,
-        body.printing-plantilla {
-          background: #fff !important;
-        }
-
-        body.printing-plantilla * {
-          visibility: hidden !important;
-        }
-
-        body.printing-plantilla .tpl-print-overlay,
-        body.printing-plantilla .tpl-print-overlay * {
-          visibility: visible !important;
-        }
-
-        body.printing-plantilla .tpl-print-overlay {
-          position: fixed !important;
-          inset: 0 !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          display: block !important;
-          background: #fff !important;
-          z-index: 2147483647 !important;
+        /* --- Pantalla: portal de impresion oculto fuera del viewport --- */
+        .tpl-print-root {
+          position: absolute;
+          left: -99999px;
+          top: 0;
+          width: 0;
+          height: 0;
+          overflow: hidden;
+          pointer-events: none;
         }
 
         @media print {
-          @page { size: letter; margin: 0 !important; }
+          @page { size: letter; margin: 0; }
+
           html, body {
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
           }
-          .tpl-print-overlay {
-            position: static !important;
-            inset: auto !important;
-            background: #fff !important;
-            backdrop-filter: none !important;
-            padding: 0 !important;
-            display: block !important;
+
+          /* Imprimiendo: oculta todo hijo directo de <body> excepto el portal */
+          body.printing-plantilla > *:not(.tpl-print-root) {
+            display: none !important;
           }
-          .tpl-print-shell {
-            max-width: none !important;
+
+          /* El portal pasa a ser el unico contenido visible, en flujo normal */
+          body.printing-plantilla .tpl-print-root {
+            position: static !important;
+            left: auto !important;
+            top: auto !important;
             width: auto !important;
             height: auto !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-          }
-          .tpl-print-scroll {
-            padding: 0 !important;
             overflow: visible !important;
-            background: #fff !important;
+            display: block !important;
+            pointer-events: auto !important;
           }
-          .tpl-print-page {
+
+          /* Cada pagina del portal: tamano exacto (inline style gana), sin
+             borders ni shadows residuales. Saltos de pagina trivialmente
+             aplicados entre hermanos directos. */
+          body.printing-plantilla .tpl-print-page-out {
+            display: block !important;
             margin: 0 auto !important;
+            padding: 0 !important;
             border: 0 !important;
             box-shadow: none !important;
-            width: var(--tpl-print-width, 816px) !important;
-            height: var(--tpl-print-height, 1056px) !important;
             overflow: hidden !important;
+            page-break-inside: avoid;
+            break-inside: avoid;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .tpl-print-page + .tpl-print-page {
-            break-before: page !important;
-            page-break-before: always !important;
-            margin-top: 0 !important;
+
+          body.printing-plantilla .tpl-print-page-out + .tpl-print-page-out {
+            page-break-before: always;
+            break-before: page;
           }
-          .tpl-print-canvas {
+
+          /* El canvas interno conserva la escala definida por --tpl-print-scale */
+          body.printing-plantilla .tpl-print-root .tpl-print-canvas {
             transform: scale(var(--tpl-print-scale, 1)) !important;
             transform-origin: top left !important;
           }
@@ -5146,11 +5415,17 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
               )}
             </div>
 
-            <button onClick={() => setShowSignatureModal(true)} className="h-10 px-4 rounded-xl border border-blue-200 bg-blue-50/60 text-blue-700 text-sm font-semibold hover:bg-blue-50 inline-flex items-center gap-2 whitespace-nowrap shadow-sm transition-all">
-              <FileSignature size={15} /> {signatureDataUrl ? 'Editar firma' : 'Firmar'}
+
+            <button
+              onClick={() => openPrintWindow('print')}
+              disabled={isPrinting}
+              className={`h-10 px-4 rounded-xl text-white text-sm font-semibold transition-all whitespace-nowrap shadow-sm inline-flex items-center gap-2 ${isPrinting ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800'}`}
+            >
+              {isPrinting && (
+                <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              )}
+              {isPrinting ? 'Procesando…' : 'Imprimir'}
             </button>
-            <button onClick={() => openPrintWindow('pdf')} className="h-10 px-4 rounded-xl border border-blue-200 bg-blue-50/70 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition-all whitespace-nowrap shadow-sm inline-flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>PDF</button>
-            <button onClick={() => openPrintWindow('print')} className="h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-all whitespace-nowrap shadow-sm">Imprimir</button>
             <button onClick={onClose} className="h-10 w-10 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300 transition-all inline-flex items-center justify-center shadow-sm"><X size={18} /></button>
           </div>
         </div>
@@ -5437,6 +5712,112 @@ const PlantillaDinamicaModal = ({ plantilla, resolverTexto, resolverCampo, onClo
             </div>
           </div>
         </div>
+      )}
+
+      {/*
+        PrintPortal: copia "plana" de las paginas montada como hijo directo
+        de <body>. Solo visible en @media print. Permite que window.print()
+        pagine N hojas sin pelearse con el flex/fixed/overflow del modal.
+        Renderiza la misma estructura interna (transform: scale, position:
+        absolute) que el preview, por lo que la fidelidad es 1:1.
+      */}
+      {createPortal(
+        <div className="tpl-print-root" aria-hidden="true">
+          {isRecipeTemplate && recipeContentPages.length > 1 ? (
+            recipeContentPages.map((pageOverrides, rpIdx) => {
+              recipePageOverridesRef.current = pageOverrides;
+              const pageCanvas = renderTemplateCanvasContent();
+              recipePageOverridesRef.current = null;
+              return (
+                <div
+                  key={`print-out-${rpIdx}`}
+                  className="tpl-print-page-out"
+                  style={{
+                    width: finalPrintWidth,
+                    height: finalPrintHeight,
+                    '--tpl-print-scale': String(printScale),
+                    '--tpl-print-width': `${finalPrintWidth}px`,
+                    '--tpl-print-height': `${finalPrintHeight}px`,
+                    background: '#fff',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div className="relative w-full h-full bg-white">
+                    {[0, 1].map((copyIndex) => (
+                      <div
+                        key={`out_copy_${copyIndex}`}
+                        className="absolute left-0 w-full overflow-hidden"
+                        style={{
+                          top: copyIndex * HALF_LETTER_HEIGHT,
+                          height: HALF_LETTER_HEIGHT
+                        }}
+                      >
+                        <div
+                          className="absolute top-0 left-0"
+                          style={{
+                            width: pageWidth,
+                            height: pageHeight,
+                            transform: `scale(${recipeCopyScale})`,
+                            transformOrigin: 'top left'
+                          }}
+                        >
+                          {pageCanvas}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div
+              className="tpl-print-page-out"
+              style={{
+                width: finalPrintWidth,
+                height: finalPrintHeight,
+                '--tpl-print-scale': String(printScale),
+                '--tpl-print-width': `${finalPrintWidth}px`,
+                '--tpl-print-height': `${finalPrintHeight}px`,
+                background: '#fff',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
+              {isRecipeTemplate ? (
+                <div className="relative w-full h-full bg-white">
+                  {[0, 1].map((copyIndex) => (
+                    <div
+                      key={`out_copy_single_${copyIndex}`}
+                      className="absolute left-0 w-full overflow-hidden"
+                      style={{
+                        top: copyIndex * HALF_LETTER_HEIGHT,
+                        height: HALF_LETTER_HEIGHT
+                      }}
+                    >
+                      <div
+                        className="absolute top-0 left-0"
+                        style={{
+                          width: pageWidth,
+                          height: pageHeight,
+                          transform: `scale(${recipeCopyScale})`,
+                          transformOrigin: 'top left'
+                        }}
+                      >
+                        {renderTemplateCanvasContent()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="tpl-print-canvas relative w-full h-full">
+                  {renderTemplateCanvasContent()}
+                </div>
+              )}
+            </div>
+          )}
+        </div>,
+        document.body
       )}
     </div>
   );

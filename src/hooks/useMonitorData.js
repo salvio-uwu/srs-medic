@@ -2,8 +2,8 @@
 // Hook centralizado de datos para el Monitor de Actividad.
 // Suscribe a Firestore en tiempo real y calcula métricas por persona.
 
-import { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { collection, onSnapshot, query, where, Timestamp, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
@@ -161,8 +161,18 @@ function computeMetrics(user, citas, movimientos, triajes, notas, ordenes) {
     nombre:          user.nombre || 'Sin nombre',
     rol:             user.rol || '',
     grupo:           esMedico ? 'medico' : esEnf ? 'enfermeria' : 'admin',
-    // Ubicación: priorizar campos de sesión activa (nuevos) sobre campos legacy
-    sucursal:        user.sessionSucursalNombre  || user.sucursalActual  || user.sucursal  || '—',
+    // Ubicación: para médicos, derivar de sus citas del día (precisión histórica).
+    // Para el resto, usar campos de sesión activa.
+    sucursal:        (() => {
+      if (esMedico && misCitas.length > 0) {
+        // Obtener la sucursal más frecuente entre las citas del día
+        const freq = {};
+        misCitas.forEach(c => { if (c.sucursal) freq[c.sucursal] = (freq[c.sucursal] || 0) + 1; });
+        const top = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+        if (top.length > 0) return top[0][0];
+      }
+      return user.sessionSucursalNombre || user.sucursalActual || user.sucursal || '—';
+    })(),
     consultorio:     user.sessionConsultorioNombre || user.consultorioActual || user.consultorio || '—',
     statusOperativo: user.statusOperativo || (online ? 'activo' : 'offline'),
     online,
@@ -211,6 +221,7 @@ export function useMonitorData(selectedDate) {
   const [rawTriajes,    setRawTriajes]    = useState([]);
   const [rawNotas,      setRawNotas]      = useState([]);
   const [rawOrdenes,    setRawOrdenes]    = useState([]);
+  const [rawConsultorios,setRawConsultorios]=useState([]);
 
   const [loadingUsers,  setLoadingUsers]  = useState(true);
   const [loadingCitas,  setLoadingCitas]  = useState(true);
@@ -219,6 +230,21 @@ export function useMonitorData(selectedDate) {
   // Permite mostrar spinner completo solo al inicio, y un indicador
   // sutil en cambios de fecha (sin borrar el contenido visible).
   const [everLoaded,    setEverLoaded]    = useState(false);
+
+  // Ref para el guard de race condition: evita que snapshots de fechas antiguas
+  // sobreescriban datos después de que el usuario ya cambió a otra fecha.
+  const activeDateRef = useRef(selectedDate);
+
+  // ── Catálogo de consultorios (carga única) ──
+  // Se usa para poblar el filtro de consultorio en el Monitor sin depender
+  // de que existan citas hoy (evita que consultorios sin citas desaparezcan).
+  useEffect(() => {
+    getDocs(collection(db, 'catalogo_consultorios'))
+      .then(snap => setRawConsultorios(
+        snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => c.activo !== false)
+      ))
+      .catch(err => console.warn('[Monitor] consultorios catalog:', err));
+  }, []);
 
   // ── Listener de usuarios (permanente, sin filtro de fecha) ──
   useEffect(() => {
@@ -238,6 +264,10 @@ export function useMonitorData(selectedDate) {
   useEffect(() => {
     if (!selectedDate) return;
 
+    // Guard: descarta snapshots de fechas anteriores si el usuario cambia la fecha
+    // antes de que lleguen los datos del listener anterior.
+    activeDateRef.current = selectedDate;
+
     // Señalamos recarga sin borrar datos para evitar parpadeo.
     // Los nuevos listeners sobreescriben los datos cuando llegan.
     setLoadingCitas(true);
@@ -249,6 +279,7 @@ export function useMonitorData(selectedDate) {
     subs.push(onSnapshot(
       query(collection(db, 'citas'), where('fecha', '==', selectedDate)),
       snap => {
+        if (activeDateRef.current !== selectedDate) return;
         setRawCitas(snap.docs.map(d => {
           const r = d.data();
           return {
@@ -266,15 +297,18 @@ export function useMonitorData(selectedDate) {
     // Movimientos de consultorio
     subs.push(onSnapshot(
       query(collection(db, 'auditoria_movimientos_consultorio'), where('fechaString', '==', selectedDate)),
-      snap => setRawMovimientos(
-        snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .sort((a, b) => {
-            const da = a.fecha?.toDate?.() || new Date(a.fecha || 0);
-            const db2 = b.fecha?.toDate?.() || new Date(b.fecha || 0);
-            return db2 - da; // más reciente primero
-          })
-      ),
+      snap => {
+        if (activeDateRef.current !== selectedDate) return;
+        setRawMovimientos(
+          snap.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => {
+              const da = a.fecha?.toDate?.() || new Date(a.fecha || 0);
+              const db2 = b.fecha?.toDate?.() || new Date(b.fecha || 0);
+              return db2 - da; // más reciente primero
+            })
+        );
+      },
       noop
     ));
 
@@ -288,7 +322,10 @@ export function useMonitorData(selectedDate) {
         where('fecha', '>=', tsStart),
         where('fecha', '<=', tsEnd),
       ),
-      snap => setRawTriajes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      snap => {
+        if (activeDateRef.current !== selectedDate) return;
+        setRawTriajes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      },
       noop
     ));
 
@@ -299,14 +336,20 @@ export function useMonitorData(selectedDate) {
         where('fecha', '>=', tsStart),
         where('fecha', '<=', tsEnd),
       ),
-      snap => setRawNotas(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      snap => {
+        if (activeDateRef.current !== selectedDate) return;
+        setRawNotas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      },
       noop
     ));
 
     // Órdenes de enfermería
     subs.push(onSnapshot(
       query(collection(db, 'ordenes_enfermeria'), where('fecha', '==', selectedDate)),
-      snap => setRawOrdenes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      snap => {
+        if (activeDateRef.current !== selectedDate) return;
+        setRawOrdenes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      },
       noop
     ));
 
@@ -360,11 +403,12 @@ export function useMonitorData(selectedDate) {
 
   return {
     personal, medicos, enfermeria, adminStaff, enTurno,
-    citas:       rawCitas,
-    movimientos: rawMovimientos,
-    triajes:     rawTriajes,
-    notas:       rawNotas,
-    ordenes:     rawOrdenes,
+    citas:        rawCitas,
+    movimientos:  rawMovimientos,
+    triajes:      rawTriajes,
+    notas:        rawNotas,
+    ordenes:      rawOrdenes,
+    consultorios: rawConsultorios,
     kpis,
     sucursales,
     isLive,

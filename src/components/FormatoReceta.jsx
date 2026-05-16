@@ -1,18 +1,29 @@
 import React from 'react';
 
 /**
- * Peso en "líneas" de cada tipo de item.
- * Un medicamento con presentación + dosis ocupa ~3 líneas.
- * Un estudio simple ~1.5, un procedimiento con detalle ~2.5, una nota ~1.
- * El presupuesto total por media-página es ~12 líneas (espacio entre encabezado y footer).
+ * Estimate the visual weight of a receta item based on actual text content.
+ * A typical receta column fits ~60 characters per line.
+ * We compute wrap-aware weight instead of using fixed weights per type,
+ * because long medication names (e.g. "Alin / Cryometasona 1 INYECTABLE 8mg/ 2ml")
+ * can wrap to 2+ visual lines.
  */
-const LINE_WEIGHT = {
-  medicamento: 3,
-  estudio: 1.5,
-  procedimiento: 2.5,
-  nota: 1
+const CHARS_PER_VISUAL_LINE = 80;
+
+const estimateItemWeight = (item = {}) => {
+  const parts = [item.nombre, item.detalle, item.subtexto].filter(Boolean);
+  if (parts.length === 0) return 1;
+  let weight = 0;
+  for (const part of parts) {
+    weight += Math.max(1, Math.ceil(String(part).length / CHARS_PER_VISUAL_LINE));
+  }
+  return weight;
 };
-const MAX_LINES_PER_RECETA = 12;
+
+// Base budget per half-page receta.
+// Header (~4 lines) + Vitals sidebar + Footer (~3 lines) consume ~7 visual lines.
+// A half-letter page holds ~22 visual lines at 10-11px font.
+// Usable content area is therefore ~22-7 = ~15, minus some breathing room.
+const MAX_WEIGHT_PER_RECETA = 13;
 
 /**
  * Construye un arreglo plano de "items de receta" con tipo, texto principal y subtexto.
@@ -82,25 +93,36 @@ const buildRecetaItems = (expediente = {}) => {
 };
 
 /**
- * Distribuye items en páginas de receta según el peso de líneas.
- * Cuando agregar un item haría exceder MAX_LINES_PER_RECETA, se abre una nueva receta.
+ * Distribuye items en páginas de receta según el peso visual estimado.
+ * Cuando agregar un item haría exceder MAX_WEIGHT_PER_RECETA, se abre una nueva receta.
+ * Opcionalmente, diagnóstico e indicaciones reducen el presupuesto disponible.
  */
-const splitByWeight = (items = []) => {
+const splitByWeight = (items = [], expediente = {}) => {
   if (!Array.isArray(items) || items.length === 0) return [];
+
+  // Reduce budget if diagnostico/indicaciones also occupy space
+  const diagText = expediente?.consulta?.diagnostico?.enfermedad_actual || '';
+  const indicText = expediente?.consulta?.diagnostico?.indicaciones || '';
+  const reservedWeight = Math.min(3,
+    Math.max(0, Math.ceil(diagText.length / CHARS_PER_VISUAL_LINE))
+    + Math.max(0, Math.ceil(indicText.length / CHARS_PER_VISUAL_LINE))
+  );
+  const maxWeight = Math.max(5, MAX_WEIGHT_PER_RECETA - reservedWeight);
+
   const pages = [];
   let currentPage = [];
-  let usedLines = 0;
+  let usedWeight = 0;
 
   for (const item of items) {
-    const weight = LINE_WEIGHT[item.tipo] || 2;
+    const weight = estimateItemWeight(item);
     // Si agregar este item excede el límite Y ya hay algo en la página, cortar
-    if (usedLines + weight > MAX_LINES_PER_RECETA && currentPage.length > 0) {
+    if (usedWeight + weight > maxWeight && currentPage.length > 0) {
       pages.push(currentPage);
       currentPage = [];
-      usedLines = 0;
+      usedWeight = 0;
     }
     currentPage.push(item);
-    usedLines += weight;
+    usedWeight += weight;
   }
 
   if (currentPage.length > 0) pages.push(currentPage);
@@ -254,7 +276,7 @@ const RecetaIndividual = ({ expediente, doctor, sucursalInfo, items = [], startI
       </div>
 
       {/* --- CUERPO: VITALES (Izq) y RECETA (Der) --- */}
-      <div className="relative z-10 flex flex-1 gap-4 overflow-hidden">
+      <div className="relative z-10 flex flex-1 gap-4 overflow-hidden" style={{ maxHeight: 'calc(100% - 140px)' }}>
          {/* Columna Izquierda: Vitales + GRUPO SANGUÍNEO AGREGADO */}
          <div className="w-20 shrink-0 space-y-2 pt-1 border-r border-slate-200 pr-2">
           {vitals.map((s, i) => (
@@ -343,7 +365,7 @@ const FormatoReceta = ({ expediente, doctor, sucursalInfo }) => {
   if (!expediente || !doctor) return null;
 
    const allItems = buildRecetaItems(expediente);
-   const recetas = splitByWeight(allItems);
+   const recetas = splitByWeight(allItems, expediente);
 
    // Si no hay items, generar al menos una receta vacía para poder imprimir (ej: solo estudios verbales, indicaciones, etc.)
    if (recetas.length === 0) recetas.push([]);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Building2, Plus, Stethoscope, Tags, MapPin, GraduationCap, FlaskConical, Pencil, Save, X, Activity, Trash2, ArrowUp, ArrowDown, Settings2, ChevronRight, Clock, Phone, Globe, Users, Layers, Hash, DollarSign, Video, ToggleLeft, ToggleRight, GripVertical, Shield, Package, Beaker, ClipboardList, Syringe, Bandage, BookOpen, Upload, FileText, Link2, AlertTriangle } from 'lucide-react';
+import { Search, Building2, Plus, Stethoscope, Tags, MapPin, GraduationCap, FlaskConical, Pencil, Save, X, Activity, Trash2, ArrowUp, ArrowDown, Settings2, ChevronRight, Clock, Phone, Globe, Users, Layers, Hash, DollarSign, Video, ToggleLeft, ToggleRight, GripVertical, Shield, Package, Beaker, ClipboardList, Syringe, Bandage, BookOpen, Upload, FileText, Link2, AlertTriangle } from 'lucide-react';
 import { collection, addDoc, getDocs, orderBy, query, where, serverTimestamp, updateDoc, doc, deleteDoc, writeBatch, onSnapshot, setDoc } from 'firebase/firestore';
 import { db, storage } from '../../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -251,6 +251,76 @@ const CatalogosGlobales = () => {
   const [activeTab, setActiveTab] = useState('motivos');
   const [pill, setPill] = useState({ show: false, type: 'info', message: '' });
   const [confirmState, setConfirmState] = useState({ open: false, message: '', onAccept: null });
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [targetHighlightId, setTargetHighlightId] = useState(null);
+  const [searchSelectedIndex, setSearchSelectedIndex] = useState(-1);
+
+  const globalSearchResults = useMemo(() => {
+    if (!globalSearchQuery || globalSearchQuery.trim().length < 2) return [];
+    const q = globalSearchQuery.toLowerCase().trim();
+    const results = [];
+
+    motivos.forEach(m => {
+      if (m.nombre?.toLowerCase().includes(q) || m.area?.toLowerCase().includes(q)) {
+        results.push({ id: m.id, type: 'motivos', title: m.nombre, subtitle: `Motivo • ${m.area || 'General'}` });
+      }
+    });
+    consultorios.forEach(c => {
+      if (c.nombre?.toLowerCase().includes(q) || c.sucursal?.toLowerCase().includes(q)) {
+        results.push({ id: c.id, type: 'consultorios', title: c.nombre, subtitle: `Consultorio • Sucursal: ${c.sucursal || 'N/D'}` });
+      }
+    });
+    sucursales.forEach(s => {
+      if (s.nombre?.toLowerCase().includes(q) || s.ubicacion?.toLowerCase().includes(q)) {
+        results.push({ id: s.id, type: 'sucursales', title: s.nombre, subtitle: `Sucursal • ${s.ubicacion || 'Sin ubicación'}` });
+      }
+    });
+    especialidades.forEach(e => {
+      if (e.nombre?.toLowerCase().includes(q)) {
+        results.push({ id: e.id, type: 'especialidades', title: e.nombre, subtitle: 'Especialidad médica' });
+      }
+    });
+    sintomatologia.forEach(s => {
+      if (s.nombre?.toLowerCase().includes(q)) {
+        results.push({ id: s.id, type: 'sintomatologia', title: s.nombre, subtitle: 'Síntoma' });
+      }
+    });
+    estudios.forEach(e => {
+      if (e.descripcion?.toLowerCase().includes(q) || e.clave?.toLowerCase().includes(q)) {
+        results.push({ id: e.id, type: 'estudios', title: e.descripcion, subtitle: `Estudio • Clave: ${e.clave || 'S/C'}` });
+      }
+    });
+    procedimientos.forEach(p => {
+      if (p.nombre?.toLowerCase().includes(q) || p.clave?.toLowerCase().includes(q)) {
+        results.push({ id: p.id, type: 'procedimientos', title: p.nombre, subtitle: `Procedimiento • Clave: ${p.clave || 'S/C'}` });
+      }
+    });
+    referenciasMedicas.forEach(r => {
+      if (r.nombreMedico?.toLowerCase().includes(q) || r.especialidad?.toLowerCase().includes(q)) {
+        results.push({ id: r.id, type: 'referencias', title: r.nombreMedico, subtitle: `Referencia Médica • ${r.especialidad || 'N/D'}` });
+      }
+    });
+
+    return results.slice(0, 8); // Limit to top 8 results to avoid huge dropdowns
+  }, [globalSearchQuery, motivos, consultorios, sucursales, especialidades, sintomatologia, estudios, procedimientos, referenciasMedicas]);
+
+  const handleSelectSearchResult = (result) => {
+    setActiveTab(result.type);
+    setGlobalSearchQuery('');
+    setTargetHighlightId(result.id);
+    
+    // Smooth scroll and clear highlight after a delay
+    setTimeout(() => {
+      const el = document.getElementById(`catalog-item-${result.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+    
+    setTimeout(() => {
+      setTargetHighlightId(null);
+    }, 3000);
+  };
 
   const showPill = (message, type = 'info') => {
     setPill({ show: true, type, message });
@@ -1484,9 +1554,71 @@ const CatalogosGlobales = () => {
       )}
 
       <section className="rounded-3xl border border-slate-200 bg-white/95 shadow-sm px-4 py-4 lg:px-5 lg:py-5 space-y-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl lg:text-[28px] font-bold text-slate-900 leading-tight" style={{ fontFamily: 'Sora, sans-serif' }}>Catálogos Globales</h1>
-          <p className="text-slate-500 text-sm mt-1">Configuración maestra para agenda, consultorios y documentos clínicos.</p>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl lg:text-[28px] font-bold text-slate-900 leading-tight" style={{ fontFamily: 'Sora, sans-serif' }}>Catálogos Globales</h1>
+            <p className="text-slate-500 text-sm mt-1">Configuración maestra para agenda, consultorios y documentos clínicos.</p>
+          </div>
+          
+          <div className="relative w-full lg:w-80 shrink-0">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Buscar en todos los catálogos..."
+                value={globalSearchQuery}
+                onChange={(e) => {
+                  setGlobalSearchQuery(e.target.value);
+                  setSearchSelectedIndex(-1);
+                }}
+                onKeyDown={(e) => {
+                  if (globalSearchResults.length === 0) return;
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSearchSelectedIndex(prev => prev < globalSearchResults.length - 1 ? prev + 1 : prev);
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSearchSelectedIndex(prev => prev > 0 ? prev - 1 : 0);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (searchSelectedIndex >= 0 && searchSelectedIndex < globalSearchResults.length) {
+                      handleSelectSearchResult(globalSearchResults[searchSelectedIndex]);
+                    } else if (globalSearchResults.length > 0) {
+                      handleSelectSearchResult(globalSearchResults[0]);
+                    }
+                  }
+                }}
+                className="w-full bg-slate-50 border border-slate-200 text-sm text-slate-800 rounded-2xl pl-9 pr-8 py-2.5 outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-400/10 transition-all"
+              />
+              {globalSearchQuery && (
+                <button onClick={() => { setGlobalSearchQuery(''); setSearchSelectedIndex(-1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            
+            {globalSearchQuery && globalSearchResults.length > 0 && (
+              <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden max-h-[300px] overflow-y-auto">
+                <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/80 border-b border-slate-100 sticky top-0">Resultados globales</div>
+                {globalSearchResults.map((result, idx) => (
+                  <button
+                    key={`${result.type}-${result.id}`}
+                    onClick={() => handleSelectSearchResult(result)}
+                    onMouseEnter={() => setSearchSelectedIndex(idx)}
+                    className={`w-full text-left px-3 py-2.5 border-b border-slate-50 transition-colors flex flex-col items-start gap-0.5 ${searchSelectedIndex === idx ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
+                  >
+                    <span className={`text-sm font-semibold line-clamp-1 ${searchSelectedIndex === idx ? 'text-blue-700' : 'text-slate-800'}`}>{result.title}</span>
+                    <span className="text-[11px] font-medium text-slate-500">{result.subtitle}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {globalSearchQuery && globalSearchQuery.trim().length >= 2 && globalSearchResults.length === 0 && (
+              <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-2xl shadow-xl p-4 text-center">
+                <p className="text-sm text-slate-500">No se encontraron resultados.</p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto -mx-1 px-1">
@@ -1563,7 +1695,7 @@ const CatalogosGlobales = () => {
           <div className="space-y-2 max-h-[560px] overflow-auto pr-1">
             {motivos.length === 0 && <p className="text-sm text-slate-500 py-10 text-center">No hay motivos registrados.</p>}
             {motivos.map((item) => (
-              <div key={item.id} className="border border-slate-200 rounded-lg p-3 flex items-start justify-between gap-3">
+              <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg p-3 flex items-start justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                 <div>
                   <div className="text-sm font-bold text-slate-800">{item.nombre}</div>
                   <div className="text-xs text-slate-500">{formatMXN(item.precio)} • {item.area || item.categoria || 'General'} • {item.duracionMin || 20} min</div>
@@ -1712,7 +1844,7 @@ const CatalogosGlobales = () => {
                 : null;
 
               return (
-                <div key={item.id} className="border border-slate-200 rounded-lg p-3 flex items-start justify-between gap-3">
+                <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg p-3 flex items-start justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                   <div>
                     <div className="text-sm font-bold text-slate-800">{item.nombre}</div>
                     <div className="text-xs text-slate-500">{item.especialidad || 'General'} • {item.ubicacion || 'Sin ubicación'}</div>
@@ -1809,7 +1941,7 @@ const CatalogosGlobales = () => {
           <div className="space-y-2 max-h-[560px] overflow-auto pr-1">
             {sucursales.length === 0 && <p className="text-sm text-slate-500 py-10 text-center">No hay sucursales registradas.</p>}
             {sucursales.map((item) => (
-              <div key={item.id} className="border border-slate-200 rounded-lg p-3 flex items-start justify-between gap-3">
+              <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg p-3 flex items-start justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                 <div>
                   <div className="text-sm font-bold text-slate-800 inline-flex items-center gap-1"><MapPin size={13} /> {item.nombre}</div>
                   <div className="text-xs text-slate-500">{item.ubicacion || 'Sin ubicación'}</div>
@@ -1860,7 +1992,7 @@ const CatalogosGlobales = () => {
               <p className="text-sm text-slate-500 py-10 text-center">No hay especialidades registradas.</p>
             )}
             {especialidades.map((item) => (
-              <div key={item.id} className="border border-slate-200 rounded-lg px-4 py-2.5 flex items-center justify-between gap-3">
+              <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg px-4 py-2.5 flex items-center justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-center gap-2">
                   <GraduationCap size={14} className="text-slate-400 flex-shrink-0" />
                   <span className="text-sm font-semibold text-slate-800">{item.nombre}</span>
@@ -2078,7 +2210,7 @@ const CatalogosGlobales = () => {
                       </div>
                       <div className="space-y-1.5 ml-1">
                         {items.map((item, itemIndex) => (
-                          <div key={item.id} className="border border-slate-200 rounded-2xl p-2.5 flex items-center justify-between gap-3 bg-slate-50/50">
+                          <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-2xl p-2.5 flex items-center justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-slate-50/50'}`}>
                             <div className="min-w-0 flex items-center gap-2.5">
                               <span className="w-6 h-6 rounded-xl bg-white border border-slate-200 inline-flex items-center justify-center text-[10px] font-black text-slate-500 shrink-0">{itemIndex + 1}</span>
                               <div className="min-w-0">
@@ -2243,7 +2375,7 @@ const CatalogosGlobales = () => {
                   <p className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">Sin registros en esta categoria.</p>
                 )}
                 {group.items.map((item) => (
-                  <div key={item.id} className="border border-slate-200 rounded-lg p-3 flex items-start justify-between gap-3">
+                  <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg p-3 flex items-start justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                     <div>
                       <div className="text-sm font-bold text-slate-800">{item.nombre}</div>
                       <div className="text-xs text-slate-500">
@@ -2409,7 +2541,7 @@ const CatalogosGlobales = () => {
                   <p className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">Sin registros en esta categoria.</p>
                 )}
                 {group.items.map((item) => (
-                  <div key={item.id} className="border border-slate-200 rounded-lg p-3 flex items-start justify-between gap-3">
+                  <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-lg p-3 flex items-start justify-between gap-3 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                     <div>
                       <div className="text-sm font-bold text-slate-800">{item.descripcion}</div>
                       <div className="text-xs text-slate-500">
@@ -2539,7 +2671,7 @@ const CatalogosGlobales = () => {
               <p className="text-sm text-slate-500 py-10 text-center">No hay referencias médicas registradas.</p>
             )}
             {referenciasMedicas.map((item) => (
-              <div key={item.id} className="border border-slate-200 rounded-xl p-3.5 bg-white space-y-2">
+              <div id={"catalog-item-" + item.id} key={item.id} className={`border rounded-xl p-3.5 space-y-2 transition-all duration-300 ${targetHighlightId === item.id ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-400/20 shadow-sm scale-[1.01]' : 'border-slate-200 bg-white'}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">

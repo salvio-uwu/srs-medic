@@ -9,7 +9,7 @@ import {
 } from '@phosphor-icons/react';
 import {
   collection, query, where, orderBy, onSnapshot,
-  doc, updateDoc, addDoc, getDocs, serverTimestamp
+  doc, updateDoc, addDoc, getDocs, deleteDoc, serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -828,6 +828,232 @@ const ModalCancelar = ({ cita, motivo, onMotivoChange, onConfirm, onClose, loadi
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SUB-COMPONENTES — MODAL DUPLICADOS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ModalDuplicados = ({ onClose, showToast }) => {
+  const hoy = toDateStr(new Date());
+  const [desde, setDesde] = useState(hoy);
+  const [hasta, setHasta] = useState(hoy);
+  const [buscando, setBuscando] = useState(false);
+  const [grupos, setGrupos] = useState(null); // null = sin buscar, [] = sin dups
+  const [seleccionados, setSeleccionados] = useState(new Set()); // ids a eliminar
+  const [eliminando, setEliminando] = useState(false);
+
+  const buscar = async () => {
+    if (!desde || !hasta) return;
+    setBuscando(true);
+    setGrupos(null);
+    setSeleccionados(new Set());
+    try {
+      const q = query(
+        collection(db, 'citas'),
+        where('fechaHora', '>=', `${desde}T00:00`),
+        where('fechaHora', '<=', `${hasta}T23:59`),
+        orderBy('fechaHora', 'asc')
+      );
+      const snap = await getDocs(q);
+      const todas = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Agrupar por pacienteId+fecha+hora (o nombre+fecha+hora si no hay id)
+      const mapa = new Map();
+      for (const cita of todas) {
+        const key = `${cita.pacienteId || cita.paciente?.toLowerCase().trim()}__${cita.fecha || (cita.fechaHora || '').slice(0, 10)}__${cita.hora || (cita.fechaHora || '').slice(11, 16)}`;
+        if (!mapa.has(key)) mapa.set(key, []);
+        mapa.get(key).push(cita);
+      }
+
+      const dupGroups = [];
+      for (const [, citasGrupo] of mapa) {
+        if (citasGrupo.length > 1) {
+          // Ordenar por createdAt para que la más antigua quede primero (la conservamos)
+          citasGrupo.sort((a, b) => {
+            const ta = a.createdAt?.toMillis?.() ?? 0;
+            const tb = b.createdAt?.toMillis?.() ?? 0;
+            return ta - tb;
+          });
+          dupGroups.push(citasGrupo);
+        }
+      }
+
+      setGrupos(dupGroups);
+
+      // Pre-seleccionar todas las duplicadas excepto la primera de cada grupo
+      const presel = new Set();
+      for (const g of dupGroups) {
+        g.slice(1).forEach((c) => presel.add(c.id));
+      }
+      setSeleccionados(presel);
+    } catch (err) {
+      console.error(err);
+      showToast('Error al buscar duplicados', 'error');
+    } finally {
+      setBuscando(false);
+    }
+  };
+
+  const toggleCita = (id) => {
+    setSeleccionados((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const eliminar = async () => {
+    if (seleccionados.size === 0) return;
+    setEliminando(true);
+    let ok = 0, fail = 0;
+    for (const id of seleccionados) {
+      try {
+        await deleteDoc(doc(db, 'citas', id));
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    setEliminando(false);
+    if (fail === 0) {
+      showToast(`${ok} cita${ok !== 1 ? 's' : ''} eliminada${ok !== 1 ? 's' : ''} correctamente`);
+    } else {
+      showToast(`${ok} eliminadas, ${fail} con error`, 'error');
+    }
+    // Re-buscar para reflejar cambios
+    await buscar();
+  };
+
+  const LABEL = { fontSize: 11, fontWeight: 700, color: 'var(--slate-600)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 5 };
+
+  return (
+    <div className="aa-overlay aa-fade" style={{ zIndex: 950 }}>
+      <div className="aa-modal aa-pop" style={{ width: 640, maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+
+        {/* Header */}
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--slate-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Warning size={17} weight="fill" style={{ color: '#f97316' }} />
+            </div>
+            <div>
+              <div className="aa-sora" style={{ fontSize: 15, fontWeight: 800, color: 'var(--slate-900)' }}>Detectar citas duplicadas</div>
+              <div style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 1 }}>Busca por rango de fechas y elimina las copias</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="aa-ghost"
+            style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--slate-200)', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--slate-500)' }}>
+            <X size={13} />
+          </button>
+        </div>
+
+        {/* Filtro de fechas */}
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--slate-200)', display: 'flex', gap: 10, alignItems: 'flex-end', flexShrink: 0 }}>
+          <div style={{ flex: 1 }}>
+            <label style={LABEL}>Desde</label>
+            <input type="date" className="aa-input" value={desde} onChange={(e) => setDesde(e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={LABEL}>Hasta</label>
+            <input type="date" className="aa-input" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+          </div>
+          <button
+            onClick={buscar}
+            disabled={buscando || !desde || !hasta}
+            style={{ height: 36, padding: '0 18px', borderRadius: 9, border: 'none', background: 'var(--blue-600)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: buscando ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: buscando ? 0.7 : 1, flexShrink: 0 }}>
+            <MagnifyingGlass size={14} weight="bold" />
+            {buscando ? 'Buscando...' : 'Buscar'}
+          </button>
+        </div>
+
+        {/* Resultados */}
+        <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+          {grupos === null && !buscando && (
+            <div style={{ textAlign: 'center', color: 'var(--slate-400)', fontSize: 13, padding: '32px 0' }}>
+              Selecciona un rango de fechas y presiona Buscar
+            </div>
+          )}
+          {grupos !== null && grupos.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+              <CheckCircle size={32} weight="duotone" style={{ color: '#10b981', marginBottom: 8 }} />
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate-600)' }}>Sin duplicados en ese rango</div>
+            </div>
+          )}
+          {grupos !== null && grupos.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--slate-500)', marginBottom: 4 }}>
+                Se encontraron <strong style={{ color: 'var(--slate-800)' }}>{grupos.length} grupo{grupos.length !== 1 ? 's' : ''}</strong> con duplicados.
+                Las marcadas con <span style={{ color: '#f97316', fontWeight: 700 }}>×</span> se eliminarán. Desmarca las que quieras conservar.
+              </div>
+              {grupos.map((grupo, gi) => (
+                <div key={gi} style={{ border: '1px solid var(--slate-200)', borderRadius: 10, overflow: 'hidden' }}>
+                  {/* Cabecera del grupo */}
+                  <div style={{ padding: '8px 12px', background: '#fff7ed', borderBottom: '1px solid #fed7aa', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Warning size={13} weight="fill" style={{ color: '#f97316', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#9a3412' }}>
+                      {grupo[0].paciente} — {grupo[0].fecha} {grupo[0].hora}
+                    </span>
+                    <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: '#ea580c', background: '#ffedd5', padding: '2px 8px', borderRadius: 20 }}>
+                      {grupo.length} copias
+                    </span>
+                  </div>
+                  {/* Filas */}
+                  {grupo.map((cita, ci) => {
+                    const esEliminar = seleccionados.has(cita.id);
+                    const esOriginal = ci === 0;
+                    const tsMs = cita.createdAt?.toMillis?.();
+                    const tsStr = tsMs ? new Date(tsMs).toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+                    return (
+                      <label key={cita.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: esOriginal ? 'default' : 'pointer', background: esEliminar ? '#fff1f2' : '#fff', borderBottom: ci < grupo.length - 1 ? '1px solid var(--slate-100)' : 'none', opacity: esOriginal ? 0.7 : 1 }}>
+                        <input
+                          type="checkbox"
+                          checked={esEliminar}
+                          disabled={esOriginal}
+                          onChange={() => !esOriginal && toggleCita(cita.id)}
+                          style={{ accentColor: '#f43f5e', width: 15, height: 15, flexShrink: 0, cursor: esOriginal ? 'default' : 'pointer' }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            {esOriginal && <span style={{ fontSize: 10, fontWeight: 700, color: '#059669', background: '#ecfdf5', padding: '1px 7px', borderRadius: 20, border: '1px solid #a7f3d0' }}>CONSERVAR</span>}
+                            {esEliminar && <span style={{ fontSize: 10, fontWeight: 700, color: '#f43f5e', background: '#fff1f2', padding: '1px 7px', borderRadius: 20, border: '1px solid #fecdd3' }}>ELIMINAR</span>}
+                            <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>{cita.consultorio || '—'} · Dr. {cita.doctorAsignado || '—'} · {cita.motivo || '—'}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--slate-400)', marginTop: 2 }}>
+                            Creada: {tsStr} · ID: <span style={{ fontFamily: 'monospace' }}>{cita.id.slice(0, 10)}…</span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {grupos !== null && grupos.length > 0 && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--slate-200)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <span style={{ fontSize: 12, color: 'var(--slate-500)', flex: 1 }}>
+              {seleccionados.size} cita{seleccionados.size !== 1 ? 's' : ''} seleccionada{seleccionados.size !== 1 ? 's' : ''} para eliminar
+            </span>
+            <button onClick={onClose} className="aa-ghost"
+              style={{ height: 36, padding: '0 16px', borderRadius: 9, border: '1px solid var(--slate-200)', background: 'var(--surface)', color: 'var(--slate-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              Cerrar
+            </button>
+            <button
+              onClick={eliminar}
+              disabled={seleccionados.size === 0 || eliminando}
+              style={{ height: 36, padding: '0 18px', borderRadius: 9, border: 'none', background: seleccionados.size === 0 || eliminando ? 'var(--slate-200)' : '#f43f5e', color: seleccionados.size === 0 || eliminando ? 'var(--slate-400)' : '#fff', fontSize: 13, fontWeight: 700, cursor: seleccionados.size === 0 || eliminando ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Trash size={14} weight="bold" />
+              {eliminando ? 'Eliminando...' : `Eliminar ${seleccionados.size > 0 ? seleccionados.size : ''}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENTES — MODAL CREAR CITA
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -914,7 +1140,9 @@ const ModalCrearCita = ({ nuevaCita, setNuevaCita, doctores, consultorios, catal
                   fld('consultorioId', e.target.value);
                   fld('consultorio', c?.nombre || '');
                   fld('sucursalId', c?.sucursalId || '');
-                  fld('sucursal', c?.sucursal || '');
+                  // Usar c.sucursal si existe; si no, buscar en el catálogo por sucursalId
+                  const sucNombre = c?.sucursal || catalogoSucursales.find((s) => s.id === c?.sucursalId)?.nombre || '';
+                  fld('sucursal', sucNombre);
                 }}>
                 <option value="">Seleccionar consultorio...</option>
                 {consultorios.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -1001,6 +1229,7 @@ const AgendaAdmin = () => {
   const [doctores, setDoctores] = useState([]);
   const [consultorios, setConsultorios] = useState([]);
   const [catalogoMotivos, setCatalogoMotivos] = useState([]);
+  const [catalogoSucursales, setCatalogoSucursales] = useState([]);
   const [todosLosPacientes, setTodosLosPacientes] = useState([]);
 
   // ── UI ────────────────────────────────────────────────────────────────
@@ -1024,6 +1253,7 @@ const AgendaAdmin = () => {
 
   // Modales
   const [showCrearModal, setShowCrearModal] = useState(false);
+  const [showDuplicadosModal, setShowDuplicadosModal] = useState(false);
   const [showCancelarModal, setShowCancelarModal] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
@@ -1093,6 +1323,9 @@ const AgendaAdmin = () => {
       .catch(() => {});
     getDocs(query(collection(db, 'catalogo_motivos_consulta'), orderBy('nombre', 'asc')))
       .then((snap) => setCatalogoMotivos(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((m) => m.activo !== false)))
+      .catch(() => {});
+    getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc')))
+      .then((snap) => setCatalogoSucursales(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => s.activo !== false)))
       .catch(() => {});
     getDocs(collection(db, 'pacientes'))
       .then((snap) => setTodosLosPacientes(snap.docs.map((d) => ({ id: d.id, ...d.data() }))))
@@ -1235,7 +1468,7 @@ const AgendaAdmin = () => {
         doctorUid: nuevaCita.doctorUid,
         consultorio: cons?.nombre || nuevaCita.consultorio,
         consultorioId: nuevaCita.consultorioId,
-        sucursal: cons?.sucursal || '',
+        sucursal: cons?.sucursal || catalogoSucursales.find((s) => s.id === cons?.sucursalId)?.nombre || '',
         sucursalId: cons?.sucursalId || '',
         estado: 'pendiente',
         tipoConsulta: nuevaCita.tipoConsulta,
@@ -1257,7 +1490,7 @@ const AgendaAdmin = () => {
     }
     setSavingCita(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nuevaCita, catalogoMotivos, consultorios, user, showToast]);
+  }, [nuevaCita, catalogoMotivos, consultorios, catalogoSucursales, user, showToast]);
 
   const openCancelModal = useCallback((cita) => {
     setCancelTarget(cita);
@@ -1378,6 +1611,17 @@ const AgendaAdmin = () => {
           Auditoría
         </button>
 
+        {/* Detectar duplicados */}
+        <button onClick={() => setShowDuplicadosModal(true)} style={{
+          height: 36, padding: '0 14px', borderRadius: 9,
+          border: '1px solid #fed7aa', background: '#fff7ed',
+          color: '#ea580c', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 7
+        }}>
+          <Warning size={14} weight="fill" />
+          Duplicados
+        </button>
+
         {/* Nueva cita */}
         <button onClick={() => setShowCrearModal(true)} style={{
           height: 36, padding: '0 16px', borderRadius: 9,
@@ -1496,6 +1740,14 @@ const AgendaAdmin = () => {
           onCancelOpen={openCancelModal}
           actionLoading={actionLoading}
           currentTime={currentTime}
+        />
+      )}
+
+      {/* ── MODAL DUPLICADOS ──────────────────────────────────────────── */}
+      {showDuplicadosModal && (
+        <ModalDuplicados
+          onClose={() => setShowDuplicadosModal(false)}
+          showToast={showToast}
         />
       )}
 

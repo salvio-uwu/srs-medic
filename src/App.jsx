@@ -821,13 +821,34 @@ const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
 };
 
 const UpdateBanner = () => {
-  const { updateAvailable } = useAppVersion();
+  const { updateAvailable, resetUpdateStatus } = useAppVersion();
   if (!updateAvailable) return null;
+  
+  const handleUpdate = () => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        registrations.forEach(registration => {
+          registration.unregister();
+        });
+      });
+    }
+    
+    if ('caches' in window) {
+      caches.keys().then(names => {
+        names.forEach(name => {
+          caches.delete(name);
+        });
+      });
+    }
+    
+    window.location.replace(window.location.origin + window.location.pathname);
+  };
+
   return (
     <div className="fixed top-0 left-0 right-0 z-[9999] bg-blue-600 text-white text-sm font-semibold flex items-center justify-between px-4 py-2 shadow-lg">
       <span>Hay una actualización disponible.</span>
       <button
-        onClick={() => window.location.reload()}
+        onClick={handleUpdate}
         className="ml-4 bg-white text-blue-700 text-xs font-bold px-3 py-1 rounded-lg hover:bg-blue-50 transition-colors"
       >
         Actualizar ahora

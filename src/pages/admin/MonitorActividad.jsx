@@ -1,6 +1,6 @@
 // src/pages/admin/MonitorActividad.jsx
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Download, ChevronLeft, ChevronRight, Search, X,
   Clock, AlertCircle, ChevronDown, ChevronUp,
@@ -222,7 +222,7 @@ function AvatarCell({ name, sub, color = 'bg-blue-50 text-blue-700' }) {
 }
 
 function N({ v, color = 'text-slate-700' }) {
-  if (!v) return <span className="text-slate-200 text-xs">—</span>;
+  if (v == null || v === '') return <span className="text-slate-200 text-xs">—</span>;
   return <span className={`text-sm font-bold tabular-nums ${color}`}>{v}</span>;
 }
 
@@ -474,7 +474,7 @@ function DoctorDetailPanel({ doctor, citas, onClose }) {
 
 // ─── Tab: Dashboard ───────────────────────────────────────────────────────────
 
-function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, triajes, notas, ordenes, kpis, isToday, fSucursal, onFSucursal, selectedDate }) {
+function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, triajes, notas, ordenes, consultorios, kpis, isToday, fSucursal, onFSucursal, selectedDate }) {
   // ── Filtros ──
   const [fMedico, setFMedico] = useState('all');
   const [fConsultorio, setFConsultorio] = useState('all');
@@ -488,11 +488,31 @@ function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, tri
     return [...s].sort();
   }, [citas]);
 
+  // Consultorios: cascada desde el filtro de sucursal activo.
+  // Fuente primaria: catálogo (incluye consultorios aunque no tengan citas hoy).
+  // Fuente secundaria: citas del día (captura nombres que no coincidan exactamente
+  // con el catálogo, por consistencia).
   const consultoriosOpts = useMemo(() => {
     const s = new Set();
-    citas.forEach(c => { const v = c.consultorioNombre || c.consultorio; if (v && v !== '—') s.add(v); });
+    // Catálogo: filtra por sucursal si está seleccionada
+    if (consultorios.length > 0) {
+      const src = fSucursal !== 'all'
+        ? consultorios.filter(c => c.sucursal === fSucursal || c.sucursalNombre === fSucursal)
+        : consultorios;
+      src.forEach(c => { if (c.nombre) s.add(c.nombre); });
+    }
+    // Suplemento de citas: agrega cualquier nombre que no esté en el catálogo
+    const citasSrc = fSucursal !== 'all'
+      ? citas.filter(c => c.sucursal === fSucursal)
+      : citas;
+    citasSrc.forEach(c => { const v = c.consultorioNombre || c.consultorio; if (v && v !== '—') s.add(v); });
     return [...s].sort();
-  }, [citas]);
+  }, [consultorios, citas, fSucursal]);
+
+  // Reset consultorio al cambiar sucursal para evitar combinaciones vacías
+  useEffect(() => {
+    setFConsultorio('all');
+  }, [fSucursal]);
 
   const hasFilter = fMedico !== 'all' || fSucursal !== 'all' || fConsultorio !== 'all';
 
@@ -555,8 +575,8 @@ function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, tri
     detailUid ? medicos.find(m => m.uid === detailUid) : null,
   [detailUid, medicos]);
   const detailCitas = useMemo(() =>
-    detailDoctor ? citas.filter(c => c.doctorUid === detailDoctor.uid) : [],
-  [detailDoctor, citas]);
+    detailDoctor ? citasFilt.filter(c => c.doctorUid === detailDoctor.uid) : [],
+  [detailDoctor, citasFilt]);
 
   // ── Charts (usando datos filtrados) ──
 
@@ -646,12 +666,12 @@ function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, tri
   // 8. Score ranking (el score usa fórmula compuesta compleja; se mantiene del pre-cálculo
   // pero solo muestra médicos presentes en citasFilt, lo cual es una buena aproximación)
   const scoreRanking = useMemo(() =>
-    medicosFilt.filter(m => m.score > 0).sort((a,b) => b.score - a.score).slice(0, 10)
+    medicosFiltMetrics.filter(m => m.score > 0).sort((a,b) => b.score - a.score).slice(0, 10)
       .map(m => ({
         name: shortName(m.nombre), score: m.score, uid: m.uid,
         fill: m.score >= 80 ? C.emerald : m.score >= 40 ? C.blue : m.score >= 15 ? C.amber : C.rose,
       })),
-  [medicosFilt]);
+  [medicosFiltMetrics]);
 
   // 9. Actividad enfermería
   const enfActividad = useMemo(() =>
@@ -1145,7 +1165,7 @@ const COLS_MEDICOS = [
   { label: 'Score',            get: r => r.score },
 ];
 
-function TabMedicos({ medicos, sucursales, selectedDate }) {
+function TabMedicos({ medicos, citas, sucursales, selectedDate }) {
   const [search, setSearch] = useState('');
   const [suc, setSuc] = useState('todas');
   const [est, setEst] = useState('todos');
@@ -1153,15 +1173,46 @@ function TabMedicos({ medicos, sucursales, selectedDate }) {
   const onSort = useCallback(k =>
     setSort(p => p.key === k ? { key: k, dir: p.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: 'desc' }), []);
 
+  // Recalculate per-doctor metrics using only citas from the selected sucursal.
+  // When suc === 'todas', fall back to the pre-computed values (no cost).
+  const medicosMetrics = useMemo(() => {
+    if (suc === 'todas') return medicos;
+    return medicos.map(m => {
+      const citasSuc = citas.filter(c => c.doctorUid === m.uid && c.sucursal === suc);
+      if (citasSuc.length === 0) return null; // exclude doctors without citas in this sucursal
+      const realizadas = citasSuc.filter(c => isRealizadaEstado(c.estado));
+      const canceladas = citasSuc.filter(c => isCanceladaEstado(c.estado));
+      const ingresos   = realizadas.reduce((s, c) => s + getIngreso(c), 0);
+      const tasa       = Math.round((realizadas.length / citasSuc.length) * 100);
+      const aphora     = m.minutos >= 30
+        ? parseFloat((realizadas.length / (m.minutos / 60)).toFixed(1))
+        : null;
+      return {
+        ...m,
+        asignadas:        citasSuc.length,
+        realizadas:       realizadas.length,
+        canceladas:       canceladas.length,
+        enConsulta:       citasSuc.filter(c => c.estado === 'en_consulta').length,
+        enEspera:         citasSuc.filter(c => c.estado === 'en_espera' || c.estado === 'en_triage').length,
+        ingresos,
+        tasaCumplimiento: tasa,
+        atencionesPorHora: aphora,
+        primeraVez:       citasSuc.filter(c => c.tipoConsulta === 'primera_vez').length,
+        subsecuente:      citasSuc.filter(c => c.tipoConsulta === 'subsecuente').length,
+        urgencia:         citasSuc.filter(c => c.tipoConsulta === 'urgencia').length,
+        teleconsultas:    citasSuc.filter(c => c.esTeleconsulta).length,
+      };
+    }).filter(Boolean);
+  }, [medicos, citas, suc]);
+
   const filtered = useMemo(() => {
     const term = search.toLowerCase().trim();
-    let d = medicos;
-    if (suc !== 'todas')    d = d.filter(r => r.sucursal === suc);
+    let d = medicosMetrics;
     if (est === 'activos')  d = d.filter(r => r.online);
     if (est === 'offline')  d = d.filter(r => !r.online);
     if (term) d = d.filter(r => `${r.nombre} ${r.sucursal} ${r.consultorio}`.toLowerCase().includes(term));
     return sortData(d, sort.key, sort.dir);
-  }, [medicos, search, suc, est, sort]);
+  }, [medicosMetrics, search, est, sort]);
 
   return (
     <div>
@@ -1535,6 +1586,7 @@ const MonitorActividad = () => {
   const {
     medicos, enfermeria, adminStaff,
     citas, movimientos, triajes, notas, ordenes,
+    consultorios: catalogoConsultorios,
     kpis, sucursales,
     isLive, loading, refreshing,
   } = useMonitorData(selectedDate);
@@ -1696,12 +1748,13 @@ const MonitorActividad = () => {
                 <TabDashboard
                   medicos={medicos} enfermeria={enfermeria} adminStaff={adminStaff}
                   citas={citas} movimientos={movimientos} triajes={triajes} notas={notas} ordenes={ordenes}
+                  consultorios={catalogoConsultorios}
                   kpis={kpis} isToday={isToday}
                   fSucursal={fSucursal} onFSucursal={setFSucursal}
                   selectedDate={selectedDate}
                 />
               )}
-              {activeTab === 'medicos'    && <TabMedicos    medicos={medicos}       sucursales={sucursales} selectedDate={selectedDate} />}
+              {activeTab === 'medicos'    && <TabMedicos    medicos={medicos} citas={citas}  sucursales={sucursales} selectedDate={selectedDate} />}
               {activeTab === 'enfermeria' && <TabEnfermeria enfermeria={enfermeria} sucursales={sucursales} selectedDate={selectedDate} />}
               {activeTab === 'admin'      && <TabAdmin      adminStaff={adminStaff} sucursales={sucursales} selectedDate={selectedDate} />}
               {activeTab === 'rotaciones' && <TabRotaciones movimientos={movimientos}               selectedDate={selectedDate} />}

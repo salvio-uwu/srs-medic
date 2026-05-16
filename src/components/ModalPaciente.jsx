@@ -198,6 +198,10 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
             showToast('La fecha de nacimiento es obligatoria para crear un paciente nuevo.', 'error');
             return;
         }
+        if (!formData.sexo) {
+            showToast('El sexo del paciente es obligatorio.', 'error');
+            return;
+        }
     
     setLoading(true);
     try {
@@ -414,8 +418,8 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                                     })()}
                                 </div>
                                 <div>
-                                    <label className="label-style">Sexo</label>
-                                    <select className="input-style" value={formData.sexo} onChange={e => setFormData({...formData, sexo: e.target.value})}>
+                                    <label className="label-style">Sexo *</label>
+                                    <select className="input-style" required value={formData.sexo} onChange={e => setFormData({...formData, sexo: e.target.value})}>
                                         <option value="">Seleccionar</option><option value="Femenino">Femenino</option><option value="Masculino">Masculino</option>
                                     </select>
                                 </div>

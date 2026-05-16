@@ -6,15 +6,26 @@ const CURRENT_VERSION = __BUILD_VERSION__;
 export const useAppVersion = () => {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const intervalRef = useRef(null);
+  const hasUpdatedRef = useRef(false);
 
   const checkVersion = async () => {
+    // Si ya se detectó una actualización, no seguir verificando
+    if (hasUpdatedRef.current) {
+      clearInterval(intervalRef.current);
+      return;
+    }
+
     try {
       const res = await fetch(`/version.json?t=${Date.now()}`);
       if (!res.ok) return;
       const { v } = await res.json();
       if (v && v !== CURRENT_VERSION) {
         setUpdateAvailable(true);
-        clearInterval(intervalRef.current); // dejar de revisar, ya se detectó
+        hasUpdatedRef.current = true;
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
       }
     } catch {
       // silencioso — sin conexión o error de red
@@ -22,14 +33,25 @@ export const useAppVersion = () => {
   };
 
   useEffect(() => {
-    // Primera verificación a los 60 segundos (no inmediata al cargar)
-    const initial = setTimeout(checkVersion, 60_000);
+    // Verificar inmediatamente al cargar
+    checkVersion();
+    
+    // Configurar intervalo de verificación
     intervalRef.current = setInterval(checkVersion, POLL_INTERVAL);
+    
     return () => {
-      clearTimeout(initial);
-      clearInterval(intervalRef.current);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
   }, []);
 
-  return { updateAvailable };
+  // Función para resetear el estado de actualización (opcional)
+  const resetUpdateStatus = () => {
+    setUpdateAvailable(false);
+    hasUpdatedRef.current = false;
+  };
+
+  return { updateAvailable, resetUpdateStatus };
 };
