@@ -418,7 +418,7 @@ const NAV = [
   { label: 'Dashboard',   icon: Activity,       to: '/admin/dashboard' },
   { label: 'Personal',    icon: UserPlus,        to: '/admin/usuarios' },
   { label: 'Pacientes',   icon: User,            to: '/pacientes' },
-  { label: 'Depuración',  icon: FlaskConical,    to: '/admin/depuracion' },
+  { label: 'Auditoría',   icon: FlaskConical,    to: '/admin/depuracion' },
   { label: 'Migracion',   icon: Building2,       to: '/admin/migracion' },
   { label: 'Inventario',  icon: Package,         to: '/admin/inventario' },
   { label: 'Catálogos',   icon: Tags,            to: '/admin/catalogos' },

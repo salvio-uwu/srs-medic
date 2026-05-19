@@ -1,4 +1,4 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 const AUDIT_COLLECTION = 'auditoria_expediente_clinico';
@@ -106,7 +106,7 @@ export const validateClinicalRecord = (expediente = {}, context = {}) => {
   };
 };
 
-export const createClinicalAuditRecord = async ({
+export const createClinicalAuditRecord = ({
   pacienteId,
   pacienteNombre,
   historialId,
@@ -115,7 +115,7 @@ export const createClinicalAuditRecord = async ({
   medicoNombre,
   validation,
   expediente = {}
-}) => {
+}, batch = null) => {
   if (!pacienteId || !historialId || !validation) return null;
 
   const payload = {
@@ -134,6 +134,12 @@ export const createClinicalAuditRecord = async ({
     },
     createdAt: serverTimestamp()
   };
+
+  if (batch) {
+    const ref = doc(collection(db, AUDIT_COLLECTION));
+    batch.set(ref, payload);
+    return ref;
+  }
 
   return addDoc(collection(db, AUDIT_COLLECTION), payload);
 };

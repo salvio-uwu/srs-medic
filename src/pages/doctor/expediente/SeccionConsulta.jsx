@@ -250,6 +250,19 @@ const SeccionConsulta = ({
     const [analizandoRiesgo, setAnalizandoRiesgo] = useState(false);
     const [sugerenciasEvitarAlergia, setSugerenciasEvitarAlergia] = useState([]);
     const [cargandoSugerenciasEvitarAlergia, setCargandoSugerenciasEvitarAlergia] = useState(false);
+    const [showAlergiaPopover, setShowAlergiaPopover] = useState(false);
+    const alergiaPopoverRef = useRef(null);
+
+    useEffect(() => {
+        if (!showAlergiaPopover) return;
+        const handleClickOutside = (e) => {
+            if (alergiaPopoverRef.current && !alergiaPopoverRef.current.contains(e.target)) {
+                setShowAlergiaPopover(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showAlergiaPopover]);
     const [tempGlucosa, setTempGlucosa] = useState({ fecha: '', categoria: 'Antes del desayuno', valor: '' });
     const [catalogoEstudios, setCatalogoEstudios] = useState([]);
     const [catalogoEstudiosLoading, setCatalogoEstudiosLoading] = useState(false);
@@ -2775,10 +2788,78 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
 
             {/* TABS HEADER */}
             <div className="flex items-center justify-between border-b border-slate-200 bg-white px-8 shrink-0 z-20 h-16 gap-4">
-                <div className="flex items-center gap-6 overflow-x-auto min-w-0">
-                    {tabsConsulta.map((t) => (
-                        <button title={t.l} key={t.id} onClick={() => setActiveConsulta(t.id)} className={`py-2 px-4 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border whitespace-nowrap ${activeConsulta === t.id ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} {t.l.toUpperCase()}</button>
-                    ))}
+                <div className="flex items-center gap-4 min-w-0">
+                    <div className="flex items-center gap-6 overflow-x-auto">
+                        {tabsConsulta.map((t) => (
+                            <button title={t.l} key={t.id} onClick={() => setActiveConsulta(t.id)} className={`py-2 px-4 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border whitespace-nowrap ${activeConsulta === t.id ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} {t.l.toUpperCase()}</button>
+                        ))}
+                    </div>
+
+                    {/* Indicador persistente de alergias */}
+                    <div className="relative shrink-0" ref={alergiaPopoverRef}>
+                        <button
+                            onClick={() => setShowAlergiaPopover(!showAlergiaPopover)}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
+                                resumenAlergiasPaciente.preguntadosNegados
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                    : resumenAlergiasPaciente.tieneAlergias
+                                    ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                    : 'border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100'
+                            }`}
+                        >
+                            {resumenAlergiasPaciente.preguntadosNegados ? (
+                                <><CheckCircle size={12} /> Sin alergias</>
+                            ) : resumenAlergiasPaciente.tieneAlergias ? (
+                                <><AlertTriangle size={12} /> {resumenAlergiasPaciente.items.length} {resumenAlergiasPaciente.items.length === 1 ? 'alergia' : 'alergias'}</>
+                            ) : (
+                                <><Info size={12} /> No verificado</>
+                            )}
+                        </button>
+
+                        {showAlergiaPopover && (
+                            <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                                <div className={`px-4 py-3 border-b ${
+                                    resumenAlergiasPaciente.preguntadosNegados
+                                        ? 'bg-emerald-50 border-emerald-100'
+                                        : resumenAlergiasPaciente.tieneAlergias
+                                        ? 'bg-rose-50 border-rose-100'
+                                        : 'bg-slate-50 border-slate-100'
+                                }`}>
+                                    <p className="text-xs font-black uppercase tracking-wider text-slate-700">
+                                        {resumenAlergiasPaciente.preguntadosNegados
+                                            ? 'Alergias descartadas'
+                                            : resumenAlergiasPaciente.tieneAlergias
+                                            ? `Alergias registradas (${resumenAlergiasPaciente.items.length})`
+                                            : 'Alergias no verificadas'}
+                                    </p>
+                                </div>
+                                <div className="px-4 py-3">
+                                    {resumenAlergiasPaciente.preguntadosNegados ? (
+                                        <p className="text-sm text-slate-600 leading-relaxed">
+                                            Se le preguntó al paciente y <strong>negó</strong> tener alergias. 
+                                            Puede modificar esta información en la sección de <strong>Antecedentes</strong>.
+                                        </p>
+                                    ) : resumenAlergiasPaciente.tieneAlergias ? (
+                                        <div>
+                                            <p className="text-xs text-slate-500 mb-2">Al recetar, verifique contraindicaciones con estos alérgenos:</p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {resumenAlergiasPaciente.items.map((item) => (
+                                                    <span key={item} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border border-rose-200 bg-white text-rose-700">
+                                                        {item}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-slate-600 leading-relaxed">
+                                            No se ha verificado si el paciente tiene alergias. 
+                                            Puede registrar esta información en <strong>Antecedentes</strong> o durante el <strong>triage</strong>.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {activeConsulta === 'procedimientos' || activeConsulta === 'referencia_medica' ? (

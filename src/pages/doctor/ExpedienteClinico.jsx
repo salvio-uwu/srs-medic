@@ -16,7 +16,8 @@ import jsPDF from 'jspdf';
 import { db, auth } from "../../config/firebase";
 import {
   doc, getDoc, collection, addDoc, serverTimestamp, updateDoc, deleteField,
-  query, where, orderBy, getDocs, limit, runTransaction, setDoc, onSnapshot
+  query, where, orderBy, getDocs, limit, runTransaction, setDoc, onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../context/AuthContext';
@@ -2375,50 +2376,42 @@ const ExpedienteClinico = () => {
         return;
       }
 
+      // Preparar datos del paciente para el batch atómico
+      let pacienteUpdateData = null;
       if (!isHistoricalReviewMode && pacienteId) {
-        try {
-          const resumenClinicoSnapshot = mergeClinicalSection(
-            pacienteData?.resumenClinico,
-            expedienteFinal.resumen
-          );
-          const antecedentesClinicosSnapshot = mergeClinicalSection(
-            pacienteData?.antecedentesClinicos,
-            expedienteFinal.antecedentes
-          );
-          const controlEmbarazoClinicoSnapshot = mergeClinicalSection(
-            pacienteData?.controlEmbarazoClinico,
-            expedienteFinal.control_embarazo
-          );
+        const resumenClinicoSnapshot = mergeClinicalSection(
+          pacienteData?.resumenClinico,
+          expedienteFinal.resumen
+        );
+        const antecedentesClinicosSnapshot = mergeClinicalSection(
+          pacienteData?.antecedentesClinicos,
+          expedienteFinal.antecedentes
+        );
+        const controlEmbarazoClinicoSnapshot = mergeClinicalSection(
+          pacienteData?.controlEmbarazoClinico,
+          expedienteFinal.control_embarazo
+        );
 
-          await updateDoc(doc(db, "pacientes", pacienteId), {
-            grupoSanguineo: grupoSanguineoNormalizado,
-            resumenClinico: resumenClinicoSnapshot,
-            antecedentesClinicos: antecedentesClinicosSnapshot,
-            controlEmbarazoClinico: controlEmbarazoClinicoSnapshot,
-            notasPersonales: expedienteFinal.resumen?.notas_previas || "",
-            obstetriciaClinica: {
-              fum: expedienteFinal.px_info?.fum || '',
-              fpp: expedienteFinal.px_info?.fpp || '',
-              sdg: expedienteFinal.px_info?.sdg || '',
-              es_embarazada: expedienteFinal.px_info?.es_embarazada || false,
-              requiere_cirugia: expedienteFinal.px_info?.requiere_cirugia || { general: false, ginecologica: false },
-              actualizadoAt: new Date().toISOString()
-            }
-          });
-          setPacienteData(prev => ({
-            ...prev,
-            grupoSanguineo: grupoSanguineoNormalizado,
-            resumenClinico: resumenClinicoSnapshot,
-            antecedentesClinicos: antecedentesClinicosSnapshot,
-            controlEmbarazoClinico: controlEmbarazoClinicoSnapshot
-          }));
-        } catch (errorPaciente) {
-          console.warn("No se pudo actualizar grupo sanguíneo en paciente", errorPaciente);
-        }
+        pacienteUpdateData = {
+          grupoSanguineo: grupoSanguineoNormalizado,
+          resumenClinico: resumenClinicoSnapshot,
+          antecedentesClinicos: antecedentesClinicosSnapshot,
+          controlEmbarazoClinico: controlEmbarazoClinicoSnapshot,
+          notasPersonales: expedienteFinal.resumen?.notas_previas || "",
+          obstetriciaClinica: {
+            fum: expedienteFinal.px_info?.fum || '',
+            fpp: expedienteFinal.px_info?.fpp || '',
+            sdg: expedienteFinal.px_info?.sdg || '',
+            es_embarazada: expedienteFinal.px_info?.es_embarazada || false,
+            requiere_cirugia: expedienteFinal.px_info?.requiere_cirugia || { general: false, ginecologica: false },
+            actualizadoAt: new Date().toISOString()
+          }
+        };
       }
 
       if (isHistoricalReviewMode && historicalReview?.historialId) {
-        await updateDoc(doc(db, "historial_clinico", historicalReview.historialId), {
+        const reviewBatch = writeBatch(db);
+        reviewBatch.update(doc(db, "historial_clinico", historicalReview.historialId), {
           ...expedienteFinal,
           costo: costoSanitizado,
           recetasGeneradas,
@@ -2429,7 +2422,7 @@ const ExpedienteClinico = () => {
           actualizadoPorMedicoNombre: user?.nombre || 'Medico sin nombre'
         });
 
-        await createClinicalAuditRecord({
+        createClinicalAuditRecord({
           pacienteId,
           pacienteNombre,
           historialId: historicalReview.historialId,
@@ -2438,7 +2431,9 @@ const ExpedienteClinico = () => {
           medicoNombre: user?.nombre || 'Medico sin nombre',
           validation,
           expediente: expedienteFinal
-        });
+        }, reviewBatch);
+
+        await reviewBatch.commit();
 
         setHistorialCompleto((prev) => (
           Array.isArray(prev)
@@ -2493,7 +2488,7 @@ const ExpedienteClinico = () => {
         sucursal: user?.sucursal || ''
       };
 
-      // Verificar si ya existe un registro para esta misma cita antes de crear uno nuevo
+      // --- Fase de lectura: consultar historial previo y datos de cita ---
       let historialRef = null;
       let esActualizacion = false;
 
@@ -2507,8 +2502,6 @@ const ExpedienteClinico = () => {
           );
           const snapDuplicados = await getDocs(queryDuplicados);
           if (!snapDuplicados.empty) {
-            // Filtrar en JS: ignorar registros de enfermería o de solo-antecedentes.
-            // Si el doctor no ha guardado aún, esos registros no deben ser sobreescritos.
             const docConsulta = snapDuplicados.docs.find((d) => {
               const data = d.data();
               return data.origenRegistro !== 'enfermeria_agenda'
@@ -2518,13 +2511,6 @@ const ExpedienteClinico = () => {
             if (docConsulta) {
               historialRef = docConsulta.ref;
               esActualizacion = true;
-              await updateDoc(historialRef, {
-                ...expedienteFinal,
-                recetasGeneradas,
-                documentosGenerados,
-                auditSnapshot: validation.snapshot,
-                actualizadoEnConsultaAt: serverTimestamp()
-              });
             }
           }
         } catch (e) {
@@ -2532,8 +2518,39 @@ const ExpedienteClinico = () => {
         }
       }
 
+      let citaDataForBitacora = null;
+      let retrasoMin = 0;
+
+      if (citaId) {
+        try {
+          const citaRef = doc(db, "citas", citaId);
+          const citaSnap = await getDoc(citaRef);
+          if (citaSnap.exists()) {
+            const dataCita = citaSnap.data();
+            citaDataForBitacora = dataCita;
+            const [fechaProgramada, horaProgramada = '00:00'] = (dataCita.fechaHora || '').split('T');
+            const inicioProgramado = fechaProgramada ? new Date(`${fechaProgramada}T${horaProgramada}`) : null;
+            if (inicioProgramado && !Number.isNaN(inicioProgramado.getTime())) {
+              retrasoMin = Math.max(0, Math.round((consultaInicioRef.current - inicioProgramado) / 60000));
+            }
+          }
+        } catch (e) {
+          console.warn('No se pudo leer la cita para retraso/bitácora:', e);
+        }
+      }
+
+      // --- Fase de escritura atómica: batch con las 4 escrituras core ---
+      const batch = writeBatch(db);
+
+      // 1. Actualizar documento del paciente
+      if (pacienteUpdateData) {
+        batch.update(doc(db, "pacientes", pacienteId), pacienteUpdateData);
+      }
+
+      // 2. Crear o actualizar historial_clinico
       if (!esActualizacion) {
-        historialRef = await addDoc(collection(db, "historial_clinico"), {
+        historialRef = doc(collection(db, "historial_clinico"));
+        batch.set(historialRef, {
           ...expedienteFinal,
           pacienteId,
           pacienteNombre,
@@ -2550,9 +2567,18 @@ const ExpedienteClinico = () => {
           documentosGenerados,
           auditSnapshot: validation.snapshot
         });
+      } else {
+        batch.update(historialRef, {
+          ...expedienteFinal,
+          recetasGeneradas,
+          documentosGenerados,
+          auditSnapshot: validation.snapshot,
+          actualizadoEnConsultaAt: serverTimestamp()
+        });
       }
 
-      await createClinicalAuditRecord({
+      // 3. Registro de auditoría
+      createClinicalAuditRecord({
         pacienteId,
         pacienteNombre,
         historialId: historialRef.id,
@@ -2561,65 +2587,68 @@ const ExpedienteClinico = () => {
         medicoNombre: user?.nombre || 'Medico sin nombre',
         validation,
         expediente: expedienteFinal
-      });
+      }, batch);
 
-      let citaDataForBitacora = null;
-
+      // 4. Marcar cita como completada
       if (citaId) {
-        const citaRef = doc(db, "citas", citaId);
-        const citaSnap = await getDoc(citaRef);
-        let retrasoMin = 0;
-
-        if (citaSnap.exists()) {
-          const dataCita = citaSnap.data();
-          citaDataForBitacora = dataCita;
-          const [fechaProgramada, horaProgramada = '00:00'] = (dataCita.fechaHora || '').split('T');
-          const inicioProgramado = fechaProgramada ? new Date(`${fechaProgramada}T${horaProgramada}`) : null;
-          if (inicioProgramado && !Number.isNaN(inicioProgramado.getTime())) {
-            retrasoMin = Math.max(0, Math.round((consultaInicioRef.current - inicioProgramado) / 60000));
-          }
-        }
-
-        await updateDoc(citaRef, {
+        batch.update(doc(db, "citas", citaId), {
           estado: 'completada',
           consultaFinalizadaAt: serverTimestamp(),
           duracionRealMin,
           retrasoMin,
           costo: costoSanitizado,
-          consultaDraft: null,
-          consultaDraftUpdatedAt: null
+          consultaDraft: deleteField(),
+          consultaDraftUpdatedAt: deleteField()
         });
       }
 
-      const bitacoraDocId = citaId ? `cita_${citaId}` : `hist_${historialRef.id}`;
-      const bitacoraRef = doc(db, 'bitacora_px_enfermeria', bitacoraDocId);
-      const bitacoraAutoBase = buildEnfermeriaPatientLogRecord({
-        expediente: expedienteFinal,
-        pacienteId,
-        pacienteNombre,
-        citaId: citaId || '',
-        historialId: historialRef.id,
-        citaData: citaDataForBitacora || {},
-        citaContext,
-        userSource: userProfileDoc || user || {},
-        doctorNombre: user?.nombre || '',
-        completedAt: finConsulta
-      });
-      const {
-        recetaSurtida: _manualRecetaSurtida,
-        recetaSurtidaLabel: _manualRecetaSurtidaLabel,
-        ...bitacoraAutoPayload
-      } = bitacoraAutoBase;
-      await setDoc(bitacoraRef, {
-        ...bitacoraAutoPayload,
-        updatedAt: serverTimestamp(),
-        fecha: serverTimestamp()
-      }, { merge: true });
+      // Commit atómico: todo o nada
+      await batch.commit();
 
-      // Enviar encuesta de satisfacción por WhatsApp
-      const telefonoPx = expediente?.px_info?.telefono || pacienteData?.telefonoMovil || '';
-      if (telefonoPx && citaId) {
-        try {
+      // Actualizar estado local del paciente tras commit exitoso
+      if (pacienteUpdateData) {
+        setPacienteData(prev => ({
+          ...prev,
+          grupoSanguineo: grupoSanguineoNormalizado,
+          resumenClinico: pacienteUpdateData.resumenClinico,
+          antecedentesClinicos: pacienteUpdateData.antecedentesClinicos,
+          controlEmbarazoClinico: pacienteUpdateData.controlEmbarazoClinico
+        }));
+      }
+
+      // --- Fase post-batch: operaciones no críticas (no rompen atomicidad) ---
+      try {
+        const bitacoraDocId = citaId ? `cita_${citaId}` : `hist_${historialRef.id}`;
+        const bitacoraRef = doc(db, 'bitacora_px_enfermeria', bitacoraDocId);
+        const bitacoraAutoBase = buildEnfermeriaPatientLogRecord({
+          expediente: expedienteFinal,
+          pacienteId,
+          pacienteNombre,
+          citaId: citaId || '',
+          historialId: historialRef.id,
+          citaData: citaDataForBitacora || {},
+          citaContext,
+          userSource: userProfileDoc || user || {},
+          doctorNombre: user?.nombre || '',
+          completedAt: finConsulta
+        });
+        const {
+          recetaSurtida: _manualRecetaSurtida,
+          recetaSurtidaLabel: _manualRecetaSurtidaLabel,
+          ...bitacoraAutoPayload
+        } = bitacoraAutoBase;
+        await setDoc(bitacoraRef, {
+          ...bitacoraAutoPayload,
+          updatedAt: serverTimestamp(),
+          fecha: serverTimestamp()
+        }, { merge: true });
+      } catch (e) {
+        console.warn('[Expediente] Error no crítico al escribir bitácora:', e);
+      }
+
+      try {
+        const telefonoPx = expediente?.px_info?.telefono || pacienteData?.telefonoMovil || '';
+        if (telefonoPx && citaId) {
           const functionsInstance = getFunctions();
           const enviarEncuesta = httpsCallable(functionsInstance, 'enviarEncuestaWhatsApp');
           await enviarEncuesta({
@@ -2629,11 +2658,12 @@ const ExpedienteClinico = () => {
             citaId,
             pacienteId
           });
-        } catch (encuestaError) {
-          console.warn('No se pudo enviar encuesta de satisfacción:', encuestaError);
         }
+      } catch (encuestaError) {
+        console.warn('No se pudo enviar encuesta de satisfacción:', encuestaError);
       }
 
+      // --- Limpieza ---
       setTempMed(DEFAULT_TEMP_MED);
       setTempAlergia(DEFAULT_TEMP_ALERGIA);
       setTempCirugia(DEFAULT_TEMP_CIRUGIA);
