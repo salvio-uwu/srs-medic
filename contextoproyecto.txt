@@ -1,8 +1,7 @@
 # ============================================================================
 # CONTEXTO COMPLETO DEL PROYECTO SRS-MEDIC
 # Sistema Integral de Gestión de Clínicas y Consultorios Médicos
-# ============================================================================
-# Versión: 1.0.0
+# ============================================================================ 
 # Plataforma: Web + Desktop (Tauri)
 # Total de líneas de código: ~67,000
 # Archivos fuente: 125+ JSX/JS

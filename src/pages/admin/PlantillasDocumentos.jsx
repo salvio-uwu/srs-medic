@@ -82,7 +82,7 @@ const persistAutosaveDraft = (draft) => {
   }
 };
 
-const FIELD_LIBRARY = [
+export const FIELD_LIBRARY = [
   { id: 'paciente.id', label: 'ID del paciente' },
   { id: 'paciente.nombre', label: 'Nombre del paciente' },
   { id: 'paciente.edad', label: 'Edad del paciente' },
@@ -148,7 +148,7 @@ const FIELD_LIBRARY = [
   { id: 'fecha.larga', label: 'Fecha larga' }
 ];
 
-const FIELD_GROUPS = [
+export const FIELD_GROUPS = [
   { id: 'paciente', label: 'Paciente', color: '#7c3aed', fields: ['paciente.id','paciente.nombre','paciente.edad','paciente.fecha_nacimiento','paciente.id_receta','paciente.folio_receta','paciente.alergias_base','paciente.alergias','paciente.telefono','paciente.sexo','paciente.grupo_sanguineo','paciente.tipo_sangre'] },
   { id: 'receta', label: 'Receta', color: '#0f766e', fields: ['receta.folio','receta.fecha'] },
   { id: 'medico', label: 'Médico', color: '#0077B6', fields: ['medico.nombre','medico.cedula','medico.cedula_profesional','medico.universidad_egreso','medico.centro_estudios','medico.sucursal','medico.especialidad'] },
@@ -763,6 +763,12 @@ const PlantillasDocumentos = () => {
     setSelectedElementId(newEl.id);
   };
 
+  const addSelectElement = (position = null) => {
+    const newEl = { id: makeId('select'), type: 'select', options: ['Positivo', 'Negativo'], value: 'Negativo', ...defaultElementBase, x: position?.x ?? 40, y: position?.y ?? 80, w: 140, h: 24, fontSize: 12, align: 'center' };
+    setEditor((prev) => ({ ...prev, elements: [...prev.elements, newEl] }));
+    setSelectedElementId(newEl.id);
+  };
+
   const addImageElement = (src = '', position = null) => {
     const newEl = { id: makeId('image'), type: 'image', ...defaultImageElementBase, src, x: position?.x ?? 40, y: position?.y ?? 220 };
     setEditor((prev) => ({ ...prev, elements: [...prev.elements, newEl] }));
@@ -868,6 +874,7 @@ const PlantillasDocumentos = () => {
     const y = normalizeToGrid(Math.round((event.clientY - rect.top) / z));
     if (payload.kind === 'field') { addFieldElement(payload.fieldId, { x, y }); return; }
     if (payload.kind === 'text') { addTextElement({ x, y }); return; }
+    if (payload.kind === 'select') { addSelectElement({ x, y }); return; }
     if (payload.kind === 'image') { addImageElement(payload.src || '', { x, y }); return; }
     if (payload.kind === 'shape') { addShapeElement(payload.shapeKind || 'line', { x, y }); }
   };
@@ -1272,6 +1279,7 @@ const PlantillasDocumentos = () => {
     if (el.type === 'field') return { label: 'Campo', color: '#7c3aed', bg: '#f5f3ff' };
     if (el.type === 'text') return { label: 'Texto', color: '#0077B6', bg: '#eff6ff' };
     if (el.type === 'image') return { label: 'Imagen', color: '#059669', bg: '#f0fdf4' };
+    if (el.type === 'select') return { label: 'Selección', color: '#0891b2', bg: '#ecfeff' };
     return { label: el.shapeKind || 'Forma', color: '#d97706', bg: '#fffbeb' };
   };
 
@@ -1496,6 +1504,10 @@ const PlantillasDocumentos = () => {
                     <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center"><Type size={16} className="text-blue-600" /></div>
                     Bloque de texto
                   </button>
+                  <button draggable onDragStart={(e) => onToolDragStart(e, { kind: 'select' })} onClick={() => addSelectElement()} className="insert-tool-btn w-full mt-1.5">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-50 border border-cyan-200 flex items-center justify-center"><ChevronDown size={16} className="text-cyan-600" /></div>
+                    Selección (opciones)
+                  </button>
                 </div>
 
                 {/* Shapes */}
@@ -1596,7 +1608,7 @@ const PlantillasDocumentos = () => {
                         <div key={el.id} onClick={() => setSelectedElementId(el.id)} className={`layer-item ${isSel ? 'selected' : ''}`}>
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: info.bg, color: info.color }}>{info.label}</span>
                           <span className="text-[11px] text-slate-600 truncate flex-1">
-                            {el.type === 'field' ? el.label : el.type === 'text' ? (el.content || '').slice(0, 20) : el.type === 'shape' ? el.shapeKind : (el.isWatermark ? 'marca de agua' : 'imagen')}
+                            {el.type === 'field' ? el.label : el.type === 'select' ? `[${(el.options || []).join('/')}]` : el.type === 'text' ? (el.content || '').slice(0, 20) : el.type === 'shape' ? el.shapeKind : (el.isWatermark ? 'marca de agua' : 'imagen')}
                           </span>
                           <span className="text-[10px] text-slate-400">z{el.zIndex || 1}</span>
                         </div>
@@ -1709,6 +1721,11 @@ const PlantillasDocumentos = () => {
                               <span className="text-slate-400 font-normal text-xs"> → {resolveDeep(PREVIEW_DATA, el.bind) || ''}</span>
                             )}
                           </span>
+                        ) : el.type === 'select' ? (
+                          <span style={{ color: '#0891b2', fontWeight: 600 }} title={`Opciones: ${(el.options || []).join(', ')}`}>
+                            {el.value || el.options?.[0] || ''}
+                            <span className="text-slate-400 font-normal" style={{ fontSize: Math.max(9, Number(el.fontSize || 12) - 1) }}> ({(el.options || []).join(' / ')})</span>
+                          </span>
                         ) : (
                           <div
                             ref={(node) => {
@@ -1771,6 +1788,7 @@ const PlantillasDocumentos = () => {
                               {el.type === 'image' ? (el.src ? <img src={el.src} alt="" className="w-full h-full" style={{ objectFit: el.objectFit || 'contain', opacity: Number(el.opacity ?? 1) }} /> : null)
                                 : el.type === 'shape' ? renderShapeEl(el)
                                 : el.type === 'field' ? buildFieldDisplayText(el.bind, el.label, resolveDeep(PREVIEW_DATA, el.bind) || '')
+                                : el.type === 'select' ? (el.value || el.options?.[0] || '')
                                 : <div dangerouslySetInnerHTML={{ __html: resolveTemplateHtml(el.contentHtml || plainToHtml(el.content || ''), PREVIEW_DATA) }} />}
                             </div>
                             );
@@ -1809,6 +1827,7 @@ const PlantillasDocumentos = () => {
                         {el.type === 'image' ? (el.src ? <img src={el.src} alt="" className="w-full h-full" style={{ objectFit: el.objectFit || 'contain', opacity: Number(el.opacity ?? 1) }} /> : null)
                           : el.type === 'shape' ? renderShapeEl(el)
                           : el.type === 'field' ? buildFieldDisplayText(el.bind, el.label, resolveDeep(PREVIEW_DATA, el.bind) || '')
+                          : el.type === 'select' ? (el.value || el.options?.[0] || '')
                           : <div dangerouslySetInnerHTML={{ __html: resolveTemplateHtml(el.contentHtml || plainToHtml(el.content || ''), PREVIEW_DATA) }} />}
                       </div>
                       );
@@ -1899,6 +1918,31 @@ const PlantillasDocumentos = () => {
                     </InspField>
                     <InspField label="Etiqueta">
                       <input className="insp-input" value={selectedElement.label || ''} onChange={(e) => updateSelectedElement({ label: e.target.value })} />
+                    </InspField>
+                  </div>
+                )}
+
+                {/* Select-specific */}
+                {selectedElement.type === 'select' && (
+                  <div className="space-y-2">
+                    <InspField label="Valor por defecto">
+                      <select className="insp-input" value={selectedElement.value || ''} onChange={(e) => updateSelectedElement({ value: e.target.value })}>
+                        {(selectedElement.options || []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    </InspField>
+                    <InspField label="Opciones (una por línea)">
+                      <textarea
+                        className="insp-input min-h-[80px] resize-y text-xs"
+                        value={(selectedElement.options || []).join('\n')}
+                        onChange={(e) => {
+                          const opts = e.target.value.split('\n').map((s) => s.trim()).filter(Boolean);
+                          const curVal = selectedElement.value || '';
+                          updateSelectedElement({ options: opts, value: opts.includes(curVal) ? curVal : (opts[0] || '') });
+                        }}
+                      />
+                    </InspField>
+                    <InspField label="Etiqueta (opcional)">
+                      <input className="insp-input" value={selectedElement.label || ''} onChange={(e) => updateSelectedElement({ label: e.target.value })} placeholder="Ej: Resultado" />
                     </InspField>
                   </div>
                 )}

@@ -7,6 +7,7 @@ import {
 import { db, auth } from '../../config/firebase';
 import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
 import AvatarPaciente from '../../components/AvatarPaciente';
+import VirtualKeyboard from '../../components/VirtualKeyboard';
 
 const Triage = () => {
   const navigate = useNavigate();
@@ -141,6 +142,9 @@ const Triage = () => {
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false); // Modal éxito
   const [errorMsg, setErrorMsg] = useState(''); // Estado para manejar errores sin alerts nativos
+  const [activeField, setActiveField] = useState(null);
+  const [showKeyboard, setShowKeyboard] = useState(false);
+  const [kbHeight, setKbHeight] = useState(0);
 
   // Calcular IMC automático
   useEffect(() => {
@@ -227,6 +231,22 @@ const Triage = () => {
     setLoading(false);
   };
 
+  const handleKeyPress = ({ type, char }) => {
+    if (!activeField) return;
+    setSignos(prev => {
+      const current = prev[activeField] || '';
+      if (type === 'backspace') return { ...prev, [activeField]: current.slice(0, -1) };
+      if (type === 'clear') return { ...prev, [activeField]: '' };
+      return { ...prev, [activeField]: current + char };
+    });
+  };
+
+  const handleFieldFocus = (key) => {
+    if (key === 'imc') return;
+    setActiveField(key);
+    setShowKeyboard(true);
+  };
+
   const inputBase = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50 transition-all placeholder:text-slate-300";
 
   /* ── Bloque reutilizable: cabecera de sección ── */
@@ -311,7 +331,7 @@ const Triage = () => {
 
       {/* ═══════════ CONTENIDO PRINCIPAL ═══════════ */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+        <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 space-y-4" style={{ paddingBottom: kbHeight ? kbHeight + 16 : undefined }}>
 
           {/* ── SIGNOS VITALES ── */}
           <section>
@@ -337,10 +357,11 @@ const Triage = () => {
                   </div>
                   <input
                     type="text"
-                    inputMode="decimal"
+                    inputMode="none"
                     readOnly={f.readOnly}
                     placeholder={f.ph}
                     value={signos[f.key]}
+                    onFocus={() => handleFieldFocus(f.key)}
                     onChange={e => setSignos({ ...signos, [f.key]: e.target.value })}
                     className={`w-full text-center text-xl sm:text-2xl font-bold outline-none bg-transparent ${f.readOnly ? 'text-slate-400' : 'text-slate-800'} placeholder:text-slate-200`}
                   />
@@ -508,6 +529,15 @@ const Triage = () => {
           </div>
         </div>
       )}
+
+      {/* ═══════════ TECLADO VIRTUAL ═══════════ */}
+      <VirtualKeyboard
+        visible={showKeyboard}
+        onClose={() => { setShowKeyboard(false); setActiveField(null); setKbHeight(0); }}
+        layout={activeField === 'ta' ? 'bloodpressure' : 'signs'}
+        onKeyPress={handleKeyPress}
+        onHeightChange={setKbHeight}
+      />
     </div>
   );
 };
