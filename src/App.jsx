@@ -15,6 +15,7 @@ import { PanicLauncherButton, PanicAlertOverlay, usePanicSystem } from './compon
 import { useAuth } from './context/AuthContext';
 import { hasPermission } from './services/permissionService';
 import { useAppVersion } from './hooks/useAppVersion';
+import { buildLastMessageSignature, isNewSignature } from './shared/chatSignatureCache';
 
 // Layout Admin
 import AdminLayout from './shared/AdminLayout';
@@ -38,6 +39,7 @@ const AuditoriaMigracion = lazy(() => import('./pages/admin/AuditoriaMigracion')
 import Consultorio from './pages/doctor/Consultorio'; 
 import ExpedienteClinico from './pages/doctor/ExpedienteClinico'; 
 import Pacientes from './pages/doctor/Pacientes';
+import CapacitacionMedicos from './pages/doctor/CapacitacionMedicos';
 
 // Módulos Intendencia
 import RegistroLimpiezaManual from './pages/intendencia/RegistroLimpiezaManual';
@@ -64,31 +66,6 @@ import Agenda from './shared/Agenda';
 
 const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
-const getMillis = (value) => {
-  if (!value) return 0;
-  if (typeof value?.toMillis === 'function') return value.toMillis();
-  if (typeof value?.seconds === 'number') {
-    const nanos = typeof value?.nanoseconds === 'number' ? value.nanoseconds : 0;
-    return (value.seconds * 1000) + Math.floor(nanos / 1e6);
-  }
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const buildLastMessageSignature = (chatDocId, data = {}) => {
-  const ts = data?.ultimoMensajeAt;
-  const seconds = typeof ts?.seconds === 'number' ? ts.seconds : '';
-  const nanos = typeof ts?.nanoseconds === 'number' ? ts.nanoseconds : '';
-  return [
-    chatDocId,
-    data?.ultimoRemitenteId || '',
-    getMillis(ts),
-    seconds,
-    nanos,
-    data?.ultimoTexto || ''
-  ].join('|');
-};
-
   const GlobalChatLauncher = ({ triggerPanic, hasActiveAlert }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -103,7 +80,6 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
     const launcherRef = useRef(null);
     const audioCtxRef = useRef(null);
     const usersMapRef = useRef({});
-    const notifiedMessagesRef = useRef(new Map());
     const toastRef = useRef(null);
 
     // Desbloquear AudioContext al primer gesto del usuario
@@ -283,10 +259,6 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
     }
   }, [mostrarChat, location.pathname]);
 
-  useEffect(() => {
-    notifiedMessagesRef.current.clear();
-  }, [user?.uid, mostrarChat]);
-
   const shortcutCandidates = useMemo(() => ([
     { id: 'admin.dashboard', label: 'Dashboard', path: '/admin/dashboard', group: 'Administracion', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: LayoutDashboard },
     { id: 'admin.inventario', label: 'Inventario', path: '/admin/inventario', group: 'Administracion', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: Package },
@@ -304,6 +276,7 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
     { id: 'rh.finanzas', label: 'Finanzas', path: '/rh/finanzas', group: 'Recursos Humanos', permission: 'rh.finanzas', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: DollarSign },
     { id: 'intendencia.registro', label: 'Registro', path: '/intendencia/registro', group: 'Intendencia', permission: 'intendencia.registro', fallbackRoles: ['intendencia', 'limpieza'], icon: SprayCan },
     { id: 'doctor.consulta', label: 'Consulta', path: '/doctor/consulta', group: 'Doctor', permission: 'doctor.agenda', fallbackRoles: ['medico', 'doctor'], icon: Stethoscope },
+    { id: 'doctor.capacitacion', label: 'Capacitación', path: '/doctor/capacitacion', group: 'Doctor', permission: 'doctor.agenda', fallbackRoles: ['medico', 'doctor'], icon: BookOpen },
     { id: 'enfermeria.dashboard', label: 'Dashboard', path: '/enfermeria/dashboard', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: LayoutDashboard },
     { id: 'enfermeria.triage', label: 'Triage', path: '/enfermeria/triage', group: 'Enfermeria', permission: 'enfermeria.triage', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: Syringe },
     { id: 'enfermeria.hoja', label: 'Hoja de enfermería', path: '/enfermeria/hoja-enfermeria', group: 'Enfermeria', permission: 'enfermeria.hoja', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: FileText },
@@ -398,19 +371,6 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
     initCanalesRef.current = false;
     initPrivadosRef.current = false;
 
-    const isNewLastMessage = (chatDocId, data) => {
-      const signature = buildLastMessageSignature(chatDocId, data);
-      if (!signature) return false;
-      const cache = notifiedMessagesRef.current;
-      if (cache.has(signature)) return false;
-      cache.set(signature, Date.now());
-      if (cache.size > 500) {
-        const oldest = cache.keys().next().value;
-        if (oldest) cache.delete(oldest);
-      }
-      return true;
-    };
-
     const qCanales = query(collection(db, 'canales'), orderBy('ultimoMensajeAt', 'desc'), limit(20));
     const unsubCanales = onSnapshot(qCanales, (snap) => {
       if (!initCanalesRef.current) {
@@ -422,7 +382,7 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
         const data = change.doc.data();
         if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
         if (!data?.ultimoMensajeAt) return false;
-        return isNewLastMessage(change.doc.id, data);
+        return isNewSignature(buildLastMessageSignature(change.doc.id, data));
       });
       if (nuevos.length > 0) {
         setUnreadCount((prev) => prev + nuevos.length);
@@ -457,7 +417,7 @@ const buildLastMessageSignature = (chatDocId, data = {}) => {
         const data = change.doc.data();
         if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
         if (!data?.ultimoMensajeAt) return false;
-        return isNewLastMessage(change.doc.id, data);
+        return isNewSignature(buildLastMessageSignature(change.doc.id, data));
       });
       if (nuevos.length > 0) {
         setUnreadCount((prev) => prev + nuevos.length);
@@ -908,6 +868,7 @@ function App() {
         {/* --- RUTAS DOCTOR --- */}
         <Route path="/doctor/consulta" element={<PermissionRoute permissionId="doctor.agenda" fallbackRoles={['medico', 'doctor']}><Consultorio /></PermissionRoute>} />
         <Route path="/doctor/expediente" element={<PermissionRoute permissionId="doctor.expediente" fallbackRoles={['medico', 'doctor']}><ExpedienteClinico /></PermissionRoute>} />
+        <Route path="/doctor/capacitacion" element={<PermissionRoute permissionId="doctor.agenda" fallbackRoles={['medico', 'doctor']}><CapacitacionMedicos /></PermissionRoute>} />
 
         {/* --- RUTAS ENFERMERÍA --- */}
         <Route path="/enfermeria/dashboard" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AgendaEnfermeria /></PermissionRoute>} /> 

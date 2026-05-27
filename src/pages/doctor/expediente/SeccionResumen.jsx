@@ -342,6 +342,37 @@ const SeccionResumen = ({
                 (item.consulta?.exploracion && Object.keys(item.consulta.exploracion).length > 0)
             );
 
+            // Construir preview con jerarquía de fallbacks: padecimiento -> indicaciones
+            // -> resumen del tratamiento -> exploración -> 'Sin descripción clínica'.
+            // Esto evita el falso 'borrado' cuando el doctor no llenó padecimiento
+            // pero sí otros campos clínicos (caso reportado por el doctor).
+            const tratamientoLista = Array.isArray(item.consulta?.diagnostico?.tratamiento_lista)
+                ? item.consulta.diagnostico.tratamiento_lista
+                : [];
+            const tratamientoResumen = tratamientoLista.length > 0
+                ? `Tratamiento (${tratamientoLista.length}): ${tratamientoLista
+                    .map((m) => m?.nombre || '')
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}${tratamientoLista.length > 3 ? '…' : ''}`
+                : '';
+            const exploracionResumen = (() => {
+                const signos = item.consulta?.exploracion?.signos || {};
+                const partes = [];
+                if (signos.peso) partes.push(`Peso: ${signos.peso}`);
+                if (signos.talla) partes.push(`Talla: ${signos.talla}`);
+                if (signos.ta) partes.push(`T/A: ${signos.ta}`);
+                if (signos.temp) partes.push(`Temp: ${signos.temp}`);
+                if (signos.fc) partes.push(`FC: ${signos.fc}`);
+                return partes.length > 0 ? partes.join(' • ') : '';
+            })();
+            const descripcionPreview = (item.consulta?.padecimiento || '').trim()
+                || (item.consulta?.diagnostico?.indicaciones || '').trim()
+                || (item.consulta?.diagnostico?.pronostico || '').trim()
+                || tratamientoResumen
+                || exploracionResumen
+                || 'Sin descripción clínica';
+
             const baseRow = {
                 id: `platform_${item.id}`,
                 sourceId: item.id,
@@ -352,7 +383,7 @@ const SeccionResumen = ({
                 origen: 'plataforma',
                 tipoNota: item.tipoNota || 'Consulta General',
                 titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
-                descripcion: item.consulta?.padecimiento || 'Sin descripción clínica',
+                descripcion: descripcionPreview,
                 confianza: 'alta',
                 medicoNombre: item.medicoNombre || '',
                 es_embarazada: item.px_info?.es_embarazada || false,
@@ -1144,7 +1175,7 @@ const SeccionResumen = ({
                         <div className="flex gap-4">
                             {cs.costo > 0 && (
                                 <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-2 text-sm">
-                                    <span className="font-bold text-green-700">Costo:</span> <span className="text-green-800 font-black">${Number(cs.costo).toLocaleString('es-MX')}</span>
+                                    <span className="font-bold text-green-700">Costo:</span> <span className="text-green-800 font-black">${(Number.isFinite(Number(cs.costo)) ? Number(cs.costo) : 0).toLocaleString('es-MX')}</span>
                                 </div>
                             )}
                             {cs.duracionRealMin > 0 && (
@@ -1271,7 +1302,13 @@ const SeccionResumen = ({
                     {/* Padecimiento */}
                     <div>
                         <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><FileText size={14}/> Padecimiento</h4>
-                        <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed whitespace-pre-line">{cs.consulta?.padecimiento || 'Sin descripción'}</div>
+                        {cs.consulta?.padecimiento ? (
+                            <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-sm text-slate-700 leading-relaxed whitespace-pre-line">{cs.consulta.padecimiento}</div>
+                        ) : (
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-sm text-slate-500 italic">
+                                No se registró texto en el campo padecimiento. Los demás datos clínicos de la consulta (diagnóstico, exploración, tratamiento, etc.) se conservan abajo.
+                            </div>
+                        )}
                     </div>
 
                     {/* Exploración Física */}
@@ -1439,19 +1476,7 @@ const SeccionResumen = ({
                         </div>
                     )}
 
-                    {/* Auditoría */}
-                    {cs.auditSnapshot && (
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Auditoría</h4>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                {cs.auditSnapshot.status && <div><span className="font-bold text-slate-500">Estado:</span> <span className="text-slate-700">{cs.auditSnapshot.status}</span></div>}
-                                {cs.auditSnapshot.completionPct !== undefined && <div><span className="font-bold text-slate-500">Completitud:</span> <span className="text-slate-700">{cs.auditSnapshot.completionPct}%</span></div>}
-                                {Array.isArray(cs.auditSnapshot.missingCritical) && cs.auditSnapshot.missingCritical.length > 0 && (
-                                    <div className="col-span-2"><span className="font-bold text-red-500">Campos críticos faltantes:</span> <span className="text-red-700">{cs.auditSnapshot.missingCritical.join(', ')}</span></div>
-                                )}
-                            </div>
-                        </div>
-                    )}
+
                 </div>
                 <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
                     <p className="text-xs font-bold text-slate-400 uppercase">Atendido por: <span className="text-slate-600">{cs.medicoNombre || 'Desconocido'}</span></p>

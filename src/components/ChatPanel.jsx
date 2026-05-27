@@ -9,6 +9,7 @@ import { db, storage } from '../config/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, getDocs, setDoc, doc, updateDoc, limit, where, deleteField, startAfter, deleteDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../context/AuthContext';
+import { buildLastMessageSignature, isNewSignature, getMillis } from '../shared/chatSignatureCache';
 
 // ─── STICKER PACKS ───────────────────────────────────────────────────────────
 const STICKER_PACKS = {
@@ -28,39 +29,6 @@ const CUSTOM_IMAGE_STICKERS_KEY = 'chat_mis_stickers_img_v1';
 const MESSAGE_GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
-const getMillis = (v) => {
-  if (!v) return 0;
-  if (typeof v?.toMillis === 'function') return v.toMillis();
-  if (typeof v?.seconds === 'number') {
-    const nanos = typeof v?.nanoseconds === 'number' ? v.nanoseconds : 0;
-    return (v.seconds * 1000) + Math.floor(nanos / 1e6);
-  }
-  const p = new Date(v).getTime();
-  return isFinite(p) ? p : 0;
-};
-const buildLastMessageSignature = (chatDocId, data = {}) => {
-  const ts = data?.ultimoMensajeAt;
-  const seconds = typeof ts?.seconds === 'number' ? ts.seconds : '';
-  const nanos = typeof ts?.nanoseconds === 'number' ? ts.nanoseconds : '';
-  return [
-    chatDocId,
-    data?.ultimoRemitenteId || '',
-    getMillis(ts),
-    seconds,
-    nanos,
-    data?.ultimoTexto || ''
-  ].join('|');
-};
-const rememberSignature = (cache, signature) => {
-  if (!signature) return false;
-  if (cache.has(signature)) return false;
-  cache.set(signature, Date.now());
-  if (cache.size > 500) {
-    const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
-  }
-  return true;
-};
 const formatHora = (v) => {
   const ms = getMillis(v);
   if (!ms) return '';
@@ -382,14 +350,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
   const typingTimeoutRef = useRef(null);
   const lastTypingSendRef = useRef(0);
   const activeChatRef = useRef(activeChat);
-  const canalesUnreadSeenRef = useRef(new Map());
-  const privadosUnreadSeenRef = useRef(new Map());
   activeChatRef.current = activeChat;
-
-  useEffect(() => {
-    canalesUnreadSeenRef.current.clear();
-    privadosUnreadSeenRef.current.clear();
-  }, [user?.uid, isOpen]);
   
   const canCreateChannels = useMemo(() => {
     const rol = (user?.rol || '').toLowerCase();
@@ -415,7 +376,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
           const d = change.doc.data();
           if (!d?.ultimoMensajeAt) return;
           const signature = buildLastMessageSignature(change.doc.id, d);
-          const isNew = rememberSignature(canalesUnreadSeenRef.current, signature);
+          const isNew = isNewSignature(signature);
           if (isNew && d.ultimoRemitenteId !== user.uid && activeChatRef.current.id !== change.doc.id)
             setChatsNoLeidos(prev => ({ ...prev, [change.doc.id]: (prev[change.doc.id] || 0) + 1 }));
         }
@@ -446,7 +407,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
         if (!d?.ultimoMensajeAt) return;
         if ((change.type === 'modified' || change.type === 'added') && d.ultimoRemitenteId !== user.uid) {
           const signature = buildLastMessageSignature(change.doc.id, d);
-          const isNew = rememberSignature(privadosUnreadSeenRef.current, signature);
+          const isNew = isNewSignature(signature);
           if (!isNew) return;
           const ac = activeChatRef.current;
           if (!(ac.tipo === 'privado' && ac.id === otherUserId))

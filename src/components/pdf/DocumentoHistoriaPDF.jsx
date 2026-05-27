@@ -97,16 +97,8 @@ const fmtDate = (input) => {
   return text;
 };
 
-const auditLabel = (status = '') => {
-  if (status === 'aprobado') return 'Aprobado';
-  if (status === 'incompleto') return 'Incompleto';
-  if (status === 'critico') return 'Critico';
-  return 'Sin auditoria';
-};
-
 const DocumentoHistoriaPDF = ({ paciente, historial, doctor, expedienteActual }) => {
   const consultas = Array.isArray(historial) ? historial : [];
-  const ultimaAuditoria = consultas.find((c) => c?.auditSnapshot)?.auditSnapshot || null;
 
   return (
     <Document>
@@ -126,13 +118,6 @@ const DocumentoHistoriaPDF = ({ paciente, historial, doctor, expedienteActual })
             <View style={styles.row}><Text style={styles.label}>Medico responsable:</Text><Text style={styles.value}>{safe(doctor?.nombre, 'Medico General')}    Cedula: {safe(doctor?.cedulaProfesional || doctor?.cedula)}</Text></View>
             <View style={styles.row}><Text style={styles.label}>Fecha de emision:</Text><Text style={styles.value}>{new Date().toLocaleDateString('es-MX')}</Text></View>
           </View>
-        </View>
-
-        <View style={styles.auditInfo}>
-          <Text style={styles.auditText}>AUDITORIA CLINICA</Text>
-          <Text style={styles.auditText}>Estado: {auditLabel(ultimaAuditoria?.status)}</Text>
-          <Text style={styles.auditText}>Puntaje de integridad: {typeof ultimaAuditoria?.score === 'number' ? `${ultimaAuditoria.score}%` : '--'}</Text>
-          <Text style={styles.auditText}>Criticos pendientes: {Array.isArray(ultimaAuditoria?.missingCritical) && ultimaAuditoria.missingCritical.length ? ultimaAuditoria.missingCritical.join(', ') : 'Ninguno'}</Text>
         </View>
 
         <View style={styles.box}>
@@ -159,7 +144,7 @@ const DocumentoHistoriaPDF = ({ paciente, historial, doctor, expedienteActual })
               <Text>{safe(c?.fecha, '--/--/----')}</Text>
             </View>
             <View style={styles.boxBody}>
-              <Text style={styles.p}><Text style={{ fontWeight: 'bold' }}>Medico:</Text> {safe(c?.medicoNombre || doctor?.nombre)}    <Text style={{ fontWeight: 'bold' }}>Auditoria:</Text> {auditLabel(c?.auditSnapshot?.status)}{typeof c?.auditSnapshot?.score === 'number' ? ` (${c.auditSnapshot.score}%)` : ''}</Text>
+              <Text style={styles.p}><Text style={{ fontWeight: 'bold' }}>Medico:</Text> {safe(c?.medicoNombre || doctor?.nombre)}</Text>
 
               <Text style={styles.lineTitle}>Padecimiento</Text>
               <View style={styles.lineRule} />

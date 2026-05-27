@@ -34,7 +34,6 @@ import HistoricoEmbarazosModal from '../../components/HistoricoEmbarazosModal';
 import NegatoscopioModal from '../../components/NegatoscopioModal';
 import CalculadoraDosisModal from '../../components/CalculadoraDosisModal';
 import { listLegacyLinksByPaciente } from '../../services/patientLinkService';
-import { createClinicalAuditRecord, validateClinicalRecord } from '../../services/clinicalAuditService';
 import { uploadDocumentoPDF } from '../../services/documentStorageService';
 import { buildEnfermeriaPatientLogRecord } from '../../services/enfermeriaPatientLogService';
 import { getTipoCitaLabel } from '../../services/referenciaMedicaService';
@@ -566,6 +565,65 @@ const mergeClinicalSection = (base, incoming) => {
   return incoming;
 };
 
+// safeMergeForUpdate: merge profundo donde un valor VACIO del nuevo NO pisa
+// un valor LLENO del original. Diseñado para escrituras de actualización en
+// documentos históricos (rama de "Verificar + Finalizar"). Si el doctor borró
+// intencionalmente un campo, debe escribir un espacio o reemplazar el contenido;
+// pero un vacío residual del state local nunca destruirá datos previos.
+const safeMergeForUpdate = (original, updated) => {
+  if (updated === undefined || updated === null) return original;
+
+  if (typeof updated === 'string') {
+    if (typeof original === 'string' && original.trim().length > 0 && updated.trim().length === 0) {
+      return original;
+    }
+    return updated;
+  }
+
+  if (typeof updated === 'number') {
+    if (!Number.isFinite(updated) && typeof original === 'number' && Number.isFinite(original)) {
+      return original;
+    }
+    return updated;
+  }
+
+  if (typeof updated === 'boolean') return updated;
+
+  if (Array.isArray(updated)) {
+    if (Array.isArray(original) && original.length > 0 && updated.length === 0) {
+      return original;
+    }
+    return updated;
+  }
+
+  if (typeof updated === 'object') {
+    const baseObj = (original && typeof original === 'object' && !Array.isArray(original)) ? original : {};
+    const result = { ...baseObj };
+    Object.keys(updated).forEach((key) => {
+      result[key] = safeMergeForUpdate(baseObj[key], updated[key]);
+    });
+    // Preservar también las llaves del original que no estén en updated
+    Object.keys(baseObj).forEach((key) => {
+      if (!(key in updated)) result[key] = baseObj[key];
+    });
+    return result;
+  }
+
+  return updated;
+};
+
+// deepCloneSafe: clon profundo conservador (sin Dates, Maps, etc.) usado para
+// aislar mutaciones del state al construir el payload de guardado.
+const deepCloneSafe = (value) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return Array.isArray(value) ? [...value] : { ...value };
+  }
+};
+
 const mergeGeneratedEvents = (baseEvents = [], nextEvents = []) => {
   // Clave semántica: no incluye timestamps ni URLs para que la deduplicación
   // funcione correctamente entre eventos ya guardados y nuevos de sesión.
@@ -965,7 +1023,7 @@ const ExpedienteClinico = () => {
         goBackOr(navigate, exitFallbackPath);
         return;
       }
-      executeSave({ allowCritical: true });
+      setTimeout(() => executeSave({ allowCritical: true }), 50);
     }
   };
 
@@ -1109,30 +1167,80 @@ const ExpedienteClinico = () => {
     setTempCirugia(DEFAULT_TEMP_CIRUGIA);
     setEventosDocumentales([]);
 
-    setExpediente((prev) => ({
-      ...prev,
-      px_info: {
-        ...prev.px_info,
-        ...(consultaHistorica.px_info || {})
-      },
-      resumen: consultaHistorica.resumen
-        ? mergeClinicalSection(prev.resumen, consultaHistorica.resumen)
-        : prev.resumen,
-      antecedentes: consultaHistorica.antecedentes
-        ? mergeClinicalSection(prev.antecedentes, consultaHistorica.antecedentes)
-        : prev.antecedentes,
-      control_embarazo: consultaHistorica.control_embarazo
-        ? mergeClinicalSection(prev.control_embarazo, consultaHistorica.control_embarazo)
-        : prev.control_embarazo,
-      consulta: consultaHistorica.consulta
-        ? mergeClinicalSection(prev.consulta, consultaHistorica.consulta)
-        : prev.consulta,
-      meta: consultaHistorica.meta
-        ? mergeClinicalSection(prev.meta, consultaHistorica.meta)
-        : prev.meta,
-      medicoNombre: consultaHistorica.medicoNombre || prev.medicoNombre || '',
-      medicoPerfil: consultaHistorica.medicoPerfil || prev.medicoPerfil || null
-    }));
+    // FIX: Verificar si hay un borrador local de revisión histórica pendiente
+    // (ediciones a esta misma nota que no llegaron a guardarse por crash/cierre).
+    let draftLocalHistorico = null;
+    let nextTempMed = DEFAULT_TEMP_MED;
+    let nextTempAlergia = DEFAULT_TEMP_ALERGIA;
+    let nextTempCirugia = DEFAULT_TEMP_CIRUGIA;
+    let nextEventosDocs = [];
+    try {
+      const raw = localStorage.getItem(`historical_review_draft_${consultaHistorica.id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.expediente && hasMeaningfulClinicalData(parsed.expediente)) {
+          draftLocalHistorico = parsed.expediente;
+          if (parsed.tempMed) nextTempMed = parsed.tempMed;
+          if (parsed.tempAlergia) nextTempAlergia = parsed.tempAlergia;
+          if (parsed.tempCirugia) nextTempCirugia = parsed.tempCirugia;
+          if (Array.isArray(parsed.eventosDocumentales)) nextEventosDocs = parsed.eventosDocumentales;
+        }
+      }
+    } catch (e) {
+      console.warn('No se pudo leer borrador local de revisión histórica:', e);
+    }
+
+    // FIX: snapshot del estado mergeado para poder sincronizar el baseline
+    // (evita que assessUnsavedChanges marque siempre cambios espurios después de
+    // cargar la histórica, lo que forzaba el flujo de guardado y exponía al doctor
+    // a la sobreescritura del documento original).
+    let mergedExpediente = null;
+    setExpediente((prev) => {
+      // 1. Aplicar la consulta histórica sobre el estado actual
+      const baseConHistorica = {
+        ...prev,
+        px_info: mergeClinicalSection(prev.px_info, consultaHistorica.px_info || {}),
+        resumen: consultaHistorica.resumen
+          ? mergeClinicalSection(prev.resumen, consultaHistorica.resumen)
+          : prev.resumen,
+        antecedentes: consultaHistorica.antecedentes
+          ? mergeClinicalSection(prev.antecedentes, consultaHistorica.antecedentes)
+          : prev.antecedentes,
+        control_embarazo: consultaHistorica.control_embarazo
+          ? mergeClinicalSection(prev.control_embarazo, consultaHistorica.control_embarazo)
+          : prev.control_embarazo,
+        consulta: consultaHistorica.consulta
+          ? mergeClinicalSection(prev.consulta, consultaHistorica.consulta)
+          : prev.consulta,
+        meta: consultaHistorica.meta
+          ? mergeClinicalSection(prev.meta, consultaHistorica.meta)
+          : prev.meta,
+        medicoNombre: consultaHistorica.medicoNombre || prev.medicoNombre || '',
+        medicoPerfil: consultaHistorica.medicoPerfil || prev.medicoPerfil || null
+      };
+
+      // 2. Si hay borrador local más reciente con ediciones, superponerlo
+      let next = baseConHistorica;
+      if (draftLocalHistorico) {
+        next = {
+          ...baseConHistorica,
+          px_info: mergeClinicalSection(baseConHistorica.px_info, draftLocalHistorico.px_info || {}),
+          resumen: mergeClinicalSection(baseConHistorica.resumen, draftLocalHistorico.resumen || {}),
+          antecedentes: mergeClinicalSection(baseConHistorica.antecedentes, draftLocalHistorico.antecedentes || {}),
+          control_embarazo: mergeClinicalSection(baseConHistorica.control_embarazo, draftLocalHistorico.control_embarazo || {}),
+          consulta: mergeClinicalSection(baseConHistorica.consulta, draftLocalHistorico.consulta || {}),
+          meta: mergeClinicalSection(baseConHistorica.meta, draftLocalHistorico.meta || {})
+        };
+      }
+
+      mergedExpediente = next;
+      return next;
+    });
+
+    setTempMed(nextTempMed);
+    setTempAlergia(nextTempAlergia);
+    setTempCirugia(nextTempCirugia);
+    setEventosDocumentales(nextEventosDocs);
 
     setHistoricalReview({
       historialId: consultaHistorica.id,
@@ -1154,6 +1262,19 @@ const ExpedienteClinico = () => {
     setVisitedTabs(new Set(['resumen', 'antecedentes', 'consulta']));
     setActiveMainTab('consulta');
     setActiveConsulta('padecimiento');
+
+    // Sincronizar baseline: el state ya tiene los datos históricos cargados,
+    // así que el comparador debe usar este punto como referencia. Sin esto,
+    // cualquier navegación interna disparaba "tienes cambios sin guardar".
+    if (mergedExpediente) {
+      syncExitBaseline({
+        expediente: mergedExpediente,
+        tempMed: DEFAULT_TEMP_MED,
+        tempAlergia: DEFAULT_TEMP_ALERGIA,
+        tempCirugia: DEFAULT_TEMP_CIRUGIA,
+        eventosDocumentales: []
+      });
+    }
 
     showToast('Consulta histórica cargada. Guardar actualizará ese registro sin generar una nueva visita.', 'info');
   };
@@ -1714,6 +1835,76 @@ const ExpedienteClinico = () => {
             }
           }
 
+          // Recuperar respaldos locales de emergencia (autosave fallido o error al guardar)
+          let recuperadoDeLocal = false;
+          const autosaveKey = `autosave_draft_${citaId}`;
+          const emergencyKey = `emergency_draft_${pacienteId}_${citaId || 'nocita'}`;
+
+          try {
+            const emergencyRaw = localStorage.getItem(emergencyKey);
+            if (emergencyRaw) {
+              const emergencyData = JSON.parse(emergencyRaw);
+              const draftExp = emergencyData.expediente;
+              if (draftExp) {
+                if (hasMeaningfulClinicalData(draftExp.consulta)) {
+                  nuevosDatos.consulta = mergeClinicalSection(nuevosDatos.consulta, draftExp.consulta);
+                }
+                if (hasMeaningfulClinicalData(draftExp.antecedentes)) {
+                  nuevosDatos.antecedentes = mergeClinicalSection(nuevosDatos.antecedentes, draftExp.antecedentes);
+                }
+                if (hasMeaningfulClinicalData(draftExp.resumen)) {
+                  nuevosDatos.resumen = mergeClinicalSection(nuevosDatos.resumen, draftExp.resumen);
+                }
+                if (hasMeaningfulClinicalData(draftExp.control_embarazo)) {
+                  nuevosDatos.control_embarazo = mergeClinicalSection(nuevosDatos.control_embarazo, draftExp.control_embarazo);
+                }
+                if (draftExp.meta?.costo) nuevosDatos.meta.costo = draftExp.meta.costo;
+                if (draftExp.px_info) {
+                  nuevosDatos.px_info = { ...nuevosDatos.px_info, ...draftExp.px_info };
+                }
+                if (emergencyData.tempMed) nextTempMed = emergencyData.tempMed;
+                if (emergencyData.tempAlergia) nextTempAlergia = emergencyData.tempAlergia;
+                if (emergencyData.tempCirugia) nextTempCirugia = emergencyData.tempCirugia;
+                recuperadoDeLocal = true;
+                showToast("Se recuperaron datos de un guardado de emergencia anterior.", "info");
+              }
+              localStorage.removeItem(emergencyKey);
+            }
+          } catch (e) {
+            console.warn('Error recuperando emergency_draft:', e);
+          }
+
+          // Si no habia emergency, intentar el autosave local
+          if (!recuperadoDeLocal) {
+            try {
+              const autosaveRaw = localStorage.getItem(autosaveKey);
+              if (autosaveRaw) {
+                const draftLocal = JSON.parse(autosaveRaw);
+                if (hasMeaningfulClinicalData(draftLocal.consulta)) {
+                  nuevosDatos.consulta = mergeClinicalSection(nuevosDatos.consulta, draftLocal.consulta);
+                }
+                if (hasMeaningfulClinicalData(draftLocal.antecedentes)) {
+                  nuevosDatos.antecedentes = mergeClinicalSection(nuevosDatos.antecedentes, draftLocal.antecedentes);
+                }
+                if (hasMeaningfulClinicalData(draftLocal.resumen)) {
+                  nuevosDatos.resumen = mergeClinicalSection(nuevosDatos.resumen, draftLocal.resumen);
+                }
+                if (hasMeaningfulClinicalData(draftLocal.control_embarazo)) {
+                  nuevosDatos.control_embarazo = mergeClinicalSection(nuevosDatos.control_embarazo, draftLocal.control_embarazo);
+                }
+                if (draftLocal.meta?.costo) nuevosDatos.meta.costo = draftLocal.meta.costo;
+                if (draftLocal.tempMed) nextTempMed = draftLocal.tempMed;
+                if (draftLocal.tempAlergia) nextTempAlergia = draftLocal.tempAlergia;
+                if (draftLocal.tempCirugia) nextTempCirugia = draftLocal.tempCirugia;
+                recuperadoDeLocal = true;
+                showToast("Se recuperaron datos del borrador automático local.", "info");
+                localStorage.removeItem(autosaveKey);
+              }
+            } catch (e) {
+              console.warn('Error recuperando autosave_draft:', e);
+            }
+          }
+
           if (dataCita.consultaIniciadaAt?.toDate) {
             consultaInicioRef.current = dataCita.consultaIniciadaAt.toDate();
           } else if (dataCita.estado !== 'completada') {
@@ -1938,48 +2129,43 @@ const ExpedienteClinico = () => {
     if (!pacienteId || !citaId || loading || isHistoricalReviewMode) return;
 
     const timer = setTimeout(async () => {
+      const draftPayload = {
+        consulta: expediente.consulta,
+        resumen: expediente.resumen,
+        antecedentes: expediente.antecedentes,
+        control_embarazo: expediente.control_embarazo,
+        px_info: {
+          grupo_sanguineo: expediente.px_info?.grupo_sanguineo || '',
+          fum: expediente.px_info?.fum || '',
+          fpp: expediente.px_info?.fpp || '',
+          sdg: expediente.px_info?.sdg || '',
+          es_embarazada: !!expediente.px_info?.es_embarazada,
+          requiere_cirugia: expediente.px_info?.requiere_cirugia || { general: false, ginecologica: false }
+        },
+        meta: { costo: expediente.meta?.costo || '' },
+        tempMed,
+        tempAlergia,
+        tempCirugia
+      };
+
+      // FIX: Respaldo PROACTIVO en localStorage SIEMPRE (no solo si falla Firebase).
+      // Garantiza que ante refresh, cierre accidental, crash o token expirado,
+      // los datos clínicos sobrevivan. Se limpia al guardar correctamente.
+      try {
+        localStorage.setItem(
+          `autosave_draft_${citaId}`,
+          JSON.stringify({ ...draftPayload, savedAt: Date.now() })
+        );
+      } catch { /* localStorage lleno o no disponible */ }
+
       try {
         await updateDoc(doc(db, "citas", citaId), {
-          consultaDraft: {
-            consulta: expediente.consulta,
-            resumen: expediente.resumen,
-            antecedentes: expediente.antecedentes,
-            control_embarazo: expediente.control_embarazo,
-            px_info: {
-              grupo_sanguineo: expediente.px_info?.grupo_sanguineo || '',
-              fum: expediente.px_info?.fum || '',
-              fpp: expediente.px_info?.fpp || '',
-              sdg: expediente.px_info?.sdg || '',
-              es_embarazada: !!expediente.px_info?.es_embarazada,
-              requiere_cirugia: expediente.px_info?.requiere_cirugia || { general: false, ginecologica: false }
-            },
-            meta: { costo: expediente.meta?.costo || '' },
-            tempMed,
-            tempAlergia,
-            tempCirugia
-          },
+          consultaDraft: draftPayload,
           consultaDraftUpdatedAt: serverTimestamp()
         });
       } catch (e) {
         console.error("Error autoguardando en Firebase", e);
-        // Respaldo local silencioso: si Firestore falla (token expirado, red caída),
-        // guardar el draft en localStorage para no perder los últimos cambios.
-        try {
-          localStorage.setItem(
-            `autosave_draft_${citaId}`,
-            JSON.stringify({
-              consulta: expediente.consulta,
-              antecedentes: expediente.antecedentes,
-              resumen: expediente.resumen,
-              control_embarazo: expediente.control_embarazo,
-              meta: expediente.meta,
-              tempMed,
-              tempAlergia,
-              tempCirugia,
-              savedAt: Date.now()
-            })
-          );
-        } catch { /* localStorage lleno o no disponible */ }
+        // localStorage ya fue actualizado arriba; los datos están seguros localmente.
       }
     }, 1500);
 
@@ -2003,6 +2189,40 @@ const ExpedienteClinico = () => {
     tempAlergia,
     tempCirugia,
     isHistoricalReviewMode
+  ]);
+
+  // FIX: Autosave local también para modo histórico ("Verificar + Finalizar").
+  // Sin esto, si el doctor edita una nota histórica y la app crashea/refresca,
+  // pierde lo editado (el autosave normal está desactivado en modo histórico).
+  useEffect(() => {
+    if (!isHistoricalReviewMode || !historicalReview?.historialId || loading) return;
+
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          `historical_review_draft_${historicalReview.historialId}`,
+          JSON.stringify({
+            expediente,
+            tempMed,
+            tempAlergia,
+            tempCirugia,
+            eventosDocumentales,
+            savedAt: Date.now()
+          })
+        );
+      } catch { /* localStorage lleno o no disponible */ }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [
+    isHistoricalReviewMode,
+    historicalReview?.historialId,
+    loading,
+    expediente,
+    tempMed,
+    tempAlergia,
+    tempCirugia,
+    eventosDocumentales
   ]);
 
   // Mantener alergias_base sincronizado con antecedentes.alergias (fuente de verdad)
@@ -2138,8 +2358,7 @@ const ExpedienteClinico = () => {
           receta: data.consulta?.diagnostico?.tratamiento_lista || [],
           recetasGeneradas: Array.isArray(data.recetasGeneradas) ? data.recetasGeneradas : [],
           documentosGenerados: Array.isArray(data.documentosGenerados) ? data.documentosGenerados : [],
-          indicaciones: data.consulta?.diagnostico?.indicaciones || '',
-          auditSnapshot: data.auditSnapshot || null
+          indicaciones: data.consulta?.diagnostico?.indicaciones || ''
         };
       });
 
@@ -2167,7 +2386,6 @@ const ExpedienteClinico = () => {
           recetasGeneradas: [],
           documentosGenerados: [],
           indicaciones: '',
-          auditSnapshot: null,
           adjuntos: Array.isArray(data.adjuntos) ? data.adjuntos : [],
           interpretacion: data.interpretacion || '',
           estudiosPrevios: Array.isArray(data.estudios) ? data.estudios : [],
@@ -2242,8 +2460,11 @@ const ExpedienteClinico = () => {
     }
 
     try {
-      const expedienteFinal = { ...expediente };
+      // Deep clone para evitar mutar el state al modificar sub-arrays
+      // (tratamiento_lista, alergias.lista, cirugias.lista) durante el armado del payload.
+      const expedienteFinal = deepCloneSafe(expediente);
       const grupoSanguineoNormalizado = (expedienteFinal.px_info?.grupo_sanguineo || '').trim().toUpperCase();
+      if (!expedienteFinal.px_info) expedienteFinal.px_info = {};
       expedienteFinal.px_info.grupo_sanguineo = grupoSanguineoNormalizado;
       const costoConsulta = Number.parseFloat(expedienteFinal.meta?.costo || 0);
       const costoSanitizado = Number.isFinite(costoConsulta) ? costoConsulta : 0;
@@ -2259,10 +2480,13 @@ const ExpedienteClinico = () => {
         expedienteFinal.antecedentes.alergias.lista = [...listaAlergias, { sustancia: tempAlergia.nombre }];
       }
       if (tempCirugia.procedimiento.trim() !== '') {
+        const fechaRegistroCirugia = tempCirugia.tipoFecha === 'ano'
+          ? (tempCirugia.ano || '')
+          : (tempCirugia.fechaHora ? tempCirugia.fechaHora.split('T')[0] : '');
         const nuevaCirugia = {
           ...tempCirugia,
           id: Date.now(),
-          fechaRegistro: tempCirugia.tipoFecha === 'ano' ? tempCirugia.ano : tempCirugia.fechaHora.split('T')[0],
+          fechaRegistro: fechaRegistroCirugia,
           medico: expediente.medicoNombre || 'Medico Tratante'
         };
         const listaCirugias = expedienteFinal.antecedentes.cirugias.lista || [];
@@ -2355,15 +2579,6 @@ const ExpedienteClinico = () => {
         );
       }
 
-      const validation = validateClinicalRecord(expedienteFinal, {
-        pacienteId,
-        medicoNombre: user?.nombre || ''
-      });
-
-      if (validation.status === 'critico' && !allowCritical) {
-        showToast(`Guardado con campos pendientes: ${validation.missingCritical.join(', ')}`, 'info');
-      }
-
       if (!consultaTieneDatosClinicos()) {
         showToast("Sin datos clínicos para guardar.", "info");
         if (isHistoricalReviewMode) {
@@ -2411,28 +2626,46 @@ const ExpedienteClinico = () => {
       }
 
       if (isHistoricalReviewMode && historicalReview?.historialId) {
+        // FIX: leer el documento histórico actual y hacer un safeMerge para que
+        // ningún campo VACIO del state local destruya un valor LLENO del original.
+        // Esto soluciona el reporte del Dr. Gustavo donde "verificar + finalizar"
+        // dejaba el padecimiento o cualquier sub-campo en blanco si el state lo había perdido.
+        const historicoRef = doc(db, "historial_clinico", historicalReview.historialId);
+        let historicoOriginal = null;
+        try {
+          const historicoSnap = await getDoc(historicoRef);
+          if (historicoSnap.exists()) {
+            historicoOriginal = historicoSnap.data() || {};
+          } else {
+            historicoOriginal = {};
+          }
+        } catch (readErr) {
+          console.error('[Expediente] No se pudo leer el documento histórico antes de actualizar:', readErr);
+          showToast('No se pudo verificar la nota original. Verifica tu conexión e intenta de nuevo.', 'error');
+          savingRef.current = false;
+          setLoading(false);
+          return;
+        }
+
+        if (!historicoOriginal) {
+          showToast('El documento histórico ya no existe. No se puede actualizar.', 'error');
+          savingRef.current = false;
+          setLoading(false);
+          return;
+        }
+
+        const expedienteMergeado = safeMergeForUpdate(historicoOriginal, expedienteFinal);
+
         const reviewBatch = writeBatch(db);
-        reviewBatch.update(doc(db, "historial_clinico", historicalReview.historialId), {
-          ...expedienteFinal,
+        reviewBatch.update(historicoRef, {
+          ...expedienteMergeado,
           costo: costoSanitizado,
           recetasGeneradas,
           documentosGenerados,
-          auditSnapshot: validation.snapshot,
           actualizadoEnConsultaAt: serverTimestamp(),
           actualizadoPorMedicoId: auth.currentUser?.uid || 'anonimo',
           actualizadoPorMedicoNombre: user?.nombre || 'Medico sin nombre'
         });
-
-        createClinicalAuditRecord({
-          pacienteId,
-          pacienteNombre,
-          historialId: historicalReview.historialId,
-          citaId: historicalReview.citaId || null,
-          medicoId: auth.currentUser?.uid || 'anonimo',
-          medicoNombre: user?.nombre || 'Medico sin nombre',
-          validation,
-          expediente: expedienteFinal
-        }, reviewBatch);
 
         await reviewBatch.commit();
 
@@ -2442,17 +2675,16 @@ const ExpedienteClinico = () => {
               row.id === historicalReview.historialId
                 ? {
                   ...row,
-                  ...expedienteFinal,
+                  ...expedienteMergeado,
                   costo: costoSanitizado,
                   recetasGeneradas,
-                  documentosGenerados,
-                  auditSnapshot: validation.snapshot
+                  documentosGenerados
                 }
                 : row
             ))
             : prev
         ));
-        setExpediente(expedienteFinal);
+        setExpediente(expedienteMergeado);
         setTempMed(DEFAULT_TEMP_MED);
         setTempAlergia(DEFAULT_TEMP_ALERGIA);
         setTempCirugia(DEFAULT_TEMP_CIRUGIA);
@@ -2468,12 +2700,20 @@ const ExpedienteClinico = () => {
         ));
         setHistorialRefreshKey((prev) => prev + 1);
 
+        // FIX: Sincronizar baseline después de guardar para que el comparador no marque
+        // cambios espurios al volver a la consulta actual. Limpiar también respaldo local.
+        syncExitBaseline({
+          expediente: expedienteMergeado,
+          tempMed: DEFAULT_TEMP_MED,
+          tempAlergia: DEFAULT_TEMP_ALERGIA,
+          tempCirugia: DEFAULT_TEMP_CIRUGIA,
+          eventosDocumentales: []
+        });
+        try {
+          localStorage.removeItem(`historical_review_draft_${historicalReview.historialId}`);
+        } catch { /* localStorage no disponible */ }
+
         showToast("Consulta histórica actualizada sin generar una nueva visita.", "success");
-        if (validation.status === 'critico') {
-          showToast(`Guardado con campos pendientes: ${validation.missingCritical.join(', ')}`, 'info');
-        } else if (validation.status === 'incompleto') {
-          showToast(`Guardado con observaciones de auditoria: ${validation.missingRecommended.join(', ')}`, 'info');
-        }
 
         savingRef.current = false;
         setLoading(false);
@@ -2565,32 +2805,18 @@ const ExpedienteClinico = () => {
           costo: costoSanitizado,
           duracionRealMin,
           recetasGeneradas,
-          documentosGenerados,
-          auditSnapshot: validation.snapshot
+          documentosGenerados
         });
       } else {
         batch.update(historialRef, {
           ...expedienteFinal,
           recetasGeneradas,
           documentosGenerados,
-          auditSnapshot: validation.snapshot,
           actualizadoEnConsultaAt: serverTimestamp()
         });
       }
 
-      // 3. Registro de auditoría
-      createClinicalAuditRecord({
-        pacienteId,
-        pacienteNombre,
-        historialId: historialRef.id,
-        citaId: citaId || null,
-        medicoId: auth.currentUser?.uid || 'anonimo',
-        medicoNombre: user?.nombre || 'Medico sin nombre',
-        validation,
-        expediente: expedienteFinal
-      }, batch);
-
-      // 4. Marcar cita como completada
+      // 3. Marcar cita como completada
       if (citaId) {
         batch.update(doc(db, "citas", citaId), {
           estado: 'completada',
@@ -2677,19 +2903,22 @@ const ExpedienteClinico = () => {
         eventosDocumentales: []
       });
 
+      // FIX: Limpiar respaldos locales al guardar exitosamente; quedaron obsoletos
+      // y no deben re-aplicarse en la próxima apertura del expediente.
+      try {
+        if (citaId) localStorage.removeItem(`autosave_draft_${citaId}`);
+        localStorage.removeItem(`emergency_draft_${pacienteId}_${citaId || 'nocita'}`);
+      } catch { /* localStorage no disponible */ }
+
       saveCompletedRef.current = true;
       showToast("Expediente guardado correctamente.", "success");
-      if (validation.status === 'critico') {
-        showToast(`Guardado al salir con campos pendientes: ${validation.missingCritical.join(', ')}`, 'info');
-      } else if (validation.status === 'incompleto') {
-        showToast(`Guardado con observaciones de auditoria: ${validation.missingRecommended.join(', ')}`, 'info');
-      }
       setTimeout(() => goBackOr(navigate, exitFallbackPath), 1500);
 
     } catch (e) {
       console.error('[Expediente] Error en executeSave:', e);
 
       // Respaldo de emergencia en localStorage para no perder datos clínicos
+      let emergenciaGuardada = false;
       try {
         const emergencyKey = `emergency_draft_${pacienteId}_${citaId || 'nocita'}`;
         const expedienteFallback = { ...expediente };
@@ -2706,6 +2935,7 @@ const ExpedienteClinico = () => {
           timestamp: new Date().toISOString(),
           error: e.message || 'Error desconocido'
         }));
+        emergenciaGuardada = true;
         console.warn('[Expediente] Datos guardados en localStorage como respaldo de emergencia:', emergencyKey);
       } catch (lsErr) {
         console.error('[Expediente] No se pudo guardar respaldo en localStorage:', lsErr);
@@ -2714,9 +2944,14 @@ const ExpedienteClinico = () => {
       if (isEnfermeriaDocumentMode) {
         showToast("No se pudo guardar el expediente. Regresando a enfermería.", "info");
         setTimeout(() => goBackOr(navigate, exitFallbackPath), 800);
+      } else if (emergenciaGuardada) {
+        showToast(
+          "Error al guardar en la nube. Se guardó una copia local. No cierre esta ventana e intente de nuevo.",
+          "error"
+        );
       } else {
         showToast(
-          "⚠️ Error al guardar. Se guardó una copia local de respaldo. No cierre esta ventana e intente de nuevo.",
+          "Error grave al guardar. No se pudo crear respaldo local. Contacte a soporte técnico.",
           "error"
         );
       }
@@ -3316,7 +3551,8 @@ const ExpedienteClinico = () => {
     const tieneIndicaciones = String(c?.diagnostico?.indicaciones || '').trim() !== '';
     const tieneEstudios = (c?.estudios?.paquetes_seleccionados?.length || 0) > 0 || (c?.estudios?.estudios_seleccionados?.length || 0) > 0;
     const tieneProcedimientos = (c?.procedimientos?.seleccionados?.length || 0) > 0;
-    return tieneSignos || tieneAntropometria || tienePadecimiento || tieneDiagnostico || tieneTratamiento || tieneIndicaciones || tieneEstudios || tieneProcedimientos;
+    const tieneReferencias = (c?.referencias_medicas?.seleccionadas?.length || 0) > 0;
+    return tieneSignos || tieneAntropometria || tienePadecimiento || tieneDiagnostico || tieneTratamiento || tieneIndicaciones || tieneEstudios || tieneProcedimientos || tieneReferencias;
   };
 
   const handleSalir = () => {

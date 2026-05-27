@@ -179,6 +179,11 @@ const CatalogosGlobales = () => {
   const [editingCapacitacionId, setEditingCapacitacionId] = useState(null);
   const [capacitacionFile, setCapacitacionFile] = useState(null);
   const [uploadingCapacitacion, setUploadingCapacitacion] = useState(false);
+  const [docsCapacitacionMedicos, setDocsCapacitacionMedicos] = useState([]);
+  const [capacitacionMedicosForm, setCapacitacionMedicosForm] = useState({ titulo: '', categoria: '', descripcion: '', contenido: '', orden: 0 });
+  const [editingCapacitacionMedicosId, setEditingCapacitacionMedicosId] = useState(null);
+  const [capacitacionMedicosFile, setCapacitacionMedicosFile] = useState(null);
+  const [uploadingCapacitacionMedicos, setUploadingCapacitacionMedicos] = useState(false);
   const [estudioForm, setEstudioForm] = useState({
     clave: '',
     descripcion: '',
@@ -249,6 +254,7 @@ const CatalogosGlobales = () => {
   const [categoriaSintomaColor, setCategoriaSintomaColor] = useState(SYMPTOM_CATEGORY_COLOR_FALLBACK);
   const [editingCategoriaSintomaId, setEditingCategoriaSintomaId] = useState(null);
   const [activeTab, setActiveTab] = useState('motivos');
+  const [capacitacionSubTab, setCapacitacionSubTab] = useState('enfermeria');
   const [pill, setPill] = useState({ show: false, type: 'info', message: '' });
   const [confirmState, setConfirmState] = useState({ open: false, message: '', onAccept: null });
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -587,13 +593,16 @@ const CatalogosGlobales = () => {
     const unsub8 = onSnapshot(query(collection(db, 'catalogo_documentos_capacitacion'), orderBy('orden', 'asc')), (snap) => {
       setDocsCapacitacion(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     }, () => { });
+    const unsub9 = onSnapshot(query(collection(db, 'catalogo_documentos_capacitacion_medicos'), orderBy('orden', 'asc')), (snap) => {
+      setDocsCapacitacionMedicos(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => { });
 
     loadStudiesFromPublicData().then(setLegacyEstudios).catch((error) => {
       console.error('Error cargando estudios base', error);
       setLegacyEstudios([]);
     });
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsubCategoriasSintomas(); unsub6(); unsub7(); unsubRefMed(); unsub8(); };
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsubCategoriasSintomas(); unsub6(); unsub7(); unsubRefMed(); unsub8(); unsub9(); };
   }, [user?.uid]);
 
   const resetEstudioForm = () => {
@@ -2715,74 +2724,105 @@ const CatalogosGlobales = () => {
 
       {activeTab === 'capacitacion' && (() => {
         const CATEGORIAS_CAP = ['Protocolos', 'Procedimientos', 'Normas', 'Guías clínicas', 'Farmacología'];
-        const saveCapacitacion = async () => {
-          const titulo = capacitacionForm.titulo.trim();
+        const isEnfermeria = capacitacionSubTab === 'enfermeria';
+
+        const docs = isEnfermeria ? docsCapacitacion : docsCapacitacionMedicos;
+        const form = isEnfermeria ? capacitacionForm : capacitacionMedicosForm;
+        const setForm = isEnfermeria ? setCapacitacionForm : setCapacitacionMedicosForm;
+        const editingId = isEnfermeria ? editingCapacitacionId : editingCapacitacionMedicosId;
+        const setEditingId = isEnfermeria ? setEditingCapacitacionId : setEditingCapacitacionMedicosId;
+        const file = isEnfermeria ? capacitacionFile : capacitacionMedicosFile;
+        const setFile = isEnfermeria ? setCapacitacionFile : setCapacitacionMedicosFile;
+        const uploading = isEnfermeria ? uploadingCapacitacion : uploadingCapacitacionMedicos;
+        const setUpUploading = isEnfermeria ? setUploadingCapacitacion : setUploadingCapacitacionMedicos;
+        const collectionName = isEnfermeria ? 'catalogo_documentos_capacitacion' : 'catalogo_documentos_capacitacion_medicos';
+        const colorPalette = isEnfermeria ? { bg: 'bg-violet-50', border: 'border-violet-200', text: 'text-violet-600', btn: 'bg-violet-600 hover:bg-violet-700' } : { bg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-600', btn: 'bg-sky-600 hover:bg-sky-700' };
+        const label = isEnfermeria ? 'Enfermería' : 'Médicos';
+
+        const saveCap = async () => {
+          const titulo = form.titulo.trim();
           if (!titulo) { showPill('El título es obligatorio', 'error'); return; }
-          if (!capacitacionForm.contenido.trim() && !capacitacionFile && !editingCapacitacionId) { showPill('Agrega contenido de texto o un archivo', 'error'); return; }
-          setUploadingCapacitacion(true);
+          if (!form.contenido.trim() && !file && !editingId) { showPill('Agrega contenido de texto o un archivo', 'error'); return; }
+          setUpUploading(true);
           try {
-            let archivoUrl = editingCapacitacionId ? (docsCapacitacion.find(d => d.id === editingCapacitacionId)?.archivoUrl || '') : '';
-            let archivoNombre = editingCapacitacionId ? (docsCapacitacion.find(d => d.id === editingCapacitacionId)?.archivoNombre || '') : '';
-            if (capacitacionFile) {
-              const storageRef = ref(storage, `capacitacion/${Date.now()}_${capacitacionFile.name}`);
-              await uploadBytes(storageRef, capacitacionFile);
+            let archivoUrl = editingId ? (docs.find(d => d.id === editingId)?.archivoUrl || '') : '';
+            let archivoNombre = editingId ? (docs.find(d => d.id === editingId)?.archivoNombre || '') : '';
+            if (file) {
+              const storageRef = ref(storage, `capacitacion/${Date.now()}_${file.name}`);
+              await uploadBytes(storageRef, file);
               archivoUrl = await getDownloadURL(storageRef);
-              archivoNombre = capacitacionFile.name;
+              archivoNombre = file.name;
             }
             const payload = {
               titulo,
-              categoria: capacitacionForm.categoria || 'General',
-              descripcion: capacitacionForm.descripcion.trim(),
-              contenido: capacitacionForm.contenido.trim(),
-              orden: Number(capacitacionForm.orden || 0),
+              categoria: form.categoria || 'General',
+              descripcion: form.descripcion.trim(),
+              contenido: form.contenido.trim(),
+              orden: Number(form.orden || 0),
               activo: true,
               ...(archivoUrl ? { archivoUrl, archivoNombre } : {}),
               updatedAt: serverTimestamp(),
               updatedBy: user?.uid || ''
             };
-            if (editingCapacitacionId) {
-              await updateDoc(doc(db, 'catalogo_documentos_capacitacion', editingCapacitacionId), payload);
+            if (editingId) {
+              await updateDoc(doc(db, collectionName, editingId), payload);
               showPill('Documento actualizado', 'success');
             } else {
               payload.createdAt = serverTimestamp();
               payload.createdBy = user?.uid || '';
-              await addDoc(collection(db, 'catalogo_documentos_capacitacion'), payload);
+              await addDoc(collection(db, collectionName), payload);
               showPill('Documento creado', 'success');
             }
-            setCapacitacionForm({ titulo: '', categoria: '', descripcion: '', contenido: '', orden: 0 });
-            setEditingCapacitacionId(null);
-            setCapacitacionFile(null);
+            setForm({ titulo: '', categoria: '', descripcion: '', contenido: '', orden: 0 });
+            setEditingId(null);
+            setFile(null);
           } catch (err) {
             console.error(err);
             showPill('Error al guardar documento', 'error');
           }
-          setUploadingCapacitacion(false);
+          setUpUploading(false);
         };
-        const startEditCap = (item) => {
-          setEditingCapacitacionId(item.id);
-          setCapacitacionForm({ titulo: item.titulo || '', categoria: item.categoria || '', descripcion: item.descripcion || '', contenido: item.contenido || '', orden: item.orden || 0 });
-          setCapacitacionFile(null);
+        const startEdit = (item) => {
+          setEditingId(item.id);
+          setForm({ titulo: item.titulo || '', categoria: item.categoria || '', descripcion: item.descripcion || '', contenido: item.contenido || '', orden: item.orden || 0 });
+          setFile(null);
         };
-        const cancelEditCap = () => {
-          setEditingCapacitacionId(null);
-          setCapacitacionForm({ titulo: '', categoria: '', descripcion: '', contenido: '', orden: 0 });
-          setCapacitacionFile(null);
+        const cancelEdit = () => {
+          setEditingId(null);
+          setForm({ titulo: '', categoria: '', descripcion: '', contenido: '', orden: 0 });
+          setFile(null);
         };
         return (
           <section className="space-y-5">
+            {/* Sub-tabs */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCapacitacionSubTab('enfermeria')}
+                className={`px-4 py-2 rounded-lg text-sm font-bold border transition-colors ${isEnfermeria ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+              >
+                Enfermería
+              </button>
+              <button
+                onClick={() => setCapacitacionSubTab('medicos')}
+                className={`px-4 py-2 rounded-lg text-sm font-bold border transition-colors ${!isEnfermeria ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+              >
+                Médicos
+              </button>
+            </div>
+
             <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
               <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <BookOpen size={18} className="text-violet-500" />
-                {editingCapacitacionId ? 'Editar documento' : 'Nuevo documento de capacitación'}
+                <BookOpen size={18} className={colorPalette.text} />
+                {editingId ? 'Editar documento' : `Nuevo documento de capacitación — ${label}`}
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Título *</label>
-                  <input value={capacitacionForm.titulo} onChange={(e) => setCapacitacionForm(p => ({ ...p, titulo: e.target.value }))} placeholder="Ej: Protocolo de Triage" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none" />
+                  <input value={form.titulo} onChange={(e) => setForm(p => ({ ...p, titulo: e.target.value }))} placeholder="Ej: Protocolo de Triage" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none" />
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Categoría</label>
-                  <select value={capacitacionForm.categoria} onChange={(e) => setCapacitacionForm(p => ({ ...p, categoria: e.target.value }))} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none bg-white">
+                  <select value={form.categoria} onChange={(e) => setForm(p => ({ ...p, categoria: e.target.value }))} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none bg-white">
                     <option value="">General</option>
                     {CATEGORIAS_CAP.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -2790,31 +2830,31 @@ const CatalogosGlobales = () => {
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Descripción breve</label>
-                <input value={capacitacionForm.descripcion} onChange={(e) => setCapacitacionForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="Descripción corta del documento" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none" />
+                <input value={form.descripcion} onChange={(e) => setForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="Descripción corta del documento" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none" />
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contenido de texto (para IA)</label>
-                <textarea value={capacitacionForm.contenido} onChange={(e) => setCapacitacionForm(p => ({ ...p, contenido: e.target.value }))} placeholder="Pega aquí el contenido del documento... La IA usará este texto para responder preguntas." rows={8} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none resize-y" />
+                <textarea value={form.contenido} onChange={(e) => setForm(p => ({ ...p, contenido: e.target.value }))} placeholder="Pega aquí el contenido del documento... La IA usará este texto para responder preguntas." rows={8} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none resize-y" />
               </div>
               <div className="flex flex-wrap items-end gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Archivo (opcional)</label>
                   <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
                     <Upload size={16} className="text-slate-400" />
-                    <span className="text-sm text-slate-600">{capacitacionFile ? capacitacionFile.name : 'Seleccionar archivo'}</span>
-                    <input type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => setCapacitacionFile(e.target.files?.[0] || null)} />
+                    <span className="text-sm text-slate-600">{file ? file.name : 'Seleccionar archivo'}</span>
+                    <input type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                   </label>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Orden</label>
-                  <input type="number" value={capacitacionForm.orden} onChange={(e) => setCapacitacionForm(p => ({ ...p, orden: e.target.value }))} className="w-20 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 outline-none" />
+                  <input type="number" value={form.orden} onChange={(e) => setForm(p => ({ ...p, orden: e.target.value }))} className="w-20 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-400 outline-none" />
                 </div>
                 <div className="flex gap-2 ml-auto">
-                  {editingCapacitacionId && (
-                    <button onClick={cancelEditCap} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancelar</button>
+                  {editingId && (
+                    <button onClick={cancelEdit} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancelar</button>
                   )}
-                  <button onClick={saveCapacitacion} disabled={uploadingCapacitacion} className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 text-white text-sm font-bold flex items-center gap-2 transition-colors">
-                    {uploadingCapacitacion ? <><span className="animate-spin">⏳</span> Guardando...</> : <><Save size={14} /> {editingCapacitacionId ? 'Actualizar' : 'Guardar'}</>}
+                  <button onClick={saveCap} disabled={uploading} className={`px-4 py-2 rounded-lg disabled:bg-slate-300 text-white text-sm font-bold flex items-center gap-2 transition-colors ${colorPalette.btn}`}>
+                    {uploading ? <><span className="animate-spin">⏳</span> Guardando...</> : <><Save size={14} /> {editingId ? 'Actualizar' : 'Guardar'}</>}
                   </button>
                 </div>
               </div>
@@ -2822,31 +2862,31 @@ const CatalogosGlobales = () => {
 
             {/* Lista de documentos */}
             <div className="space-y-3">
-              <h3 className="text-sm font-bold text-slate-600">{docsCapacitacion.length} documento{docsCapacitacion.length !== 1 ? 's' : ''} registrado{docsCapacitacion.length !== 1 ? 's' : ''}</h3>
-              {docsCapacitacion.length === 0 ? (
+              <h3 className="text-sm font-bold text-slate-600">{docs.length} documento{docs.length !== 1 ? 's' : ''} registrado{docs.length !== 1 ? 's' : ''} — {label}</h3>
+              {docs.length === 0 ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
                   <BookOpen size={40} className="text-slate-200 mx-auto mb-3" />
-                  <p className="text-sm text-slate-400">No hay documentos de capacitación. Agrega el primero.</p>
+                  <p className="text-sm text-slate-400">No hay documentos de capacitación para {label.toLowerCase()}. Agrega el primero.</p>
                 </div>
-              ) : docsCapacitacion.map(item => (
+              ) : docs.map(item => (
                 <div key={item.id} className={`bg-white border rounded-xl p-4 flex items-start gap-4 ${item.activo === false ? 'border-slate-200 opacity-50' : 'border-slate-200'}`}>
-                  <div className="w-10 h-10 rounded-lg bg-violet-50 border border-violet-200 flex items-center justify-center shrink-0">
-                    <FileText size={18} className="text-violet-600" />
+                  <div className={`w-10 h-10 rounded-lg ${colorPalette.bg} ${colorPalette.border} border flex items-center justify-center shrink-0`}>
+                    <FileText size={18} className={colorPalette.text} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h4 className="text-sm font-bold text-slate-800 truncate">{item.titulo}</h4>
-                      {item.categoria && <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 bg-violet-50 border border-violet-200 text-violet-700 rounded-md">{item.categoria}</span>}
+                      {item.categoria && <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 ${colorPalette.bg} ${colorPalette.border} border ${colorPalette.text} rounded-md`}>{item.categoria}</span>}
                       {item.archivoNombre && <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-md">📎 {item.archivoNombre}</span>}
                     </div>
                     {item.descripcion && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.descripcion}</p>}
                     {item.contenido && <p className="text-[10px] text-slate-400 mt-1">📝 {item.contenido.length} caracteres de contenido para IA</p>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => startEditCap(item)} className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 inline-flex items-center gap-1"><Pencil size={12} /> Editar</button>
+                    <button onClick={() => startEdit(item)} className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 inline-flex items-center gap-1"><Pencil size={12} /> Editar</button>
                     <button
                       onClick={() => askConfirm(`¿Desactivar "${item.titulo}"?`, async () => {
-                        await updateDoc(doc(db, 'catalogo_documentos_capacitacion', item.id), { activo: !(item.activo !== false) });
+                        await updateDoc(doc(db, collectionName, item.id), { activo: !(item.activo !== false) });
                         showPill(item.activo !== false ? 'Documento desactivado' : 'Documento activado', 'success');
                       })}
                       className={`text-xs font-bold px-2.5 py-1 rounded-full ${item.activo === false ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}`}
@@ -2855,7 +2895,7 @@ const CatalogosGlobales = () => {
                     </button>
                     <button
                       onClick={() => askConfirm(`¿Eliminar "${item.titulo}" permanentemente?`, async () => {
-                        await deleteDoc(doc(db, 'catalogo_documentos_capacitacion', item.id));
+                        await deleteDoc(doc(db, collectionName, item.id));
                         showPill('Documento eliminado', 'success');
                       })}
                       className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 inline-flex items-center gap-1"

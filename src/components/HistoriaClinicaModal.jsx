@@ -80,8 +80,7 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
               diagnostico: c?.diagnostico || '',
               indicaciones: c?.indicaciones || '',
               signos: c?.signos || {},
-              receta: c?.receta || [],
-              auditSnapshot: c?.auditSnapshot || null
+              receta: c?.receta || []
             }))
           : []
       }),
@@ -127,13 +126,6 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
       }
     };
   }, []);
-
-  const getAuditLabel = (status = '') => {
-    if (status === 'aprobado') return 'Aprobado';
-    if (status === 'incompleto') return 'Incompleto';
-    if (status === 'critico') return 'Critico';
-    return 'Sin auditoria';
-  };
 
   const downloadPreview = async () => {
     try {
@@ -279,7 +271,7 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
                     <p className="text-[10px] font-semibold text-teal-600 mt-1">Estudio previo</p>
                   ) : (
                     <p className="text-[10px] font-semibold text-slate-500 mt-1">
-                      Auditoria: {getAuditLabel(row?.auditSnapshot?.status)}
+                      {row.origen !== 'estudio_previo' && row.medicoNombre ? row.medicoNombre : ''}
                     </p>
                   )}
                 </button>
@@ -333,15 +325,6 @@ const HistoriaClinicaModal = ({ onClose, onBackToMenu, paciente, historial, doct
                           <p className="text-xs text-slate-500 mt-0.5">Registrado por: {consultaActiva.medicoNombre}</p>
                         )}
                       </div>
-                      {consultaActiva?.origen !== 'estudio_previo' && (
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
-                          <p className="text-[10px] uppercase font-black text-blue-700">Auditoria</p>
-                          <p className="text-xs font-bold text-slate-700 mt-0.5">
-                            {getAuditLabel(consultaActiva?.auditSnapshot?.status)}
-                            {typeof consultaActiva?.auditSnapshot?.score === 'number' ? ` (${consultaActiva.auditSnapshot.score}%)` : ''}
-                          </p>
-                        </div>
-                      )}
                     </div>
 
                     {consultaActiva?.origen === 'estudio_previo' && (

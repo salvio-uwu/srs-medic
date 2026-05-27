@@ -5,7 +5,7 @@ import {
   AlertTriangle, Activity, CalendarDays, LayoutGrid,
   ShieldCheck, AlertCircle, Zap, FileText, Check, Info,
   Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, RefreshCw, Newspaper, ExternalLink, Send, BellRing, LogOut,
-  CalendarClock, MessageSquare, LogIn, GitMerge, Edit3, Pill, Upload
+  CalendarClock, MessageSquare, LogIn, GitMerge, Edit3, Pill, Upload, BookOpen
 } from 'lucide-react';
 import { db, functions, storage } from '../config/firebase'; 
 import { collection, addDoc, query, where, orderBy, updateDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, setDoc, deleteField, increment } from 'firebase/firestore';
@@ -3983,9 +3983,9 @@ const Agenda = () => {
                       <div className="tool-btn-label sora">Catálogo</div>
                     </button>
 
-                    <button className="tool-btn">
-                      <div className="tool-btn-icon"><ClipboardList size={18}/></div>
-                      <div className="tool-btn-label sora">Insumos</div>
+                    <button className="tool-btn" onClick={() => navigate(isDoctorRole ? '/doctor/capacitacion' : '/enfermeria/capacitacion')}>
+                      <div className="tool-btn-icon"><BookOpen size={18}/></div>
+                      <div className="tool-btn-label sora">Capacitación</div>
                     </button>
 
                     <button className="tool-btn">
