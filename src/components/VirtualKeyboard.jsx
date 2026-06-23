@@ -128,10 +128,6 @@ const VirtualKeyboard = ({
                   key={ci}
                   type="button"
                   tabIndex={-1}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleKey(char);
-                  }}
                   onTouchStart={(e) => {
                     e.preventDefault();
                     handleKey(char);

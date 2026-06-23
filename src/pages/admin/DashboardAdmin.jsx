@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   Calendar,
+  ChevronRight,
   Clock3,
   DollarSign,
   Settings,
@@ -22,6 +23,7 @@ import {
   where
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import useIsMobile from '../../hooks/useIsMobile';
 
 const toDateInput = (d) => {
   const year = d.getFullYear();
@@ -49,6 +51,7 @@ const isOnline = (u = {}) => {
 
 const DashboardAdmin = () => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const [selectedDate, setSelectedDate] = useState(toDateInput(new Date()));
   const [users, setUsers] = useState([]);
@@ -269,151 +272,340 @@ const DashboardAdmin = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-5 pb-8 space-y-3">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+    <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '20px 16px 40px' : '32px 28px 48px' }}>
+      {/* ── CABECERA ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, flexWrap: 'wrap', gap: 16 }}>
         <div>
-          <h2 className="text-2xl font-black text-slate-900" style={{ fontFamily: 'Sora, system-ui, sans-serif' }}>Centro Ejecutivo</h2>
-          <p className="text-sm text-slate-500">Resumen integral de operacion, cumplimiento y riesgos en una sola vista.</p>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif', margin: 0 }}>
+            Centro Ejecutivo
+          </h1>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
+            Resumen integral de operacion, cumplimiento y riesgos en una sola vista.
+          </p>
         </div>
-        <div className="inline-flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-600">
-          <Calendar size={14} />
-          <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-transparent outline-none" />
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 12px', background: '#fff' }}>
+          <Calendar size={14} style={{ color: '#6b7280' }} />
+          <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: 13, color: '#111', background: 'transparent' }} />
         </div>
       </div>
 
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 text-sm font-bold text-slate-700">Estado Global del Software</div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left">
-            <thead className="bg-slate-50">
-              <tr>
-                {['Módulo', 'Estado', 'Indicador 1', 'Indicador 2', 'Acción'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">{h}</th>
+      {/* ── RESUMEN ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr 1fr' : '2fr 1fr 1fr 1fr',
+        gap: 1,
+        background: '#e5e7eb',
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginBottom: 24,
+      }}>
+        {/* Citas e Ingreso */}
+        <div style={{ background: '#fff', padding: '14px 20px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+            Operacion
+          </div>
+          <div style={{ display: 'flex', gap: 32 }}>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: '#111', lineHeight: 1 }}>{resumen.totalCitas}</div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>citas</div>
+              <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: '#4b5563' }}>{resumen.realizadas} <span style={{ color: '#9ca3af' }}>realizadas</span></span>
+                <span style={{ fontSize: 11, color: '#4b5563' }}>{resumen.pendientes} <span style={{ color: '#9ca3af' }}>pendientes</span></span>
+              </div>
+            </div>
+            <div style={{ width: 1, background: '#e5e7eb', alignSelf: 'stretch' }} />
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: '#111', lineHeight: 1 }}>{formatMoney(resumen.ingresos)}</div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>ingreso</div>
+              <div style={{ fontSize: 11, color: '#4b5563', marginTop: 4 }}>
+                cierre <strong style={{ color: '#111' }}>{resumen.tasaCierre}%</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Personal */}
+        <div style={{ background: '#fff', padding: '14px 20px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+            Personal
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#111', lineHeight: 1 }}>{resumen.personalOnline}<span style={{ fontSize: 14, color: '#9ca3af', fontWeight: 500 }}>/{resumen.personalTotal}</span></div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>en linea</div>
+          <div style={{ fontSize: 11, color: '#4b5563', marginTop: 4 }}>
+            {rolesRows.length} <span style={{ color: '#9ca3af' }}>roles</span>
+          </div>
+        </div>
+
+        {/* Inventario */}
+        <div style={{ background: '#fff', padding: '14px 20px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+            Inventario
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#111', lineHeight: 1 }}>{resumen.criticasInventario}</div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>stock critico</div>
+          <div style={{ fontSize: 11, color: '#4b5563', marginTop: 4 }}>
+            {resumen.porCaducar} <span style={{ color: '#9ca3af' }}>por caducar</span>
+          </div>
+        </div>
+
+        {/* Riesgos */}
+        <div style={{ background: '#fff', padding: '14px 20px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+            Riesgos
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#111', lineHeight: 1 }}>{riesgos.length}</div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>alertas</div>
+          <div style={{ fontSize: 11, color: '#4b5563', marginTop: 4 }}>
+            {resumen.bitacorasDia} <span style={{ color: '#9ca3af' }}>bitacoras</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── TABLA: ESTADO GLOBAL ── */}
+      <div style={{
+        background: '#fff',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginBottom: 24,
+      }}>
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, fontWeight: 700, color: '#111' }}>
+          Estado Global del Software
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#fafafa' }}>
+              {['Modulo', 'Estado', 'Indicador 1', 'Indicador 2', ''].map((h) => (
+                <th key={h} style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {moduloRows.map((row) => (
+              <tr key={row.modulo} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                <td style={{ padding: '12px 20px', fontSize: 13, fontWeight: 600, color: '#111' }}>{row.modulo}</td>
+                <td style={{ padding: '12px 20px', fontSize: 13, color: '#4b5563' }}>{row.estado}</td>
+                <td style={{ padding: '12px 20px', fontSize: 13, color: '#4b5563' }}>{row.dato1}</td>
+                <td style={{ padding: '12px 20px', fontSize: 13, color: '#4b5563' }}>{row.dato2}</td>
+                <td style={{ padding: '12px 20px' }}>
+                  <button
+                    onClick={() => runAssistantAction(row.actionId)}
+                    style={{
+                      background: 'none',
+                      border: '1px solid #d1d5db',
+                      borderRadius: 6,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#111',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    Abrir <ChevronRight size={12} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── GRILLA INFERIOR ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
+        {/* Personal */}
+        <div style={{
+          background: '#fff',
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}>
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Users size={14} style={{ color: '#9ca3af' }} /> Integrantes por Rol
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                {['Rol', 'Total', 'Online', 'Sucursales'].map((h) => (
+                  <th key={h} style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {moduloRows.map((row) => (
-                <tr key={row.modulo} className="border-b border-slate-50 hover:bg-slate-50/70">
-                  <td className="px-3 py-2 text-sm font-semibold text-slate-700">{row.modulo}</td>
-                  <td className="px-3 py-2 text-sm">
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${row.estado === 'Crítico' ? 'bg-rose-50 text-rose-700 border-rose-200' : row.estado === 'Atención' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-                      {row.estado}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-sm text-slate-600">{row.dato1}</td>
-                  <td className="px-3 py-2 text-sm text-slate-600">{row.dato2}</td>
-                  <td className="px-3 py-2 text-sm">
-                    <button onClick={() => runAssistantAction(row.actionId)} className="text-blue-600 font-semibold hover:underline">Abrir</button>
-                  </td>
+              {rolesRows.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '32px 20px', fontSize: 13, color: '#9ca3af', textAlign: 'center' }}>Sin integrantes registrados.</td></tr>
+              )}
+              {rolesRows.map((r) => (
+                <tr key={r.rol} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                  <td style={{ padding: '10px 20px', fontSize: 13, fontWeight: 600, color: '#111' }}>{r.rol}</td>
+                  <td style={{ padding: '10px 20px', fontSize: 13, color: '#4b5563' }}>{r.total}</td>
+                  <td style={{ padding: '10px 20px', fontSize: 13, color: '#4b5563' }}>{r.online}</td>
+                  <td style={{ padding: '10px 20px', fontSize: 13, color: '#4b5563' }}>{r.cobertura}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </section>
 
-      <section className="grid grid-cols-1 xl:grid-cols-12 gap-3">
-        <div className="xl:col-span-7 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 text-sm font-bold text-slate-700 inline-flex items-center gap-1.5">
-            <Users size={14} /> Integrantes por Rol
+        {/* Sucursales */}
+        <div style={{
+          background: '#fff',
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}>
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Activity size={14} style={{ color: '#9ca3af' }} /> Sucursales del Dia
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left">
-              <thead className="bg-slate-50">
-                <tr>
-                  {['Rol', 'Total', 'Online', 'Cobertura sucursales'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rolesRows.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-8 text-sm text-slate-500 text-center">Sin integrantes registrados.</td></tr>
-                )}
-                {rolesRows.map((r) => (
-                  <tr key={r.rol} className="border-b border-slate-50 hover:bg-slate-50/70">
-                    <td className="px-3 py-2 text-sm font-semibold text-slate-700">{r.rol}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600">{r.total}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600">{r.online}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600">{r.cobertura}</td>
-                  </tr>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                {['Sucursal', 'Citas', 'Cierre', 'Ingreso'].map((h) => (
+                  <th key={h} style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>
+                    {h}
+                  </th>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="xl:col-span-5 space-y-3">
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 text-sm font-bold text-slate-700 inline-flex items-center gap-1.5">
-              <Activity size={14} /> Sucursales del Día
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[460px] text-left">
-                <thead className="bg-slate-50">
-                  <tr>
-                    {['Sucursal', 'Citas', 'Cierre', 'Ingreso'].map((h) => (
-                      <th key={h} className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">{h}</th>
-                    ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={4} style={{ padding: '32px 20px', fontSize: 13, color: '#9ca3af', textAlign: 'center' }}>Cargando...</td></tr>}
+              {!loading && sucursalesRows.length === 0 && <tr><td colSpan={4} style={{ padding: '32px 20px', fontSize: 13, color: '#9ca3af', textAlign: 'center' }}>Sin actividad hoy.</td></tr>}
+              {sucursalesRows.slice(0, 8).map((s) => {
+                const tasa = s.citas > 0 ? Math.round((s.realizadas * 100) / s.citas) : 0;
+                return (
+                  <tr key={s.sucursal} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '10px 20px', fontSize: 13, fontWeight: 600, color: '#111' }}>{s.sucursal}</td>
+                    <td style={{ padding: '10px 20px', fontSize: 13, color: '#4b5563' }}>{s.citas}</td>
+                    <td style={{ padding: '10px 20px', fontSize: 13, fontWeight: 600, color: '#111' }}>{tasa}%</td>
+                    <td style={{ padding: '10px 20px', fontSize: 13, fontWeight: 600, color: '#111' }}>{formatMoney(s.ingresos)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading && <tr><td colSpan={4} className="px-3 py-8 text-sm text-slate-500 text-center">Cargando...</td></tr>}
-                  {!loading && sucursalesRows.length === 0 && <tr><td colSpan={4} className="px-3 py-8 text-sm text-slate-500 text-center">Sin actividad hoy.</td></tr>}
-                  {sucursalesRows.slice(0, 6).map((s) => {
-                    const tasa = s.citas > 0 ? Math.round((s.realizadas * 100) / s.citas) : 0;
-                    return (
-                      <tr key={s.sucursal} className="border-b border-slate-50 hover:bg-slate-50/70">
-                        <td className="px-3 py-2 text-sm font-semibold text-slate-700">{s.sucursal}</td>
-                        <td className="px-3 py-2 text-sm text-slate-600">{s.citas}</td>
-                        <td className="px-3 py-2 text-sm"><span className={`font-semibold ${tasa >= 70 ? 'text-emerald-700' : tasa >= 40 ? 'text-amber-700' : 'text-rose-700'}`}>{tasa}%</span></td>
-                        <td className="px-3 py-2 text-sm font-semibold text-emerald-700">{formatMoney(s.ingresos)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 text-sm font-bold text-slate-700 inline-flex items-center gap-1.5">
-              <Settings size={14} /> Configuración rápida
+      {/* ── CONFIGURACION ── */}
+      <div style={{
+        background: '#fff',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginBottom: 24,
+      }}>
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Settings size={14} style={{ color: '#9ca3af' }} /> Configuracion rapida
+        </div>
+        <div style={{ padding: '16px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Clock3 size={14} style={{ color: '#9ca3af' }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#4b5563' }}>Duracion consulta:</span>
             </div>
-            <div className="p-3 space-y-2">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase inline-flex items-center gap-1"><Clock3 size={12} /> Duración consulta</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="1"
-                  max="120"
-                  value={duracionInput}
-                  onChange={(e) => setDuracionInput(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                />
-                <button onClick={guardarDuracion} disabled={savingTimer} className="px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white">
-                  {savingTimer ? '...' : 'Guardar'}
-                </button>
-              </div>
-              <p className="text-xs text-slate-500">Actual: <span className="font-semibold text-slate-700">{duracionMin} min</span></p>
-            </div>
+            <input
+              type="number"
+              min="1"
+              max="120"
+              value={duracionInput}
+              onChange={(e) => setDuracionInput(e.target.value)}
+              style={{
+                width: 72,
+                border: '1px solid #d1d5db',
+                borderRadius: 6,
+                padding: '6px 10px',
+                fontSize: 13,
+                color: '#111',
+                outline: 'none',
+              }}
+            />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>min</span>
+            <button
+              onClick={guardarDuracion}
+              disabled={savingTimer}
+              style={{
+                border: '1px solid #111',
+                borderRadius: 6,
+                padding: '6px 14px',
+                fontSize: 12,
+                fontWeight: 700,
+                color: '#fff',
+                background: '#111',
+                cursor: savingTimer ? 'not-allowed' : 'pointer',
+                opacity: savingTimer ? 0.5 : 1,
+              }}
+            >
+              {savingTimer ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 8 }}>
+            Valor actual: <span style={{ fontWeight: 600, color: '#4b5563' }}>{duracionMin} min</span>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section className="bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm">
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => navigate('/admin/reportes')} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"><DollarSign size={13} /> Reportes</button>
-          <button onClick={() => navigate('/admin/monitor')} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Activity size={13} /> Monitor</button>
-          <button onClick={() => navigate('/admin/supervision')} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"><ShieldAlert size={13} /> Supervisión</button>
-          <button onClick={() => navigate('/admin/inventario')} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Warehouse size={13} /> Inventario</button>
-          <button onClick={() => navigate('/admin/usuarios')} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Users size={13} /> Usuarios</button>
-          <span className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-600">
-            <AlertTriangle size={12} /> Riesgos: {riesgos.length}
-          </span>
-        </div>
-      </section>
+      {/* ── ACCESOS RAPIDOS ── */}
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 10,
+        background: '#fff',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: '14px 20px',
+        alignItems: 'center',
+      }}>
+        {[
+          { label: 'Reportes', icon: DollarSign, path: '/admin/reportes' },
+          { label: 'Monitor', icon: Activity, path: '/admin/monitor' },
+          { label: 'Supervision', icon: ShieldAlert, path: '/admin/supervision' },
+          { label: 'Inventario', icon: Warehouse, path: '/admin/inventario' },
+          { label: 'Usuarios', icon: Users, path: '/admin/usuarios' },
+        ].map((btn) => (
+          <button
+            key={btn.label}
+            onClick={() => navigate(btn.path)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              background: '#fff',
+              color: '#111',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <btn.icon size={13} style={{ color: '#6b7280' }} />
+            {btn.label}
+          </button>
+        ))}
+        <span style={{
+          marginLeft: 'auto',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 14px',
+          border: '1px solid #e5e7eb',
+          borderRadius: 6,
+          background: '#fafafa',
+          color: '#4b5563',
+          fontSize: 11,
+          fontWeight: 600,
+        }}>
+          <AlertTriangle size={12} style={{ color: '#6b7280' }} />
+          Riesgos: {riesgos.length}
+        </span>
+      </div>
     </div>
   );
 };

@@ -4,7 +4,7 @@ import {
   Search, MapPin, CheckCircle, XCircle, Video, MessageCircle, 
   AlertTriangle, Activity, CalendarDays, LayoutGrid,
   ShieldCheck, AlertCircle, Zap, FileText, Check, Info,
-  Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, RefreshCw, Newspaper, ExternalLink, Send, BellRing, LogOut,
+  Lock, Stethoscope, TrendingUp, Syringe, ChevronDown, ClipboardList, ClipboardCheck, RefreshCw, Newspaper, ExternalLink, Send, BellRing, LogOut,
   CalendarClock, MessageSquare, LogIn, GitMerge, Edit3, Pill, Upload, BookOpen
 } from 'lucide-react';
 import { db, functions, storage } from '../config/firebase'; 
@@ -266,6 +266,21 @@ const STYLES = `
   .icon-btn.icon-btn-green:hover { color: #16a34a; border-color: #bbf7d0; background: #f0fdf4; }
   .icon-btn.icon-btn-purple:hover { color: #7c3aed; border-color: #e9d5ff; background: #faf5ff; }
   .icon-btn.icon-btn-amber:hover { color: #d97706; border-color: #fde68a; background: #fffbeb; }
+  .icon-btn.icon-btn-ssa { color: #0f3b5e; border-color: #bfdbfe; background: #eff6ff; }
+  .icon-btn.icon-btn-ssa:hover { color: #0f3b5e; border-color: #93c5fd; background: #dbeafe; box-shadow: 0 0 0 2px rgba(59,130,246,.1); }
+
+  .ssa-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 12px; height: 36px; border-radius: 10px;
+    border: 1px solid #bfdbfe; background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    color: #0f3b5e; cursor: pointer;
+    font-weight: 700; font-size: 11px;
+    transition: all .18s ease;
+    box-shadow: var(--shadow-sm);
+    flex-shrink: 0;
+  }
+  .ssa-btn:hover { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59,130,246,.12); transform: translateY(-1px); }
+  .ssa-btn-label { letter-spacing: 1px; }
 
   .notif-badge {
     position: absolute; top: -4px; right: -4px;
@@ -1677,6 +1692,27 @@ const Agenda = () => {
     || hasPermission(user, 'admin.dashboard', ['admin', 'admin_maestro', 'administrador']);
   const isDoctorRole = ['medico', 'doctor'].includes(normalizedRole);
   const canBloquearHorarios = isDoctorRole || isAdminRole;
+  const [ssaTemplates, setSsaTemplates] = useState([]);
+  const [showSsaMenu, setShowSsaMenu] = useState(false);
+
+  useEffect(() => {
+    const loadSsaTemplates = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'ssa_cuestionario'));
+        const uid = user?.uid;
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((t) => {
+            const assignedUsers = t.visibleToUsers || [];
+            const isExplicitlyAssigned = assignedUsers.includes(uid);
+            const hasAdminRole = isAdminRole;
+            return isExplicitlyAssigned || hasAdminRole;
+          });
+        setSsaTemplates(list);
+      } catch (err) { /* silent */ }
+    };
+    if (user?.uid) loadSsaTemplates();
+  }, [user?.uid, isAdminRole]);
   const canRotateConsultorio = isDoctorRole || isAdminRole;
 
   const CATALOGO_MOTIVOS_FALLBACK = [
@@ -1726,6 +1762,7 @@ const Agenda = () => {
 
   /* ── STATES ── */
   const [citas, setCitas]                   = useState([]);
+  const [pacientesNombres, setPacientesNombres] = useState({});
   const [loading, setLoading]               = useState(true);
   const [currentDate, setCurrentDate]       = useState(new Date());
   const [currentTime, setCurrentTime]       = useState(new Date());
@@ -1793,6 +1830,7 @@ const Agenda = () => {
     consultorioId: '',
     sucursalId: '',
     esTeleconsulta: false,
+    formaPago: 'efectivo',
     doctorAsignado: isDoctorRole ? user.nombre : '',
     doctorUid: isDoctorRole ? user.uid : '',
     enfermeroAsignadoId: '',
@@ -2055,6 +2093,24 @@ const Agenda = () => {
     return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, user?.rol]);
+
+  // Suscripción a nombres frescos de pacientes referenciados en las citas
+  useEffect(() => {
+    const ids = [...new Set(citas.map(c => c.pacienteId).filter(Boolean))];
+    if (ids.length === 0) return;
+    const unsubs = ids.map(id =>
+      onSnapshot(doc(db, 'pacientes', id), (snap) => {
+        if (snap.exists()) {
+          const nombre = snap.data().nombreCompleto || '';
+          setPacientesNombres(prev => {
+            if (prev[id] === nombre) return prev;
+            return { ...prev, [id]: nombre };
+          });
+        }
+      }, () => {})
+    );
+    return () => unsubs.forEach(u => u());
+  }, [citas]);
 
   /* ── INVENTARIO (TIEMPO REAL) ── */
   useEffect(() => {
@@ -2693,6 +2749,11 @@ const Agenda = () => {
         return;
       }
 
+      if (!nuevaCita.formaPago) {
+        showToast('Selecciona la forma de pago.', 'warning');
+        return;
+      }
+
       const pacienteDoc = await getDoc(doc(db, 'pacientes', nuevaCita.pacienteId));
       if (!pacienteDoc.exists()) {
         showToast('El paciente no está dado de alta en el sistema. Regístralo primero.', 'warning');
@@ -2766,6 +2827,7 @@ const Agenda = () => {
         consultorioId: catalogoConsultorios[0]?.id || '',
         sucursalId: catalogoConsultorios[0]?.sucursalId || catalogoSucursales[0]?.id || '',
         esTeleconsulta:false,
+        formaPago: 'efectivo',
         doctorAsignado: isDoctorRole ? user.nombre : '',
         doctorUid: isDoctorRole ? user.uid : '',
         enfermeroAsignadoId: '',
@@ -3440,6 +3502,32 @@ const Agenda = () => {
               </button>
             )}
 
+            {ssaTemplates.length > 0 && (
+              <div style={{ position: 'relative' }}>
+                <button className="ssa-btn" onClick={() => setShowSsaMenu(!showSsaMenu)} title="Evaluaciones SSA">
+                  <ClipboardCheck size={15}/>
+                  <span className="ssa-btn-label">SSA</span>
+                </button>
+                {showSsaMenu && (
+                  <div className="notif-dropdown" style={{ right: 0, left: 'auto', minWidth: 240 }}>
+                    <div className="notif-hdr">
+                      <span className="notif-hdr-title">Evaluacion SSA</span>
+                    </div>
+                    {ssaTemplates.map((t) => (
+                      <div key={t.id} className="notif-item" style={{ cursor: 'pointer' }}
+                        onClick={() => { setShowSsaMenu(false); navigate(`/ssa/evaluar/${t.id}`); }}>
+                        <div className="notif-avatar"><ClipboardCheck size={15}/></div>
+                        <div>
+                          <div className="notif-name">{t.name}</div>
+                          <div className="notif-desc">{t.description?.slice(0, 50)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ position:'relative' }}>
               <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} title="Noticias médicas">
                 <Newspaper size={16}/>
@@ -3769,7 +3857,7 @@ const Agenda = () => {
                                       )}
 
                                       <div>
-                                        <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>{cita.paciente}</div>
+                                        <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>{pacientesNombres[cita.pacienteId] || cita.paciente}</div>
                                         <div className="cita-tags">
                                           <span className="tag tag-motivo">{cita.motivo}</span>
                                           {(() => {
@@ -4052,7 +4140,7 @@ const Agenda = () => {
                                   <div key={cita.id}
                                     className={`weekly-cita ${isDone ? 'wc-done' : isWaiting ? 'wc-waiting' : 'wc-default'}`}
                                     onClick={(e) => { e.stopPropagation(); setSelectedCita(cita); }}>
-                                    <div className="weekly-cita-name sora">{cita.paciente}</div>
+                                    <div className="weekly-cita-name sora">{pacientesNombres[cita.pacienteId] || cita.paciente}</div>
                                     {!isDone && <div className="weekly-cita-motivo">{cita.motivo}</div>}
                                   </div>
                                 );
@@ -4089,7 +4177,7 @@ const Agenda = () => {
                     <Clock size={13} style={{ color:'var(--blue-500)' }}/>
                     {selectedCita.fechaHora?.split('T')[1]?.substring(0,5)} • {selectedCita.motivo}
                   </div>
-                  <div className="drawer-name">{selectedCita.paciente}</div>
+                  <div className="drawer-name">{pacientesNombres[selectedCita.pacienteId] || selectedCita.paciente}</div>
                   {selectedCita.pacienteId && (
                     <button
                       onClick={async () => {
@@ -4633,9 +4721,9 @@ const Agenda = () => {
                               <input 
                                   required 
                                   type="time" 
-                                  className={`${inputStyle} bg-slate-50/50 cursor-not-allowed text-slate-400`}
+                                  className={inputStyle}
                                   value={nuevaCita.horaFin || ''}
-                                  readOnly
+                                  onChange={e => setNuevaCita({ ...nuevaCita, horaFin: e.target.value })}
                               />
                           </div>
                       </div>
@@ -4723,7 +4811,6 @@ const Agenda = () => {
                       </div>
 
                       {/* Sucursal */}
-                      {!consultorioSeleccionadoModal && (
                           <div>
                               <label className={labelStyle}>Sucursal</label>
                               <CustomDropdown 
@@ -4734,10 +4821,8 @@ const Agenda = () => {
                                   inputStyle={inputStyle}
                               />
                           </div>
-                      )}
 
                       {/* Consultorio */}
-                      {!consultorioSeleccionadoModal && (
                           <div>
                               <label className={labelStyle}>Consultorio</label>
                               <CustomDropdown 
@@ -4781,7 +4866,6 @@ const Agenda = () => {
                                     )}
                                 />
                           </div>
-                      )}
                   </div>
 
                   {/* Alertas de Sucursal/Consultorio */}
@@ -4804,6 +4888,36 @@ const Agenda = () => {
                           </span>
                         </div>
                       )}
+                  </div>
+
+                  {/* 5. Forma de Pago */}
+                  <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm">
+                    <label className={labelStyle}>Forma de Pago</label>
+                    <div className="grid grid-cols-3 gap-2 mt-1">
+                      {[
+                        { value: 'efectivo', label: 'Efectivo' },
+                        { value: 'tarjeta', label: 'Tarjeta' },
+                        { value: 'na', label: 'N/A' }
+                      ].map(item => {
+                        const checked = nuevaCita.formaPago === item.value;
+                        return (
+                          <label
+                            key={item.value}
+                            onClick={() => setNuevaCita(prev => ({ ...prev, formaPago: item.value }))}
+                            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 select-none text-xs font-bold ${
+                              checked
+                                ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-500/10'
+                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className={`w-3 h-3 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ${checked ? 'border-indigo-500' : 'border-slate-300'}`}>
+                              {checked && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+                            </div>
+                            {item.label}
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* 6. Teleconsulta */}

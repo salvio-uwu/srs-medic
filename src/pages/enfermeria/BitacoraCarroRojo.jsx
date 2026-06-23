@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Save, Loader2, Printer, Plus, Trash2, Edit3, Eye, Check, X,
@@ -50,7 +50,7 @@ const getCadStatus = (caducidad) => {
   if (!caducidad) return { color: '', label: '', level: 0 };
   const dias = Math.ceil((new Date(caducidad) - new Date()) / 86400000);
   if (dias <= 0)  return { color: 'bg-red-100 text-red-700 border-red-200 ring-red-100', label: 'VENCIDO', level: 3 };
-  if (dias <= 30) return { color: 'bg-red-50 text-red-600 border-red-200 ring-red-50', label: `${dias}d`, level: 2 };
+  if (dias <= 30) return { color: 'bg-orange-50 text-orange-700 border-orange-200 ring-orange-50', label: `${dias}d`, level: 2 };
   if (dias <= 90) return { color: 'bg-amber-50 text-amber-600 border-amber-200 ring-amber-50', label: `${dias}d`, level: 1 };
   return { color: 'bg-emerald-50 text-emerald-600 border-emerald-200 ring-emerald-50', label: 'OK', level: 0 };
 };
@@ -60,9 +60,9 @@ const getStockStatus = (existir, existente) => {
   if (isNaN(a) || isNaN(b) || a === 0) return { color: '', pct: null };
   const pct = b / a;
   if (pct <= 0)  return { color: 'bg-red-100 text-red-700', pct };
-  if (pct < 0.5) return { color: 'bg-amber-50 text-amber-700', pct };
-  if (pct >= 1)  return { color: 'bg-emerald-50 text-emerald-700', pct };
-  return { color: 'bg-blue-50 text-blue-700', pct };
+  if (pct < 0.5) return { color: 'bg-red-50 text-red-700', pct };
+  if (pct < 0.8) return { color: 'bg-amber-50 text-amber-700', pct };
+  return { color: 'bg-emerald-50 text-emerald-700', pct };
 };
 
 const Toast = ({ msg, type, onClose }) => (
@@ -98,7 +98,7 @@ const generarFormatoImpresion = ({ sucursal, materialRows, medicamentoRows, usua
 /* ═══════════════════════════════════════════════════════════════
    COMPONENTE PRINCIPAL
    ═══════════════════════════════════════════════════════════════ */
-const BitacoraCarroRojo = ({ embedded = false }) => {
+const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -109,7 +109,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
 
   const [catalogoSucursales, setCatalogoSucursales] = useState([]);
-  const [sucursalActiva, setSucursalActiva] = useState(searchParams.get('sucursal') || user?.sucursal || '');
+  const [sucursalActiva, setSucursalActiva] = useState(searchParams.get('sucursal') || sucursalProp || '');
 
   const [plantillaMaterial, setPlantillaMaterial] = useState([]);
   const [plantillaMedicamento, setPlantillaMedicamento] = useState([]);
@@ -120,19 +120,30 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
   const [newRowTarget, setNewRowTarget] = useState(null);
   const [newRowName, setNewRowName] = useState('');
   const [showSucDropdown, setShowSucDropdown] = useState(false);
+  const [bloqueado, setBloqueado] = useState(false); // true = este mes en esta sucursal ya fue enviado
+
+  const mesActual = useMemo(() => new Date().toLocaleDateString('en-CA').slice(0, 7), []); // "2026-06"
 
   const toastTimer = useRef(null);
   const dropdownRef = useRef(null);
+  const dropdownMobileRef = useRef(null);
+  const autoSelectDone = useRef(false);
 
-  const showToast = (msg, type = 'success') => {
+  const showToast = useCallback((msg, type = 'success') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ show: true, msg, type });
     toastTimer.current = setTimeout(() => setToast({ show: false, msg: '', type: 'success' }), 4000);
-  };
+  }, []);
+
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
-    const handler = (e) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setShowSucDropdown(false); };
+    const handler = (e) => {
+      const insideDesktop = dropdownRef.current && dropdownRef.current.contains(e.target);
+      const insideMobile = dropdownMobileRef.current && dropdownMobileRef.current.contains(e.target);
+      if (!insideDesktop && !insideMobile) setShowSucDropdown(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
@@ -141,10 +152,58 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
     const unsub = onSnapshot(collection(db, 'catalogo_sucursales'), (snap) => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.activo !== false);
       setCatalogoSucursales(items);
-      if (!sucursalActiva && items.length > 0) setSucursalActiva(items[0].nombre || items[0].id);
     });
     return () => unsub();
   }, []);
+
+  // Sincronizar con sucursal prop (ej. desde modal) cuando está embebido
+  useEffect(() => {
+    if (embedded && sucursalProp) {
+      setSucursalActiva(sucursalProp);
+    }
+  }, [embedded, sucursalProp]);
+
+  // Auto-seleccionar sucursal del perfil del usuario cuando carga el catálogo
+  // SOLO si hay una sucursal explícita en URL/props. Si no, jefatura se queda en modo
+  // "plantilla global" sin sucursal, que es lo correcto para editar la plantilla.
+  useEffect(() => {
+    if (autoSelectDone.current) return;
+    if (!catalogoSucursales.length || !user) return;
+
+    const explicitSucursal = searchParams.get('sucursal') || sucursalProp;
+    if (explicitSucursal && explicitSucursal.trim()) {
+      // Ya viene una sucursal explícita, el estado inicial la tiene
+      autoSelectDone.current = true;
+      return;
+    }
+
+    // Si no hay sucursal explícita y es jefatura, NO auto-seleccionar
+    // -> se queda en modo plantilla global
+    if (esJefa) {
+      autoSelectDone.current = true;
+      return;
+    }
+
+    // Solo para no-jefatura: intentar matchear del perfil
+    if (sucursalActiva) { autoSelectDone.current = true; return; }
+
+    const matched = catalogoSucursales.find(s => {
+      // Comparar por ID: campos modernos + legacy
+      if (user.sessionSucursalId && String(s.id).trim() === String(user.sessionSucursalId).trim()) return true;
+      if (user.sucursalActualId && String(s.id).trim() === String(user.sucursalActualId).trim()) return true;
+      if (user.sucursalId && String(s.id).trim() === String(user.sucursalId).trim()) return true;
+      // Comparar por nombre normalizado: campos modernos + legacy
+      if (user.sessionSucursalNombre && normSucursal(s.nombre || s.id) === normSucursal(user.sessionSucursalNombre)) return true;
+      if (user.sucursalActual && normSucursal(s.nombre || s.id) === normSucursal(user.sucursalActual)) return true;
+      if (user.sucursal && normSucursal(s.nombre || s.id) === normSucursal(user.sucursal)) return true;
+      return false;
+    });
+
+    if (matched) {
+      setSucursalActiva(matched.nombre || matched.id);
+    }
+    autoSelectDone.current = true;
+  }, [catalogoSucursales, user, sucursalActiva, sucursalProp, esJefa, searchParams]);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'bitacora_carro_rojo', '_plantilla'), (snap) => {
@@ -166,16 +225,30 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
     const unsub = onSnapshot(doc(db, 'bitacora_carro_rojo', sucursalActiva), (snap) => {
       if (snap.exists()) {
         const d = snap.data();
-        setSucursalMaterialData(d.materialData || {});
-        setSucursalMedicamentoData(d.medicamentoData || {});
+        const docMes = d.mesBloqueado || '';
+        const matData = d.materialData || {};
+        const medData = d.medicamentoData || {};
+        setSucursalMaterialData(matData);
+        setSucursalMedicamentoData(medData);
+
+        if (docMes === mesActual) {
+          const allMatFilled = plantillaMaterial.every(item => matData[item.id]?.cantidadExistente);
+          const allMedFilled = plantillaMedicamento.every(item => medData[item.id]?.cantidadExistente);
+          setBloqueado(allMatFilled && allMedFilled);
+        } else {
+          setSucursalMaterialData({});
+          setSucursalMedicamentoData({});
+          setBloqueado(false);
+        }
       } else {
         setSucursalMaterialData({});
         setSucursalMedicamentoData({});
+        setBloqueado(false);
       }
       setLoading(false);
     }, () => { showToast('Error al cargar datos de sucursal', 'error'); setLoading(false); });
     return () => unsub();
-  }, [sucursalActiva]);
+  }, [sucursalActiva, mesActual, plantillaMaterial, plantillaMedicamento, showToast]);
 
   const mergeRows = (plantilla, sucData) =>
     plantilla.map(item => ({ ...item, cantidadExistente: sucData[item.id]?.cantidadExistente || '', caducidad: sucData[item.id]?.caducidad || '' }));
@@ -220,7 +293,20 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
   };
 
   const handleGuardar = async () => {
+    if (!sucursalActiva && !modoTemplate) {
+      showToast('Seleccione una sucursal antes de guardar.', 'error');
+      return;
+    }
+    if (sucursalActiva && bloqueado && !modoTemplate) {
+      showToast(`La bitácora de ${mesActual} ya fue completada y bloqueada.`, 'warning');
+      return;
+    }
     setSaving(true);
+
+    const allMatFilled = plantillaMaterial.every(item => sucursalMaterialData[item.id]?.cantidadExistente);
+    const allMedFilled = plantillaMedicamento.every(item => sucursalMedicamentoData[item.id]?.cantidadExistente);
+    const todoCompleto = allMatFilled && allMedFilled;
+
     try {
       const promises = [];
       if (esJefa) {
@@ -239,6 +325,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
             sucursal: sucursalActiva,
             materialData: sucursalMaterialData,
             medicamentoData: sucursalMedicamentoData,
+            mesBloqueado: todoCompleto ? mesActual : '',
             ultimaActualizacion: serverTimestamp(),
             actualizadoPor: user?.nombre || 'Desconocido',
             actualizadoPorRol: user?.rol || '',
@@ -246,20 +333,25 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
         );
         promises.push(
           addDoc(collection(db, 'bitacora_carro_rojo', sucursalActiva, 'historial'), {
-            // Guardar también la plantilla de ese momento para mantener fidelidad histórica
-            // aunque después cambie la plantilla global.
             plantillaMaterial: plantillaMaterial,
             plantillaMedicamento: plantillaMedicamento,
             materialData: sucursalMaterialData,
             medicamentoData: sucursalMedicamentoData,
+            mes: mesActual,
             fecha: serverTimestamp(),
             actualizadoPor: user?.nombre || 'Desconocido',
             actualizadoPorRol: user?.rol || '',
+            completo: todoCompleto,
           })
         );
       }
       await Promise.all(promises);
-      showToast('Bitácora guardada exitosamente');
+      setBloqueado(todoCompleto);
+      showToast(modoTemplate
+        ? 'Plantilla guardada exitosamente'
+        : todoCompleto
+          ? `Bitácora de ${mesActual} completada y bloqueada`
+          : 'Progreso guardado. Puedes seguir llenando después.');
       setEditMode(false);
     } catch {
       showToast('Error al guardar', 'error');
@@ -277,9 +369,27 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
     win.addEventListener('unload', () => URL.revokeObjectURL(url));
   };
 
-  const isMySucursal = normSucursal(sucursalActiva) === normSucursal(user?.sucursal);
+  const sucursalCatalogo = useMemo(() =>
+    catalogoSucursales.find(s => (s.nombre || s.id) === sucursalActiva),
+    [catalogoSucursales, sucursalActiva]
+  );
+
+  const isMySucursal = esJefa || (
+    sucursalCatalogo && (
+      // Comparar por ID: campos modernos + legacy
+      (user?.sessionSucursalId && String(sucursalCatalogo.id).trim() === String(user.sessionSucursalId).trim()) ||
+      (user?.sucursalActualId && String(sucursalCatalogo.id).trim() === String(user.sucursalActualId).trim()) ||
+      (user?.sucursalId && String(sucursalCatalogo.id).trim() === String(user.sucursalId).trim()) ||
+      // Comparar por nombre normalizado: campos modernos + legacy
+      normSucursal(sucursalCatalogo.nombre || sucursalCatalogo.id) === normSucursal(user?.sessionSucursalNombre) ||
+      normSucursal(sucursalCatalogo.nombre || sucursalCatalogo.id) === normSucursal(user?.sucursalActual) ||
+      normSucursal(sucursalCatalogo.nombre || sucursalCatalogo.id) === normSucursal(user?.sucursal)
+    )
+  );
   const canEditSucursal = esJefa || isMySucursal;
   const canEditPlantilla = esJefa;
+  // Modo plantilla global: jefatura sin sucursal seleccionada
+  const modoTemplate = !sucursalActiva && esJefa;
 
   const rootLayoutClass = embedded
     ? 'flex flex-col flex-1 min-h-0'
@@ -309,7 +419,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
               <p className="text-white/50 text-[10px] font-bold">{rows.length} artículos</p>
             </div>
           </div>
-          {canEditPlantilla && editMode && (
+          {canEditPlantilla && (modoTemplate || editMode) && (
             <button onClick={() => { setNewRowTarget(tabla); setNewRowName(''); }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white/15 hover:bg-white/25 rounded-lg text-[11px] font-bold text-white transition-all backdrop-blur-sm">
               <Plus size={13} /> Agregar
@@ -328,14 +438,18 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                   A Existir
                   {canEditPlantilla && <span className="block text-[8px] text-violet-400 font-bold mt-0.5 normal-case tracking-normal">plantilla global</span>}
                 </th>
-                <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[15%]">
-                  Existente
-                  <span className="block text-[8px] text-blue-400 font-bold mt-0.5 normal-case tracking-normal">{sucursalActiva || 'sucursal'}</span>
-                </th>
-                <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[20%]">
-                  Caducidad
-                </th>
-                {canEditPlantilla && editMode && (
+                {!modoTemplate && (
+                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[15%]">
+                    Existente
+                    <span className="block text-[8px] text-blue-400 font-bold mt-0.5 normal-case tracking-normal">{sucursalActiva || 'sucursal'}</span>
+                  </th>
+                )}
+                {!modoTemplate && (
+                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[20%]">
+                    Caducidad
+                  </th>
+                )}
+                {canEditPlantilla && (modoTemplate || editMode) && (
                   <th className="px-2 py-3 w-[10%]" />
                 )}
               </tr>
@@ -350,7 +464,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                   } hover:bg-slate-50/60`}>
                     <td className="px-4 py-2.5 text-[12px] font-bold text-slate-300 tabular-nums">{idx + 1}</td>
                     <td className="px-4 py-2.5">
-                      {canEditPlantilla && editMode ? (
+                      {(canEditPlantilla && (modoTemplate || editMode)) ? (
                         <input value={row.articulo} onChange={(e) => updatePlantillaRow(tabla, row.id, 'articulo', e.target.value)}
                           className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-[13px] font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all" />
                       ) : (
@@ -367,37 +481,41 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                         <span className="block text-center font-bold text-slate-700 text-[13px]">{row.cantidadExistir || '—'}</span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5">
-                      {canEditSucursal ? (
-                        <input type="text" inputMode="decimal" value={row.cantidadExistente}
-                          onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
-                          className={`w-full px-3 py-2 border rounded-xl text-[13px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
-                            stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200'
-                          }`}
-                          placeholder="—" />
-                      ) : (
-                        <span className={`block text-center font-bold rounded-xl py-2 text-[13px] ${stock.color || 'text-slate-700'}`}>
-                          {row.cantidadExistente || '—'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-2 justify-center">
-                        {canEditSucursal ? (
-                          <input type="date" value={row.caducidad}
-                            onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
-                              cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
-                            }`} />
+                    {!modoTemplate && (
+                      <td className="px-3 py-2.5">
+                        {(canEditSucursal && !bloqueado) ? (
+                          <input type="text" inputMode="decimal" value={row.cantidadExistente}
+                            onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
+                            className={`w-full px-3 py-2 border rounded-xl text-[13px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
+                              stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200'
+                            }`}
+                            placeholder="—" />
                         ) : (
-                          <span className={`block text-center font-bold rounded-xl py-2 px-3 text-[12px] border ${cad.color || 'text-slate-700 bg-slate-50 border-slate-100'}`}>
-                            {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
+                          <span className={`block text-center font-bold rounded-xl py-2 text-[13px] ${stock.color || 'text-slate-700'}`}>
+                            {row.cantidadExistente || '—'}
                           </span>
                         )}
-                        {cad.label && <span className={`text-[9px] font-black shrink-0 ${cad.level >= 3 ? 'text-red-500' : cad.level >= 2 ? 'text-amber-500' : cad.level >= 1 ? 'text-amber-400' : 'text-emerald-400'}`}>{cad.label}</span>}
-                      </div>
-                    </td>
-                    {canEditPlantilla && editMode && (
+                      </td>
+                    )}
+                    {!modoTemplate && (
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2 justify-center">
+                          {(canEditSucursal && !bloqueado) ? (
+                            <input type="date" value={row.caducidad}
+                              onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
+                              className={`w-full px-3 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
+                                cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
+                              }`} />
+                          ) : (
+                            <span className={`block text-center font-bold rounded-xl py-2 px-3 text-[12px] border ${cad.color || 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                              {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
+                            </span>
+                          )}
+                          {cad.label && <span className={`text-[9px] font-black shrink-0 ${cad.level >= 3 ? 'text-red-500' : cad.level >= 2 ? 'text-amber-500' : cad.level >= 1 ? 'text-amber-400' : 'text-emerald-400'}`}>{cad.label}</span>}
+                        </div>
+                      </td>
+                    )}
+                    {canEditPlantilla && (modoTemplate || editMode) && (
                       <td className="px-2 py-2.5 text-center">
                         <button onClick={() => handleDeleteRow(tabla, row.id)}
                           className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
@@ -409,7 +527,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                 );
               })}
               {/* Fila para agregar */}
-              {canEditPlantilla && editMode && newRowTarget === tabla && (
+              {canEditPlantilla && (modoTemplate || editMode) && newRowTarget === tabla && (
                 <tr className="bg-blue-50/40 border-b border-blue-100">
                   <td className="px-4 py-3" colSpan={6}>
                     <div className="flex items-center gap-2">
@@ -438,75 +556,85 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                 <div className="flex items-start justify-between gap-2 mb-2.5">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
                     <span className="text-[10px] font-bold text-slate-300 mt-1 shrink-0 tabular-nums w-5">{idx + 1}</span>
-                    {canEditPlantilla && editMode ? (
+                    {canEditPlantilla && (modoTemplate || editMode) ? (
                       <input value={row.articulo} onChange={(e) => updatePlantillaRow(tabla, row.id, 'articulo', e.target.value)}
                         className="flex-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-[13px] font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-100" />
                     ) : (
                       <p className="text-[13px] font-bold text-slate-800 leading-snug flex-1">{row.articulo}</p>
                     )}
                   </div>
-                  {canEditPlantilla && editMode && (
+                  {canEditPlantilla && (modoTemplate || editMode) && (
                     <button onClick={() => handleDeleteRow(tabla, row.id)}
                       className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0">
                       <Trash2 size={14} />
                     </button>
                   )}
-                  {!editMode && cad.label && cad.level >= 2 && (
+                  {!modoTemplate && !editMode && cad.label && cad.level >= 2 && (
                     <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 ${
                       cad.level >= 3 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                     }`}>{cad.label}</span>
                   )}
                 </div>
 
-                {/* Row 2: 3 campos */}
-                <div className="grid grid-cols-3 gap-2 ml-7">
-                  <div>
+                {/* Row 2: campos según modo */}
+                {modoTemplate ? (
+                  <div className="ml-7">
                     <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">A Existir</span>
-                    {canEditPlantilla ? (
-                      <input type="text" inputMode="decimal" value={row.cantidadExistir}
-                        onChange={(e) => updatePlantillaRow(tabla, row.id, 'cantidadExistir', e.target.value.replace(/[^0-9.,]/g, ''))}
-                        className="w-full px-2 py-2 bg-violet-50/40 border border-violet-200/80 rounded-xl text-[12px] font-bold text-slate-800 text-center outline-none focus:ring-2 focus:ring-violet-100"
-                        placeholder="—" />
-                    ) : (
-                      <span className="block text-center font-bold text-[12px] text-slate-600 bg-slate-50 rounded-xl py-2">{row.cantidadExistir || '—'}</span>
-                    )}
+                    <input type="text" inputMode="decimal" value={row.cantidadExistir}
+                      onChange={(e) => updatePlantillaRow(tabla, row.id, 'cantidadExistir', e.target.value.replace(/[^0-9.,]/g, ''))}
+                      className="w-full px-2 py-2 bg-violet-50/40 border border-violet-200/80 rounded-xl text-[12px] font-bold text-slate-800 text-center outline-none focus:ring-2 focus:ring-violet-100"
+                      placeholder="—" />
                   </div>
-                  <div>
-                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Existente</span>
-                    {canEditSucursal ? (
-                      <input type="text" inputMode="decimal" value={row.cantidadExistente}
-                        onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
-                        className={`w-full px-2 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
-                          stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200 text-slate-800'
-                        }`}
-                        placeholder="—" />
-                    ) : (
-                      <span className={`block text-center font-bold text-[12px] rounded-xl py-2 ${stock.color || 'text-slate-600 bg-slate-50'}`}>
-                        {row.cantidadExistente || '—'}
-                      </span>
-                    )}
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 ml-7">
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">A Existir</span>
+                      {canEditPlantilla ? (
+                        <input type="text" inputMode="decimal" value={row.cantidadExistir}
+                          onChange={(e) => updatePlantillaRow(tabla, row.id, 'cantidadExistir', e.target.value.replace(/[^0-9.,]/g, ''))}
+                          className="w-full px-2 py-2 bg-violet-50/40 border border-violet-200/80 rounded-xl text-[12px] font-bold text-slate-800 text-center outline-none focus:ring-2 focus:ring-violet-100"
+                          placeholder="—" />
+                      ) : (
+                        <span className="block text-center font-bold text-[12px] text-slate-600 bg-slate-50 rounded-xl py-2">{row.cantidadExistir || '—'}</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Existente</span>
+                      {(canEditSucursal && !bloqueado) ? (
+                        <input type="text" inputMode="decimal" value={row.cantidadExistente}
+                          onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
+                          className={`w-full px-2 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
+                            stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200 text-slate-800'
+                          }`}
+                          placeholder="—" />
+                      ) : (
+                        <span className={`block text-center font-bold text-[12px] rounded-xl py-2 ${stock.color || 'text-slate-600 bg-slate-50'}`}>
+                          {row.cantidadExistente || '—'}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Caducidad</span>
+                      {(canEditSucursal && !bloqueado) ? (
+                        <input type="date" value={row.caducidad}
+                          onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
+                          className={`w-full px-1 py-2 border rounded-xl text-[10px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
+                            cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
+                          }`} />
+                      ) : (
+                        <span className={`block font-bold text-[11px] rounded-xl py-2 text-center border ${cad.color || 'text-slate-600 bg-slate-50 border-slate-100'}`}>
+                          {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Caducidad</span>
-                    {canEditSucursal ? (
-                      <input type="date" value={row.caducidad}
-                        onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
-                        className={`w-full px-1 py-2 border rounded-xl text-[10px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
-                          cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
-                        }`} />
-                    ) : (
-                      <span className={`block font-bold text-[11px] rounded-xl py-2 text-center border ${cad.color || 'text-slate-600 bg-slate-50 border-slate-100'}`}>
-                        {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             );
           })}
 
           {/* Add row button mobile */}
-          {canEditPlantilla && editMode && newRowTarget === tabla && (
+          {canEditPlantilla && (modoTemplate || editMode) && newRowTarget === tabla && (
             <div className="px-4 py-3 bg-blue-50/30">
               <div className="flex items-center gap-2">
                 <input autoFocus value={newRowName} onChange={(e) => setNewRowName(e.target.value)}
@@ -535,31 +663,41 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
         {embedded ? (
           <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/80 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-20">
             <div className="flex items-center gap-2 flex-wrap">
-              {esJefa && (
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowSucDropdown(!showSucDropdown)}
-                    className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl text-[12px] font-bold text-blue-700 hover:bg-blue-100 transition-all"
-                  >
-                    <MapPin size={12} /> {sucursalActiva || 'Sucursal'}
-                    <ChevronDown size={13} className={`transition-transform ${showSucDropdown ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showSucDropdown && (
-                    <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-500/10 z-50 min-w-[200px] max-h-[280px] overflow-y-auto py-1">
-                      {catalogoSucursales.map(s => (
-                        <button key={s.id}
-                          onClick={() => { setSucursalActiva(s.nombre || s.id); setShowSucDropdown(false); }}
-                          className={`w-full text-left px-4 py-2.5 text-[12px] font-bold transition-all ${
-                            (s.nombre || s.id) === sucursalActiva ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
-                          }`}>
-                          {s.nombre || s.id}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {modoTemplate ? (
+                <span className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-[12px] font-bold">
+                  <Edit3 size={12} /> Plantilla Global
+                </span>
+              ) : (
+                !sucursalProp && (
+                  <div className="relative" ref={dropdownRef}>
+                    <button
+                      onClick={() => setShowSucDropdown(!showSucDropdown)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[12px] font-bold transition-all ${
+                        sucursalActiva
+                          ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
+                          : 'bg-amber-50 border-2 border-amber-400 text-amber-700 hover:bg-amber-100'
+                      }`}
+                    >
+                      <MapPin size={12} /> {sucursalActiva || 'Seleccionar'}
+                      <ChevronDown size={13} className={`transition-transform ${showSucDropdown ? 'rotate-180' : ''}`} />
+                    </button>
+                    {showSucDropdown && (
+                      <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-500/10 z-50 min-w-[200px] max-h-[280px] overflow-y-auto py-1">
+                        {catalogoSucursales.map(s => (
+                          <button key={s.id}
+                            onClick={() => { setSucursalActiva(s.nombre || s.id); setShowSucDropdown(false); }}
+                            className={`w-full text-left px-4 py-2.5 text-[12px] font-bold transition-all ${
+                              (s.nombre || s.id) === sucursalActiva ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
+                            }`}>
+                            {s.nombre || s.id}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
               )}
-              {canEditPlantilla && (
+              {canEditPlantilla && !modoTemplate && (
                 <button onClick={() => setEditMode(!editMode)}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-bold border transition-all ${
                     editMode ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
@@ -579,29 +717,35 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                   className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all shrink-0">
                   <ArrowLeft size={18}/>
                 </button>
-                <div className="w-9 h-9 bg-gradient-to-br from-red-500 to-rose-600 rounded-xl flex items-center justify-center shadow-sm shadow-red-500/20 shrink-0">
-                  <ShieldAlert size={17} className="text-white"/>
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-sm shrink-0 ${
+                  modoTemplate ? 'bg-gradient-to-br from-violet-500 to-purple-600 shadow-violet-500/20' : 'bg-gradient-to-br from-red-500 to-rose-600 shadow-red-500/20'
+                }`}>
+                  {modoTemplate ? <Edit3 size={17} className="text-white"/> : <ShieldAlert size={17} className="text-white"/>}
                 </div>
                 <div className="min-w-0">
                   <h1 className="text-[14px] sm:text-[16px] font-black text-slate-800 truncate leading-tight">
-                    Bitácora Carro Rojo
+                    {modoTemplate ? 'Plantilla Carro Rojo' : 'Bitácora Carro Rojo'}
                   </h1>
                   <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                    <MapPin size={9}/> <span className="truncate">{sucursalActiva || 'Sin sucursal'}</span>
+                    <MapPin size={9}/> <span className="truncate">{sucursalActiva || (modoTemplate ? 'Plantilla Global' : 'Sin sucursal')}</span>
                     {esJefa && <span className="text-rose-400 shrink-0">· Jefatura</span>}
                   </div>
                 </div>
               </div>
 
-              {/* Right: sucursal selector + edit toggle only */}
+              {/* Right: sucursal selector + edit toggle */}
               <div className="flex items-center gap-2">
-                {esJefa && (
+                {!modoTemplate && (
                   <div className="relative hidden sm:block" ref={dropdownRef}>
                     <button
                       onClick={() => setShowSucDropdown(!showSucDropdown)}
-                      className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl text-[11px] font-bold text-blue-700 hover:bg-blue-100 transition-all max-w-[160px] lg:max-w-[200px]"
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold transition-all max-w-[160px] lg:max-w-[200px] ${
+                        sucursalActiva
+                          ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
+                          : 'bg-amber-50 border-2 border-amber-400 text-amber-700 hover:bg-amber-100'
+                      }`}
                     >
-                      <MapPin size={12}/> <span className="truncate">{sucursalActiva}</span>
+                      <MapPin size={12}/> <span className="truncate">{sucursalActiva || 'Seleccionar'}</span>
                       <ChevronDown size={12} className={`shrink-0 transition-transform ${showSucDropdown ? 'rotate-180' : ''}`}/>
                     </button>
                     {showSucDropdown && (
@@ -622,7 +766,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                   </div>
                 )}
 
-                {canEditPlantilla && (
+                {canEditPlantilla && !modoTemplate && (
                   <button onClick={() => setEditMode(!editMode)}
                     className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold border transition-all ${
                       editMode ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
@@ -635,13 +779,21 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
 
             {/* Mobile row 2: sucursal + edit */}
             <div className="sm:hidden px-3 pb-2.5 flex items-center gap-2">
-              {esJefa && (
-                <div className="relative flex-1">
+              {modoTemplate ? (
+                <span className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-[11px] font-bold">
+                  <Edit3 size={11}/> Plantilla Global
+                </span>
+              ) : (
+                <div className="relative flex-1" ref={dropdownMobileRef}>
                   <button
                     onClick={() => setShowSucDropdown(!showSucDropdown)}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl text-[11px] font-bold text-blue-700 hover:bg-blue-100 transition-all"
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-[11px] font-bold transition-all ${
+                      sucursalActiva
+                        ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
+                        : 'bg-amber-50 border-2 border-amber-400 text-amber-700 hover:bg-amber-100'
+                    }`}
                   >
-                    <span className="flex items-center gap-1.5 truncate"><MapPin size={11}/> {sucursalActiva}</span>
+                    <span className="flex items-center gap-1.5 truncate"><MapPin size={11}/> {sucursalActiva || 'Seleccionar'}</span>
                     <ChevronDown size={12} className={`shrink-0 transition-transform ${showSucDropdown ? 'rotate-180' : ''}`}/>
                   </button>
                   {showSucDropdown && (
@@ -659,7 +811,7 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
                   )}
                 </div>
               )}
-              {canEditPlantilla && (
+              {canEditPlantilla && !modoTemplate && (
                 <button onClick={() => setEditMode(!editMode)}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold border transition-all shrink-0 ${
                     editMode ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-slate-200 text-slate-500'
@@ -718,21 +870,30 @@ const BitacoraCarroRojo = ({ embedded = false }) => {
         {!loading && (
           <div className="shrink-0 border-t border-slate-200 bg-white px-3 sm:px-6 py-1.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-4 sticky bottom-0 z-20">
             <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400 min-w-0">
-              <span className="truncate">{sucursalActiva}</span>
-              <span className="text-slate-200">·</span>
-              <span className="tabular-nums">{stats.filled}/{stats.total}</span>
+              <span className="truncate">{modoTemplate ? 'Plantilla Global' : sucursalActiva}</span>
+              {!modoTemplate && <><span className="text-slate-200">·</span><span className="tabular-nums">{stats.filled}/{stats.total}</span></>}
+              {modoTemplate && <span className="tabular-nums text-violet-400">{plantillaMaterial.length + plantillaMedicamento.length} items</span>}
+              {bloqueado && (
+                <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                  {mesActual}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <button onClick={handlePrint}
-                className="px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-lg border border-slate-200 text-[10px] sm:text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">
-                <Printer size={14} className="sm:hidden"/>
-                <span className="hidden sm:inline">Imprimir</span>
-              </button>
-              {canEditSucursal && (
-                <button onClick={handleGuardar} disabled={saving}
-                  className="bg-slate-900 hover:bg-black text-white px-4 sm:px-7 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm disabled:opacity-50 transition-all active:scale-[0.97]">
-                  {saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
-                  {saving ? 'Guardando...' : 'Guardar'}
+              {sucursalActiva && (
+                <button onClick={handlePrint}
+                  className="px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-lg border border-slate-200 text-[10px] sm:text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">
+                  <Printer size={14} className="sm:hidden"/>
+                  <span className="hidden sm:inline">Imprimir</span>
+                </button>
+              )}
+              {(canEditSucursal || modoTemplate) && (
+                <button onClick={handleGuardar} disabled={saving || (bloqueado && !modoTemplate)}
+                  className={`px-4 sm:px-7 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm disabled:opacity-50 transition-all active:scale-[0.97] ${
+                    modoTemplate ? 'bg-violet-600 hover:bg-violet-700 text-white' : bloqueado ? 'bg-emerald-600 text-white' : 'bg-slate-900 hover:bg-black text-white'
+                  }`}>
+                  {bloqueado && !modoTemplate ? <CheckCircle2 size={14} /> : saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+                  {bloqueado && !modoTemplate ? `Completado (${mesActual})` : saving ? 'Guardando...' : (modoTemplate ? 'Guardar Plantilla' : `Guardar (${stats.filled}/${stats.total})`)}
                 </button>
               )}
             </div>

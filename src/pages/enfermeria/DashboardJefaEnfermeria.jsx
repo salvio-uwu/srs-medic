@@ -7,7 +7,7 @@ import {
   Printer, Clock, Sparkles, X, Package, ShieldAlert,
   ChevronDown, Activity, Calendar,
   ChevronRight, Clipboard, Shield, MapPin, LayoutDashboard,
-  ClipboardList, Stethoscope, Plus, Zap, Filter, Eye, ChevronUp, Gauge
+  ClipboardList, Stethoscope, Plus, Zap, Filter, Eye, ChevronUp, Gauge, CalendarX
 } from 'lucide-react';
 import { db } from '../../config/firebase';
 import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
@@ -57,7 +57,7 @@ const VIEW_META = {
   krit:          { label: 'Solución KRIT',      icon: Droplets,        color: 'teal'   },
   autoclave:    { label: 'Autoclave',           icon: Gauge,           color: 'violet' },
   almacen:      { label: 'Almacén',            icon: Package,         color: 'amber'  },
-  caducidades:  { label: 'Caducidades',        icon: ShieldAlert,     color: 'rose'   },
+  caducidades:  { label: 'Caducidades',        icon: CalendarX,     color: 'rose'   },
   pedidos:      { label: 'Pedidos Sucursales', icon: ClipboardList,   color: 'blue'   },
   alertas:      { label: 'Centro de Alertas',  icon: AlertTriangle,   color: 'rose'   },
 };
@@ -112,6 +112,7 @@ const DashboardJefaEnfermeria = () => {
   const [toast,         setToast]         = useState({ show:false, msg:'', type:'info' });
   const [alertasCaducidad, setAlertasCaducidad] = useState([]);
   const [bitacorasMes,     setBitacorasMes]     = useState([]);
+  const [sucursalFiltro,   setSucursalFiltro]   = useState('');
   const [sidebarOpen,      setSidebarOpen]      = useState(() => {
     try {
       const saved = localStorage.getItem('jefa_sidebar_open');
@@ -284,6 +285,13 @@ const DashboardJefaEnfermeria = () => {
     (_, i) => i + 1
   );
 
+  const diasEnMes = diasDelMes.length;
+
+  const bitacorasFiltradas = useMemo(() => {
+    if (!sucursalFiltro) return bitacorasMes;
+    return bitacorasMes.filter(b => b.sucursal === sucursalFiltro);
+  }, [bitacorasMes, sucursalFiltro]);
+
   const meta = VIEW_META[activeView];
   const colors = COLOR_MAP[meta.color];
   const ViewIcon = meta.icon;
@@ -326,8 +334,10 @@ const DashboardJefaEnfermeria = () => {
     </td>
   );
 
+  const isEmptyVal = (v) => v === undefined || v === null || v === '';
+
   const NumCell = ({ val, bold }) => (
-    <Td className={`text-center ${bold ? 'font-bold text-slate-800' : ''}`}>{val || <span className="text-slate-300 font-bold">—</span>}</Td>
+    <Td className={`text-center ${bold ? 'font-bold text-slate-800' : ''}`}>{!isEmptyVal(val) ? val : <span className="text-slate-300 font-bold">—</span>}</Td>
   );
 
   const NavItem = ({ id }) => {
@@ -377,7 +387,7 @@ const DashboardJefaEnfermeria = () => {
   ];
 
   const PrintFormat = () => {
-    const printRows = Array.from({ length: 31 }, (_, i) => i + 1);
+    const printRows = Array.from({ length: diasEnMes }, (_, i) => i + 1);
     
     const getPrintDate = (dia) => {
       try {
@@ -387,18 +397,18 @@ const DashboardJefaEnfermeria = () => {
       } catch { return ''; }
     };
 
-    const thP = "border border-[#888] bg-[#d9d9d9] font-bold text-[9px] uppercase text-center p-1";
-    const tdP = "border border-[#888] text-[9px] text-center p-1 h-5"; 
-    const tdPLeft = "border border-[#888] text-[9px] text-left px-2 py-1 h-5 font-medium"; 
+    const thP = "border border-[#888] bg-[#d9d9d9] font-bold text-[8px] uppercase text-center p-0.5";
+    const tdP = "border border-[#888] text-[8px] text-center p-0.5 h-4"; 
+    const tdPLeft = "border border-[#888] text-[8px] text-left px-1 py-0.5 h-4 font-medium"; 
 
     return (
-      <div className="hidden print:block w-full text-black font-sans bg-white p-2">
-        <div className="flex items-center justify-between mb-1">
-           <img src={logoImg} className="h-14 object-contain" alt="Logo" />
-           <h1 className="text-3xl font-bold text-slate-800 tracking-tight flex-1 text-center pr-14">Centro Médico Santa Cruz</h1>
+      <div className="hidden print:block w-full text-black font-sans bg-white p-1">
+        <div className="flex items-center justify-between mb-0.5">
+           <img src={logoImg} className="h-10 object-contain" alt="Logo" />
+           <h1 className="text-xl font-bold text-slate-800 tracking-tight flex-1 text-center pr-10">Centro Medico Santa Cruz</h1>
         </div>
-        <div className="bg-[#ffff00] py-1 border-t-2 border-b-2 border-slate-600 text-center mb-1 print-exact-colors">
-           <h2 className="text-sm font-bold text-black">
+        <div className="bg-[#ffff00] py-0.5 border-t-2 border-b-2 border-slate-600 text-center mb-0.5 print-exact-colors">
+           <h2 className="text-xs font-bold text-black">
               {activeView === 'krit'
                 ? 'Registro de Cambio de Solución Estéril "KRIT"'
                 : activeView === 'autoclave'
@@ -409,9 +419,9 @@ const DashboardJefaEnfermeria = () => {
               }
            </h2>
         </div>
-        <div className="flex justify-center gap-12 font-bold text-[11px] mb-2 uppercase">
+        <div className="flex justify-center gap-12 font-bold text-[9px] mb-1 uppercase">
            <span>MES: {mesLabel}</span>
-           {activeView === 'limpieza' && <span>ÁREA: {areaLimpieza}</span>}
+           {activeView === 'limpieza' && <span>AREA: {areaLimpieza}</span>}
            <span>SUC. {user?.sucursal || 'HUASTECA'}</span>
         </div>
 
@@ -431,7 +441,7 @@ const DashboardJefaEnfermeria = () => {
             <tbody>
               {printRows.map(dia => {
                 const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                const regs  = bitacorasMes.filter(b => b.tipo === 'Temperatura' && b.fechaString === fStr);
+                const regs  = bitacorasFiltradas.filter(b => b.tipo === 'Temperatura' && b.fechaString === fStr);
                 const t8  = regs.find(r => r.turno?.includes('8:00'))?.detalles  || {};
                 const t4  = regs.find(r => r.turno?.includes('4:00'))?.detalles  || {};
                 const t10 = regs.find(r => r.turno?.includes('10:00'))?.detalles || {};
@@ -440,9 +450,9 @@ const DashboardJefaEnfermeria = () => {
                 return (
                   <tr key={dia} className="bg-[#f2f2f2] print-exact-colors">
                     <td className={tdPLeft}>{printDate}</td>
-                    <td className={tdP}>{t8.t_ext || ''}</td><td className={tdP}>{t8.humedad || ''}</td><td className={tdP}>{t8.t_ref || ''}</td>
-                    <td className={tdP}>{t4.t_ext || ''}</td><td className={tdP}>{t4.humedad || ''}</td><td className={tdP}>{t4.t_ref || ''}</td>
-                    <td className={tdP}>{t10.t_ext || ''}</td><td className={tdP}>{t10.humedad || ''}</td><td className={tdP}>{t10.t_ref || ''}</td>
+                    <td className={tdP}>{!isEmptyVal(t8.t_ext) ? t8.t_ext : ''}</td><td className={tdP}>{!isEmptyVal(t8.humedad) ? t8.humedad : ''}</td><td className={tdP}>{!isEmptyVal(t8.t_ref) ? t8.t_ref : ''}</td>
+                    <td className={tdP}>{!isEmptyVal(t4.t_ext) ? t4.t_ext : ''}</td><td className={tdP}>{!isEmptyVal(t4.humedad) ? t4.humedad : ''}</td><td className={tdP}>{!isEmptyVal(t4.t_ref) ? t4.t_ref : ''}</td>
+                    <td className={tdP}>{!isEmptyVal(t10.t_ext) ? t10.t_ext : ''}</td><td className={tdP}>{!isEmptyVal(t10.humedad) ? t10.humedad : ''}</td><td className={tdP}>{!isEmptyVal(t10.t_ref) ? t10.t_ref : ''}</td>
                   </tr>
                 );
               })}
@@ -466,15 +476,15 @@ const DashboardJefaEnfermeria = () => {
             <tbody>
               {printRows.map(dia => {
                 const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                const reg  = bitacorasMes.slice().reverse().find(b => b.tipo === 'Cloro y PH' && b.fechaString === fStr);
+                const reg  = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Cloro y PH' && b.fechaString === fStr);
                 const det  = reg?.detalles || {};
                 const printDate = getPrintDate(dia);
                 if(!printDate) return null;
                 return (
                   <tr key={dia} className="bg-[#f2f2f2] print-exact-colors">
                     <td className={tdPLeft}>{printDate}</td>
-                    <td className={tdP}>{det.ph_1 || ''}</td><td className={tdP}>{det.cloro_1 || ''}</td>
-                    <td className={tdP}>{det.ph_2 || ''}</td><td className={tdP}>{det.cloro_2 || ''}</td>
+                    <td className={tdP}>{!isEmptyVal(det.ph_1) ? det.ph_1 : ''}</td><td className={tdP}>{!isEmptyVal(det.cloro_1) ? det.cloro_1 : ''}</td>
+                    <td className={tdP}>{!isEmptyVal(det.ph_2) ? det.ph_2 : ''}</td><td className={tdP}>{!isEmptyVal(det.cloro_2) ? det.cloro_2 : ''}</td>
                     <td className={tdP}>{reg?.responsableNombre || ''}</td>
                   </tr>
                 );
@@ -495,7 +505,7 @@ const DashboardJefaEnfermeria = () => {
             <tbody>
               {printRows.map(dia => {
                 const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                const reg  = bitacorasMes.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
+                             const reg  = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
                 const det  = reg?.detalles || {};
                 const printDate = getPrintDate(dia);
                 if(!printDate) return null;
@@ -838,6 +848,22 @@ const DashboardJefaEnfermeria = () => {
                 <Calendar size={14} className="text-slate-400"/>
                 <span className="text-xs font-bold text-slate-600 capitalize">{mesLabel}</span>
               </div>
+
+              {(activeView === 'temperaturas' || activeView === 'cloro' || activeView === 'limpieza') && catalogoSucursalesJefa.length > 0 && (
+                <div className="hidden md:flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm">
+                  <MapPin size={13} className="text-blue-500 shrink-0"/>
+                  <select
+                    value={sucursalFiltro}
+                    onChange={e => setSucursalFiltro(e.target.value)}
+                    className="bg-transparent text-[11px] font-bold text-slate-700 outline-none cursor-pointer pr-1"
+                  >
+                    <option value="">Todas las sucursales</option>
+                    {catalogoSucursalesJefa.map(s => (
+                      <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               
               <div className="hidden lg:flex items-center gap-2 border-l border-slate-200 pl-4">
                   <button onClick={() => navigate('/enfermeria/dashboard')} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">
@@ -1002,6 +1028,7 @@ const DashboardJefaEnfermeria = () => {
                                 <Th colSpan={3} className="th-group text-center border-l border-slate-200">8:00 a.m.</Th>
                                 <Th colSpan={3} className="th-group text-center border-l border-slate-200">4:00 p.m.</Th>
                                 <Th colSpan={3} className="th-group text-center border-l border-slate-200">10:00 p.m.</Th>
+                                <Th rowSpan={2} className="w-40 text-center border-l border-slate-200">Enfermera(o)</Th>
                             </>
                         )}
                         {activeView === 'cloro' && (
@@ -1022,22 +1049,27 @@ const DashboardJefaEnfermeria = () => {
                         const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
                         
                         if (activeView === 'temperaturas') {
-                            const regs  = bitacorasMes.filter(b => b.tipo === 'Temperatura' && b.fechaString === fStr);
-                            const t8  = regs.find(r => r.turno?.includes('8:00'))?.detalles  || {};
-                            const t4  = regs.find(r => r.turno?.includes('4:00'))?.detalles  || {};
-                            const t10 = regs.find(r => r.turno?.includes('10:00'))?.detalles || {};
+                const regs  = bitacorasFiltradas.filter(b => b.tipo === 'Temperatura' && b.fechaString === fStr);
+                            const reg8  = regs.find(r => r.turno?.includes('8:00'));
+                            const reg4  = regs.find(r => r.turno?.includes('4:00'));
+                            const reg10 = regs.find(r => r.turno?.includes('10:00'));
+                            const t8  = reg8?.detalles  || {};
+                            const t4  = reg4?.detalles  || {};
+                            const t10 = reg10?.detalles || {};
+                            const responsables = [reg8, reg4, reg10].map(r => r?.responsableNombre).filter(Boolean).join(', ');
                             return (
                                 <tr key={dia} className="hover:bg-blue-50/50 transition-colors group">
                                     <DayCell>{dia}</DayCell>
                                     <NumCell val={t8.t_ext}/><NumCell val={t8.humedad}/><NumCell val={t8.t_ref} bold/>
                                     <NumCell val={t4.t_ext}/><NumCell val={t4.humedad}/><NumCell val={t4.t_ref} bold/>
                                     <NumCell val={t10.t_ext}/><NumCell val={t10.humedad}/><NumCell val={t10.t_ref} bold/>
+                                    <Td className="text-[10px] uppercase font-bold text-slate-500 text-center max-w-[120px] truncate">{responsables || <span className="text-slate-300">—</span>}</Td>
                                 </tr>
                             );
                         }
                         
                         if (activeView === 'cloro') {
-                            const reg  = bitacorasMes.slice().reverse().find(b => b.tipo === 'Cloro y PH' && b.fechaString === fStr);
+                const reg  = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Cloro y PH' && b.fechaString === fStr);
                             const det  = reg?.detalles || {};
                             return (
                                 <tr key={dia} className="hover:bg-cyan-50/50 transition-colors group">
@@ -1058,19 +1090,72 @@ const DashboardJefaEnfermeria = () => {
               <div className="md:hidden flex flex-col gap-4 overflow-y-auto pb-10">
                  {(activeView === 'temperaturas' || activeView === 'cloro') && diasDelMes.map(dia => {
                      const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                     const hasData = bitacorasMes.some(b => b.fechaString === fStr && (activeView === 'temperaturas' ? b.tipo === 'Temperatura' : b.tipo === 'Cloro y PH'));
                      
-                     if(!hasData) return null; 
-                     
-                     return (
-                         <div key={dia} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                             <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
-                                 <span className="text-sm font-black text-slate-800">{dia} {mesLabel}</span>
-                                 <span className="text-[10px] font-bold text-slate-400 uppercase">Registrado</span>
-                             </div>
-                             <p className="text-xs text-slate-500 italic">Ver detalle en pantalla completa.</p>
+                     if (activeView === 'temperaturas') {
+                       const regs = bitacorasFiltradas.filter(b => b.tipo === 'Temperatura' && b.fechaString === fStr);
+                       if (regs.length === 0) return null;
+                       const t8 = regs.find(r => r.turno?.includes('8:00'))?.detalles || {};
+                       const t4 = regs.find(r => r.turno?.includes('4:00'))?.detalles || {};
+                       const t10 = regs.find(r => r.turno?.includes('10:00'))?.detalles || {};
+                       const resp = [...new Set(regs.map(r => r.responsableNombre).filter(Boolean))].join(', ');
+                       return (
+                         <div key={`temp-${dia}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                           <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
+                             <span className="text-sm font-black text-slate-800">{dia} {mesLabel}</span>
+                             {resp && <span className="text-[10px] font-bold text-slate-400 uppercase truncate max-w-[120px]">{resp}</span>}
+                           </div>
+                           <div className="grid grid-cols-3 gap-2 text-center">
+                             {[{label:'8 AM',t:t8},{label:'4 PM',t:t4},{label:'10 PM',t:t10}].map(({label,t}) => (
+                               <div key={label} className="bg-slate-50 rounded-xl p-2">
+                                 <p className="text-[9px] font-black text-slate-400 uppercase mb-1">{label}</p>
+                                 <p className="text-[11px] font-bold text-slate-700">{!isEmptyVal(t.t_ext) ? `${t.t_ext}°` : '—'}</p>
+                                 <p className="text-[10px] text-slate-500">{!isEmptyVal(t.humedad) ? `${t.humedad}%` : '—'}</p>
+                                 <p className="text-[10px] font-bold text-blue-600">{!isEmptyVal(t.t_ref) ? `${t.t_ref}°` : '—'}</p>
+                               </div>
+                             ))}
+                           </div>
                          </div>
-                     );
+                       );
+                     }
+                     
+                     if (activeView === 'cloro') {
+                       const reg = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Cloro y PH' && b.fechaString === fStr);
+                       if (!reg) return null;
+                       const det = reg?.detalles || {};
+                       return (
+                         <div key={`cloro-${dia}`} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                           <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
+                             <span className="text-sm font-black text-slate-800">{dia} {mesLabel}</span>
+                             {reg?.responsableNombre && <span className="text-[10px] font-bold text-slate-400 uppercase truncate max-w-[120px]">{reg.responsableNombre}</span>}
+                           </div>
+                           <div className="grid grid-cols-2 gap-3">
+                             <div className="bg-cyan-50/50 rounded-xl p-3 border border-cyan-100">
+                               <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Lavado 1</p>
+                               <div className="flex justify-between text-[12px]">
+                                 <span className="text-slate-500">PH</span>
+                                 <span className="font-bold text-slate-800">{!isEmptyVal(det.ph_1) ? det.ph_1 : '—'}</span>
+                               </div>
+                               <div className="flex justify-between text-[12px] mt-1">
+                                 <span className="text-slate-500">Cloro</span>
+                                 <span className="font-bold text-slate-800">{!isEmptyVal(det.cloro_1) ? det.cloro_1 : '—'}</span>
+                               </div>
+                             </div>
+                             <div className="bg-cyan-50/50 rounded-xl p-3 border border-cyan-100">
+                               <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Lavado 2</p>
+                               <div className="flex justify-between text-[12px]">
+                                 <span className="text-slate-500">PH</span>
+                                 <span className="font-bold text-slate-800">{!isEmptyVal(det.ph_2) ? det.ph_2 : '—'}</span>
+                               </div>
+                               <div className="flex justify-between text-[12px] mt-1">
+                                 <span className="text-slate-500">Cloro</span>
+                                 <span className="font-bold text-slate-800">{!isEmptyVal(det.cloro_2) ? det.cloro_2 : '—'}</span>
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     }
+                     return null;
                  })}
               </div>
 
@@ -1099,7 +1184,7 @@ const DashboardJefaEnfermeria = () => {
                         <tbody>
                             {diasDelMes.map(dia => {
                             const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                            const reg  = bitacorasMes.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
+                            const reg  = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
                             const det  = reg?.detalles || {};
                             return (
                                 <tr key={dia} className="hover:bg-teal-50/50 transition-colors">
@@ -1119,7 +1204,7 @@ const DashboardJefaEnfermeria = () => {
                     <div className="md:hidden flex flex-col gap-4 pb-10 overflow-y-auto">
                         {diasDelMes.map(dia => {
                              const fStr = new Date(currentTime.getFullYear(), currentTime.getMonth(), dia).toLocaleDateString('en-CA');
-                             const reg  = bitacorasMes.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
+                const reg  = bitacorasFiltradas.slice().reverse().find(b => b.tipo === 'Limpieza' && b.area === areaLimpieza && b.fechaString === fStr);
                              if(!reg) return null;
                              return (
                                  <div key={dia} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center">

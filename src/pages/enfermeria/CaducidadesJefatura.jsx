@@ -4,7 +4,7 @@ import {
   CheckCircle2, AlertTriangle, Package, ShieldAlert, Trash2, X
 } from 'lucide-react';
 import { db } from '../../config/firebase';
-import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, query, where, onSnapshot, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 
 /* ════════════════════════════════════════════════════════════════
@@ -50,7 +50,7 @@ const CaducidadesJefatura = () => {
       where('mesCaducidad', '==', mesActual)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.eliminado);
       docs.sort((a, b) => (a.medicamento || '').localeCompare(b.medicamento || ''));
       setRegistros(docs);
       setLoading(false);
@@ -90,10 +90,16 @@ const CaducidadesJefatura = () => {
     return map;
   }, [registros]);
 
-  // ─── Eliminar ───
+  // ─── Eliminar (soft delete para auditoría) ───
   const handleEliminar = async (id) => {
     try {
-      await deleteDoc(doc(db, 'caducidades_almacen', id));
+      await updateDoc(doc(db, 'caducidades_almacen', id), {
+        eliminado: true,
+        eliminadoPor: user?.nombre || 'Sin nombre',
+        eliminadoPorId: user?.uid || '',
+        eliminadoPorRol: user?.rol || '',
+        eliminadoEn: serverTimestamp()
+      });
       setConfirmDelete(null);
     } catch {}
   };

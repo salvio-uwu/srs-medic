@@ -1,51 +1,51 @@
 import { collection, getDocs, limit, orderBy, query, startAt, endAt } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getPatientDisplayName, sanitizePatientNameFields } from '../utils/patientName';
-import { normalizeForSearch, rankResults } from '../utils/searchUtils';
+import { normalizeForSearch, fuzzyScore } from '../utils/searchUtils';
 
 const PACIENTES_REF = collection(db, 'pacientes');
 const DEFAULT_LIMIT = 10;
 
-const addSnapshotsToMap = (snapshots, resultsMap) => {
-  for (const snap of snapshots) {
-    for (const docRef of snap.docs) {
-      if (resultsMap.has(docRef.id)) continue;
-      const data = docRef.data() || {};
-      const normalizedNames = sanitizePatientNameFields({
-        nombre: data.nombre || '',
-        apellidoPaterno: data.apellidoPaterno || '',
-        apellidoMaterno: data.apellidoMaterno || '',
-        nombreCompleto: data.nombreCompleto || ''
-      });
-      resultsMap.set(docRef.id, {
-        id: docRef.id,
-        nombre: normalizedNames.nombre,
-        nombreCompleto: normalizedNames.nombreCompleto,
-        apellidoPaterno: normalizedNames.apellidoPaterno,
-        apellidoMaterno: normalizedNames.apellidoMaterno,
-        telefono: data.telefonoMovil || data.telefono || '',
-        telefonoMovil: data.telefonoMovil || '',
-        idPaciente: data.idPaciente || data.idPacienteMigrado || '',
-        sexo: data.sexo || '',
-        fechaNacimiento: data.fechaNacimiento || '',
-        municipioEstado: data.municipioEstado || '',
-        grupoSanguineo: data.grupoSanguineo || '',
-        email: data.email || '',
-        fechaRegistro: data.fechaRegistro || '',
-        fechaActualizacion: data.fechaActualizacion || '',
-        idPacienteMigrado: data.idPacienteMigrado || '',
-        padecimientoHipertension: data.padecimientoHipertension || false,
-        padecimientoDiabetes: data.padecimientoDiabetes || false,
-        padecimientoObesidad: data.padecimientoObesidad || false,
-        padecimientoArtritis: data.padecimientoArtritis || false,
-      });
-    }
-  }
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const extractPatientData = (docRef) => {
+  const data = docRef.data() || {};
+  const normalizedNames = sanitizePatientNameFields({
+    nombre: data.nombre || '',
+    apellidoPaterno: data.apellidoPaterno || '',
+    apellidoMaterno: data.apellidoMaterno || '',
+    nombreCompleto: data.nombreCompleto || ''
+  });
+  return {
+    id: docRef.id,
+    nombre: normalizedNames.nombre,
+    nombreCompleto: normalizedNames.nombreCompleto,
+    apellidoPaterno: normalizedNames.apellidoPaterno,
+    apellidoMaterno: normalizedNames.apellidoMaterno,
+    telefono: data.telefonoMovil || data.telefono || '',
+    telefonoMovil: data.telefonoMovil || '',
+    idPaciente: data.idPaciente || data.idPacienteMigrado || '',
+    sexo: data.sexo || '',
+    fechaNacimiento: data.fechaNacimiento || '',
+    municipioEstado: data.municipioEstado || '',
+    grupoSanguineo: data.grupoSanguineo || '',
+    email: data.email || '',
+    fechaRegistro: data.fechaRegistro || '',
+    fechaActualizacion: data.fechaActualizacion || '',
+    idPacienteMigrado: data.idPacienteMigrado || '',
+    padecimientoHipertension: data.padecimientoHipertension || false,
+    padecimientoDiabetes: data.padecimientoDiabetes || false,
+    padecimientoObesidad: data.padecimientoObesidad || false,
+    padecimientoArtritis: data.padecimientoArtritis || false,
+  };
 };
 
 const runPrefixQuery = (field, prefix, max) =>
   getDocs(query(PACIENTES_REF, orderBy(field), startAt(prefix), endAt(prefix + '\uf8ff'), limit(max)))
-    .catch(() => ({ docs: [] }));
+    .catch((err) => {
+      console.error(`[patientSearch] Query fallida en campo "${field}" con prefijo "${prefix}":`, err);
+      return { docs: [] };
+    });
 
 const titleCase = (str = '') =>
   String(str || '')
@@ -53,92 +53,186 @@ const titleCase = (str = '') =>
     .trim()
     .replace(/(^|\s)(\S)/g, (_, space, char) => `${space}${char.toLocaleUpperCase('es-MX')}`);
 
+// ─── Búsqueda principal ────────────────────────────────────────────────────
+
+/**
+ * Busca pacientes por nombre, apellido o teléfono.
+ *
+ * Para búsquedas de una sola palabra: prefijo sobre searchName, nombreCompleto y
+ * apellidoPaterno, con ranking difuso.
+ *
+ * Para búsquedas de múltiples palabras (ej. "araujo cireno"): cada token se busca
+ * como prefijo contra searchName y los campos de apellido. Los resultados se
+ * intersectan: solo quedan pacientes que contienen TODOS los tokens en su nombre.
+ */
 export const searchPatients = async (searchTerm, maxResults = DEFAULT_LIMIT) => {
-  const term = normalizeForSearch(searchTerm);
+  const rawTerm = searchTerm.trim();
+  const term = normalizeForSearch(rawTerm);
   if (term.length < 2) return [];
 
-  // Término original conservando ñ/tildes (solo lowercase + trim), para cubrir
-  // pacientes guardados con caracteres especiales (ej. "PEÑALOZA", "Ñuñez")
-  const termOriginal = searchTerm.trim().toLocaleLowerCase('es-MX').replace(/\s+/g, ' ');
-  const hasAccents = termOriginal !== term;
-
   const results = new Map();
-
-  const fetch = async (queries) => {
-    const snapshots = await Promise.all(queries);
-    addSnapshotsToMap(snapshots, results);
-  };
+  const tokens = term.split(/\s+/).filter(t => t.length >= 2);
+  const isMultiToken = tokens.length > 1;
 
   const nameTitle = titleCase(term);
-  const nameUpper = term.toLocaleUpperCase('es-MX');
+  const termWithAccents = rawTerm.toLocaleLowerCase('es-MX').replace(/\s+/g, ' ');
 
-  // Estrategia 1: prefijo exacto (TitleCase + mayúsculas para pacientes migrados/capturados en caps)
-  const exactQueries = [
-    runPrefixQuery('searchName', term, 80),
-    runPrefixQuery('nombreCompleto', nameTitle, 50),
-    runPrefixQuery('apellidoPaterno', nameTitle, 50),
+  // ── Queries base: prefijo del término completo ──
+  const queries = [
+    runPrefixQuery('searchName', term, 150),
+    runPrefixQuery('nombreCompleto', nameTitle, 150),
+    runPrefixQuery('apellidoPaterno', nameTitle, 150),
   ];
 
   if (nameTitle !== term) {
-    exactQueries.push(runPrefixQuery('nombreCompleto', term, 50));
+    queries.push(runPrefixQuery('nombreCompleto', term, 150));
   }
 
-  // Búsqueda en mayúsculas: cubre nombres guardados en CAPS (ej. "GARCIA LOPEZ")
+  // Mayúsculas
+  const nameUpper = term.toLocaleUpperCase('es-MX');
   if (nameUpper !== nameTitle) {
-    exactQueries.push(runPrefixQuery('nombreCompleto', nameUpper, 50));
-    exactQueries.push(runPrefixQuery('apellidoPaterno', nameUpper, 50));
+    queries.push(runPrefixQuery('nombreCompleto', nameUpper, 150));
+    queries.push(runPrefixQuery('apellidoPaterno', nameUpper, 150));
   }
 
-  // Búsqueda con tildes/ñ originales: cubre pacientes guardados con "PEÑALOZA", "Ñuñez", etc.
-  // normalizeForSearch elimina tildes, lo que rompe el prefijo en Firestore para esos registros
-  if (hasAccents) {
-    const nameTitleOriginal = titleCase(termOriginal);
-    const nameUpperOriginal = termOriginal.toLocaleUpperCase('es-MX');
-    exactQueries.push(runPrefixQuery('nombreCompleto', nameTitleOriginal, 50));
-    exactQueries.push(runPrefixQuery('apellidoPaterno', nameTitleOriginal, 50));
-    if (nameUpperOriginal !== nameTitleOriginal) {
-      exactQueries.push(runPrefixQuery('nombreCompleto', nameUpperOriginal, 50));
-      exactQueries.push(runPrefixQuery('apellidoPaterno', nameUpperOriginal, 50));
+  // Tildes/ñ originales
+  if (termWithAccents !== term) {
+    const taTitle = titleCase(termWithAccents);
+    queries.push(runPrefixQuery('nombreCompleto', taTitle, 150));
+    queries.push(runPrefixQuery('apellidoPaterno', taTitle, 150));
+  }
+
+  // ── Multi-token: buscar cada token por separado ──
+  if (isMultiToken) {
+    for (const token of tokens) {
+      const tTitle = titleCase(token);
+      const tUpper = token.toLocaleUpperCase('es-MX');
+
+      // Prefijo completo en searchName y ambos apellidos
+      queries.push(
+        runPrefixQuery('searchName', token, 150),
+        runPrefixQuery('apellidoPaterno', tTitle, 150),
+        runPrefixQuery('apellidoMaterno', tTitle, 150),
+      );
+
+      if (tUpper !== tTitle) {
+        queries.push(
+          runPrefixQuery('apellidoPaterno', tUpper, 150),
+          runPrefixQuery('apellidoMaterno', tUpper, 150),
+        );
+      }
+
+      // Prefijo corto de 2 caracteres: cubre "cireno" vs "CIRENO" y otros
+      // desfases de casing donde el prefijo completo no encaja lexicográficamente
+      if (token.length >= 3) {
+        const short = token.substring(0, 2);
+        const shortTitle = titleCase(short);
+        queries.push(
+          runPrefixQuery('apellidoPaterno', shortTitle, 200),
+          runPrefixQuery('apellidoMaterno', shortTitle, 200),
+        );
+      }
     }
   }
 
+  // Búsqueda por teléfono
   if (/^\d{3,}$/.test(term)) {
-    exactQueries.push(runPrefixQuery('telefonoMovil', term, 20));
+    queries.push(runPrefixQuery('telefonoMovil', term, 20));
   }
 
-  await fetch(exactQueries);
+  // ── Ejecutar y deduplicar ──
+  const snapshots = await Promise.all(queries);
+  const seen = new Set();
+  for (const snap of snapshots) {
+    for (const docRef of snap.docs) {
+      if (seen.has(docRef.id)) continue;
+      seen.add(docRef.id);
+      results.set(docRef.id, extractPatientData(docRef));
+    }
+  }
 
-  // Estrategia 2: solo si NO hubo resultados, relajar a 2 caracteres
+  // ── Fallback: si no hubo nada, relajar a 2 caracteres ──
   if (results.size === 0 && term.length > 2) {
     const short = term.substring(0, 2);
     const shortTitle = titleCase(short);
-
-    await fetch([
-      runPrefixQuery('nombreCompleto', shortTitle, 100),
-      runPrefixQuery('apellidoPaterno', shortTitle, 100),
+    const fb = await Promise.all([
+      runPrefixQuery('nombreCompleto', shortTitle, 200),
+      runPrefixQuery('apellidoPaterno', shortTitle, 200),
+      runPrefixQuery('searchName', short, 200),
     ]);
-
-    if (shortTitle !== short) {
-      await fetch([runPrefixQuery('nombreCompleto', short, 100)]);
+    for (const snap of fb) {
+      for (const docRef of snap.docs) {
+        if (seen.has(docRef.id)) continue;
+        seen.add(docRef.id);
+        results.set(docRef.id, extractPatientData(docRef));
+      }
     }
   }
 
-  // Estrategia 3: último recurso, 1 carácter
+  // ── Último recurso: 1 carácter ──
   if (results.size === 0 && term.length > 1) {
     const first = term.charAt(0).toLocaleUpperCase('es-MX');
-    await fetch([runPrefixQuery('nombreCompleto', first, 100)]);
+    const fb = await Promise.all([
+      runPrefixQuery('nombreCompleto', first, 200),
+    ]);
+    for (const snap of fb) {
+      for (const docRef of snap.docs) {
+        if (seen.has(docRef.id)) continue;
+        seen.add(docRef.id);
+        results.set(docRef.id, extractPatientData(docRef));
+      }
+    }
   }
 
-  const ranked = rankResults(searchTerm, Array.from(results.values()), getPatientDisplayName);
+  const allResults = Array.from(results.values());
 
-  // Filtrar ruido: solo resultados con score > 0.15, o todo si hay pocos
-  const MIN_SCORE = 0.15;
-  const filtered = ranked.length <= 5
-    ? ranked
-    : ranked.filter((r) => r._score > MIN_SCORE);
+  // ── Filtrado y ranking ──
+  let filtered;
+
+  if (isMultiToken) {
+    // Cada token debe aparecer (exacto o fuzzy > 0.3) en al menos un campo del paciente
+    filtered = allResults.filter((r) => {
+      const fields = [
+        normalizeForSearch(r.nombreCompleto || ''),
+        normalizeForSearch(r.nombre || ''),
+        normalizeForSearch(r.apellidoPaterno || ''),
+        normalizeForSearch(r.apellidoMaterno || ''),
+      ];
+
+      return tokens.every(token =>
+        fields.some(field => {
+          if (!field) return false;
+          if (field.includes(token)) return true;
+          return fuzzyScore(token, field) > 0.3;
+        })
+      );
+    });
+  } else {
+    // Monotoken: ordenar por fuzzy score y filtrar ruido
+    const scored = allResults.map((r) => ({
+      ...r,
+      _score: fuzzyScore(searchTerm, getPatientDisplayName(r)),
+    }));
+
+    scored.sort((a, b) => b._score - a._score);
+
+    const MIN_SCORE = 0.15;
+    filtered = scored.length <= 5
+      ? scored
+      : scored.filter((r) => r._score > MIN_SCORE);
+  }
+
+  // ── Orden final alfabético ──
+  filtered.sort((a, b) => {
+    const na = getPatientDisplayName(a);
+    const nb = getPatientDisplayName(b);
+    return na.localeCompare(nb, 'es', { sensitivity: 'base' });
+  });
 
   return filtered.slice(0, maxResults);
 };
+
+// ─── Autocomplete ───────────────────────────────────────────────────────────
 
 export const searchPatientsForAutocomplete = async (searchTerm, maxResults = 10) => {
   const results = await searchPatients(searchTerm, maxResults);

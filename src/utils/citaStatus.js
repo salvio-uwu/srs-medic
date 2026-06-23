@@ -4,12 +4,13 @@
  * Usado en: AgendaEnfermeria, AgendaAdmin, Agenda (médico).
  *
  * Flujo de estados:
- *   pendiente_triage  → paciente registrado, aún no pasa por triage
- *   en_triage         → enfermería abrió la pantalla de triage (triageIniciadoAt set)
- *   esperando_consulta→ triage completado, en sala de espera (estado Firestore: en_espera)
- *   en_consulta       → médico abrió el expediente (estado Firestore: en_consulta)
- *   completada        → consulta finalizada
- *   cancelada         → cita cancelada
+ *   pendiente_triage   → paciente registrado, aún no pasa por triage
+ *   en_triage          → enfermería abrió la pantalla de triage (triageIniciadoAt set)
+ *   esperando_consulta → triage completado, en sala de espera (estado Firestore: en_espera)
+ *   en_consulta        → médico abrió el expediente (estado Firestore: en_consulta)
+ *   en_procedimiento   → enfermería está realizando un procedimiento (citas de enfermería)
+ *   completada         → consulta / procedimiento finalizado
+ *   cancelada          → cita cancelada
  */
 
 /** Paleta visual por estado detallado */
@@ -64,6 +65,16 @@ export const ESTADOS_CONFIG = {
     pulse: false,
     cssKey: 'completada',
   },
+  en_procedimiento: {
+    label: 'En procedimiento',
+    sublabel: 'Enfermería realizando procedimiento',
+    dot: '#14b8a6',
+    bg: '#f0fdfa',
+    border: '#99f6e4',
+    color: '#0f766e',
+    pulse: true,
+    cssKey: 'en_procedimiento',
+  },
   cancelada: {
     label: 'Cancelada',
     sublabel: null,
@@ -87,12 +98,13 @@ export function getEstadoDetallado(cita = {}) {
   const esUrgencia = (cita.tipoConsulta || '').toLowerCase() === 'urgencia';
 
   let key;
-  if (estado === 'cancelada')       key = 'cancelada';
-  else if (estado === 'completada') key = 'completada';
-  else if (estado === 'en_consulta')key = 'en_consulta';
-  else if (estado === 'en_espera')  key = 'esperando_consulta';
-  else if (cita.triageIniciadoAt)   key = 'en_triage';
-  else                              key = 'pendiente_triage';
+  if (estado === 'cancelada')         key = 'cancelada';
+  else if (estado === 'completada')   key = 'completada';
+  else if (estado === 'en_consulta')  key = 'en_consulta';
+  else if (estado === 'en_procedimiento') key = 'en_procedimiento';
+  else if (estado === 'en_espera')    key = 'esperando_consulta';
+  else if (cita.triageIniciadoAt)     key = 'en_triage';
+  else                                key = 'pendiente_triage';
 
   return {
     ...ESTADOS_CONFIG[key],

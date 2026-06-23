@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Save, User, Clock, Syringe, FileText, Plus, Trash2,
   Activity, Hash, ShoppingCart, ClipboardList, AlertCircle,
   CheckCircle, Stethoscope, Package, ChevronLeft
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { db } from '../../config/firebase';
 import {
   doc, getDoc, addDoc, updateDoc, collection, serverTimestamp
@@ -14,8 +15,8 @@ const VIA_OPTIONS = ['Intramuscular', 'Intravenosa', 'Oral', 'Subcutánea', 'Tó
 
 const OrdenServicioEnfermeria = () => {
   const { user } = useAuth();
-  const params = new URLSearchParams(window.location.search);
-  const citaId = params.get('citaId') || '';
+  const [searchParams] = useSearchParams();
+  const citaId = useMemo(() => searchParams.get('citaId') || '', [searchParams]);
 
   const [cita, setCita] = useState(null);
   const [loadingCita, setLoadingCita] = useState(true);
@@ -121,11 +122,40 @@ const OrdenServicioEnfermeria = () => {
         creadoAt: serverTimestamp()
       });
 
-      // Marcar la cita como con orden generada
+      // Marcar la cita como completada y con orden generada
       await updateDoc(doc(db, 'citas', citaId), {
         ordenEnfermeriaId: ordenRef.id,
         ordenEnfermeriaGenerada: true,
-        ordenEnfermeriaAt: serverTimestamp()
+        ordenEnfermeriaAt: serverTimestamp(),
+        estado: 'completada',
+        procedimientoFinalizadoAt: serverTimestamp(),
+        procedimientoFinalizadoPor: user?.uid || '',
+        procedimientoFinalizadoPorNombre: user?.nombre || ''
+      });
+
+      // Escribir en el expediente clínico del paciente
+      await addDoc(collection(db, 'historial_clinico'), {
+        pacienteId: cita.pacienteId || '',
+        pacienteNombre: cita.paciente || '',
+        medicoNombre: user?.nombre || 'Enfermero/a',
+        medicoPerfil: 'Enfermería',
+        fecha: serverTimestamp(),
+        medicoId: user?.uid || 'anonimo',
+        citaId,
+        tipoNota: 'Servicio de Enfermería',
+        origenRegistro: 'enfermeria_orden_servicio',
+        motivoClinico,
+        notasClinicas,
+        codigoCompras: codigoCompras.trim(),
+        observaciones,
+        signos,
+        insumos,
+        procedimientos,
+        motivoCita: cita.motivo || '',
+        sucursal: cita.sucursal || '',
+        consultorio: cita.consultorioNombre || '',
+        enfermeroNombre: user?.nombre || 'Enfermero/a',
+        ordenEnfermeriaId: ordenRef.id
       });
 
       setSaved(true);

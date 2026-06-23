@@ -99,6 +99,15 @@ const CarroRojoJefatura = () => {
   const [activeSubView, setActiveSubView] = useState({});
   const [filterStatus, setFilterStatus] = useState('all');
   const [openHistRow, setOpenHistRow] = useState({});
+  const [historialMesFilter, setHistorialMesFilter] = useState(''); // '' = todos los meses
+
+  // Mes actual como estado — se actualiza al montar y cada minuto
+  const [mesActual, setMesActual] = useState(() => new Date().toLocaleDateString('en-CA').slice(0, 7));
+  useEffect(() => {
+    const tick = () => setMesActual(new Date().toLocaleDateString('en-CA').slice(0, 7));
+    const id = setInterval(tick, 60000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => { const u = onSnapshot(collection(db,'catalogo_sucursales'), s => { setSucursales(s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.activo!==false)); }); return ()=>u(); }, []);
   useEffect(() => { const u = onSnapshot(doc(db,'bitacora_carro_rojo','_plantilla'), s => { if(s.exists()){const d=s.data();setPMat(d.materialCuracion||buildDef(MAT));setPMed(d.medicamentos||buildDef(MED));}else{setPMat(buildDef(MAT));setPMed(buildDef(MED));}}); return ()=>u(); }, []);
@@ -106,6 +115,8 @@ const CarroRojoJefatura = () => {
 
   useEffect(() => {
     if (!openSuc) return;
+    // Al abrir una nueva sucursal, resetear filtro de mes
+    setHistorialMesFilter('');
     const q = query(collection(db, 'bitacora_carro_rojo', openSuc, 'historial'), orderBy('fecha', 'desc'), limit(30));
     const unsub = onSnapshot(q, snap => {
       setHistorial(prev => ({ ...prev, [openSuc]: snap.docs.map(d => ({ id: d.id, ...d.data() })) }));
@@ -120,8 +131,14 @@ const CarroRojoJefatura = () => {
     const list = sucursales.map(s => {
       const n = s.nombre || s.id;
       const d = sucData[n];
-      const mat = merge(pMat, d?.materialData);
-      const med = merge(pMed, d?.medicamentoData);
+      // Si el documento tiene mesBloqueado y es el mes actual → datos vigentes (pueden ser parciales)
+      // Si no coinciden → los datos son del mes pasado, tratar como sin datos
+      const esMesActual = !!d && d.mesBloqueado === mesActual;
+      // Aunque el documento sea del mes actual, si no tiene mesBloqueado (parcial) también mostrar datos
+      const tieneDatosActuales = esMesActual || (!d?.mesBloqueado && !!d && (d.materialData || d.medicamentoData));
+      const datosVigentes = (esMesActual || tieneDatosActuales) ? d : null;
+      const mat = merge(pMat, datosVigentes?.materialData);
+      const med = merge(pMed, datosVigentes?.medicamentoData);
       const all = [...mat, ...med];
 
       let sOk=0,sBajo=0,sCrit=0,sNa=0,cVig=0,cProx=0,cVenc=0,cNa=0;
@@ -133,13 +150,34 @@ const CarroRojoJefatura = () => {
       });
 
       let status = 'sin_datos';
-      const hasAnyData = d && all.some(r => r.cantidadExistente || r.caducidad);
+      const hasAnyData = datosVigentes && all.some(r => r.cantidadExistente || r.caducidad);
       if(hasAnyData) { if(sCrit>0||cVenc>0) status='critico'; else if(sBajo>0||cProx>0) status='atencion'; else status='ok'; }
 
       const filled = all.filter(r => r.cantidadExistente).length;
       const coverage = all.length > 0 ? Math.round((filled / all.length) * 100) : 0;
 
-      return { nombre: n, d, mat, med, all, sOk, sBajo, sCrit, sNa, cVig, cProx, cVenc, cNa, status, ult: d?.ultimaActualizacion, por: d?.actualizadoPor||'', coverage, filled };
+      // Determinar si está realmente completo (todos los campos llenos)
+      const completo = esMesActual && (
+        pMat.every(item => d?.materialData?.[item.id]?.cantidadExistente) &&
+        pMed.every(item => d?.medicamentoData?.[item.id]?.cantidadExistente)
+      );
+
+      return {
+        nombre: n,
+        d: datosVigentes,
+        mat, med, all,
+        sOk, sBajo, sCrit, sNa,
+        cVig, cProx, cVenc, cNa,
+        status,
+        ult: datosVigentes?.ultimaActualizacion,
+        por: datosVigentes?.actualizadoPor || '',
+        coverage, filled,
+        bloqueadoMes: datosVigentes?.mesBloqueado || (d?.mesBloqueado || ''),
+        esMesActual,
+        // Guardar el mesBloqueado del doc original para estadísticas
+        ultimoMesBloqueado: d?.mesBloqueado || '',
+        completo,
+      };
     });
 
     const order = { critico: 0, atencion: 1, ok: 2, sin_datos: 3 };
@@ -148,7 +186,7 @@ const CarroRojoJefatura = () => {
     const st = { ok:0, atencion:0, critico:0, sinDatos:0 };
     list.forEach(s => st[s.status==='sin_datos'?'sinDatos':s.status]++);
     return { list, st };
-  }, [sucursales, sucData, pMat, pMed]);
+  }, [sucursales, sucData, pMat, pMed, mesActual]);
 
   const filteredList = useMemo(() => {
     if (filterStatus === 'all') return data.list;
@@ -381,10 +419,25 @@ const CarroRojoJefatura = () => {
                     {suc.por ? (
                       <span className="truncate max-w-[120px] flex items-center gap-1"><User size={10} className="shrink-0" />{suc.por}</span>
                     ) : (
-                      <span className="italic">Sin actualizaciones</span>
+                      <span className="italic">{suc.ultimoMesBloqueado ? `Último envío: ${suc.ultimoMesBloqueado}` : 'Sin actualizaciones'}</span>
                     )}
                     <span className="hidden sm:inline text-slate-300">·</span>
                     <span className="hidden sm:inline">{fmtRelativo(suc.ult)}</span>
+                    {suc.esMesActual && suc.completo && (
+                      <span className="text-[9px] font-black text-emerald-500 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded hidden sm:inline-block">
+                        Completado
+                      </span>
+                    )}
+                    {suc.esMesActual && !suc.completo && (
+                      <span className="text-[9px] font-black text-blue-500 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded hidden sm:inline-block">
+                        En progreso
+                      </span>
+                    )}
+                    {suc.ultimoMesBloqueado && !suc.esMesActual && (
+                      <span className="text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded hidden sm:inline-block">
+                        Pendiente
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -424,8 +477,17 @@ const CarroRojoJefatura = () => {
               </div>
 
               {/* Badges móvil */}
-              {!open && (suc.cVenc > 0 || suc.cProx > 0 || suc.sCrit > 0) && (
+              {!open && (suc.cVenc > 0 || suc.cProx > 0 || suc.sCrit > 0 || suc.esMesActual || suc.ultimoMesBloqueado) && (
                 <div className="sm:hidden flex items-center gap-1.5 px-4 pb-3 -mt-1 overflow-x-auto">
+                  {suc.esMesActual && suc.completo && (
+                    <span className="text-[9px] font-black text-emerald-500 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md shrink-0">Completado</span>
+                  )}
+                  {suc.esMesActual && !suc.completo && (
+                    <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md shrink-0">En progreso</span>
+                  )}
+                  {suc.ultimoMesBloqueado && !suc.esMesActual && (
+                    <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md shrink-0">Pendiente</span>
+                  )}
                   {suc.cVenc > 0 && <span className="text-[9px] font-black text-white bg-red-500 px-2 py-0.5 rounded-md shrink-0">{suc.cVenc} vencidos</span>}
                   {suc.cProx > 0 && <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md shrink-0">{suc.cProx} próximos</span>}
                   {suc.sCrit > 0 && <span className="text-[9px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-md shrink-0">↓{suc.sCrit} stock</span>}
@@ -440,6 +502,21 @@ const CarroRojoJefatura = () => {
                     <div className="flex items-center gap-3 text-[11px] text-slate-400 font-medium flex-wrap">
                       <span className="flex items-center gap-1"><Clock size={11} /> {fmtTs(suc.ult)}</span>
                       {suc.por && <span>por <b className="text-slate-600">{suc.por}</b></span>}
+                      {suc.esMesActual && suc.completo && (
+                        <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                          Completado
+                        </span>
+                      )}
+                      {suc.esMesActual && !suc.completo && (
+                        <span className="text-[10px] font-black text-blue-500 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                          En progreso
+                        </span>
+                      )}
+                      {suc.ultimoMesBloqueado && !suc.esMesActual && (
+                        <span className="text-[10px] font-black text-amber-500 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                          Pendiente este mes
+                        </span>
+                      )}
                       <span className="text-slate-200 hidden sm:inline">|</span>
                       <span className="hidden sm:inline"><b className="text-slate-600">{suc.filled}</b> de {suc.all.length} registrados</span>
                     </div>
@@ -447,7 +524,7 @@ const CarroRojoJefatura = () => {
                       onClick={(e) => { e.stopPropagation(); navigate(`/enfermeria/carro-rojo?sucursal=${encodeURIComponent(suc.nombre)}`); }}
                       className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-xl text-[11px] font-bold hover:from-slate-700 hover:to-slate-800 transition-all active:scale-[0.97] shadow-sm"
                     >
-                      <Edit3 size={12} /> Editar datos <ArrowUpRight size={11} className="opacity-50" />
+                      <Edit3 size={12} /> {suc.completo ? 'Ver datos' : 'Editar datos'} <ArrowUpRight size={11} className="opacity-50" />
                     </button>
                   </div>
 
@@ -535,109 +612,167 @@ const CarroRojoJefatura = () => {
                           <p className="text-[11px] text-slate-300 mt-1">Se generará con cada nueva actualización</p>
                         </div>
                       ) : (
-                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                          <div className="overflow-x-auto">
-                            <table className="min-w-[760px] w-full text-sm border-collapse">
-                              <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200">
-                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Fecha</th>
-                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Usuario</th>
-                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Capturados</th>
-                                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">OK</th>
-                                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Bajo</th>
-                                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Crítico</th>
-                                  <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Vencidos</th>
-                                  <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-widest text-slate-400">Acciones</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
-                                {historial[suc.nombre].map((h, i) => {
-                                  const fecha = h.fecha?.toDate ? h.fecha.toDate() : h.fecha ? new Date(h.fecha) : null;
-                                  const plMatSnap = h.plantillaMaterial || pMat;
-                                  const plMedSnap = h.plantillaMedicamento || pMed;
-                                  const m = snapshotMetrics({ pMat: plMatSnap, pMed: plMedSnap, materialData: h.materialData, medicamentoData: h.medicamentoData, baseDate: fecha || new Date() });
-                                  const isOpen = openHistRow[suc.nombre] === h.id;
-                                  const matSnapRows = mergeHist(plMatSnap, h.materialData);
-                                  const medSnapRows = mergeHist(plMedSnap, h.medicamentoData);
-                                  const stripe = i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30';
-                                  return (
-                                    <React.Fragment key={h.id}>
-                                      <tr className={`${stripe} hover:bg-blue-50/30 transition-colors`}>
-                                        <td className="px-4 py-3">
-                                          <div className="font-bold text-slate-700 text-[12px]">
-                                            {fecha ? fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                                          </div>
-                                          <div className="text-[10px] text-slate-400 font-medium tabular-nums">
-                                            {fecha ? fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''}
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <div className="text-[12px] font-bold text-slate-700 flex items-center gap-1.5">
-                                            <User size={12} className="text-slate-300" />
-                                            <span className="truncate max-w-[220px]">{h.actualizadoPor || '—'}</span>
-                                          </div>
-                                          <div className="text-[10px] text-slate-400 font-medium capitalize">{h.actualizadoPorRol || ''}</div>
-                                        </td>
-                                        <td className="px-4 py-3 text-center">
-                                          <span className="text-[12px] font-black tabular-nums text-slate-700">{m.capturados}</span>
-                                          <span className="text-[10px] text-slate-400 font-medium">/{m.total}</span>
-                                        </td>
-                                        <td className="px-3 py-3 text-center text-[12px] font-black tabular-nums text-emerald-600">{m.ok}</td>
-                                        <td className="px-3 py-3 text-center text-[12px] font-black tabular-nums text-amber-600">{m.bajo}</td>
-                                        <td className="px-3 py-3 text-center text-[12px] font-black tabular-nums text-red-600">{m.critico}</td>
-                                        <td className={`px-3 py-3 text-center text-[12px] font-black tabular-nums ${m.vencidos > 0 ? 'text-red-600' : 'text-slate-300'}`}>{m.vencidos}</td>
-                                        <td className="px-4 py-3 text-right">
-                                          <div className="inline-flex items-center gap-1">
-                                            <button
-                                              onClick={() => setOpenHistRow(p => ({ ...p, [suc.nombre]: (p[suc.nombre] === h.id ? null : h.id) }))}
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                                            >
-                                              <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                                              {isOpen ? 'Ocultar' : 'Ver'}
-                                            </button>
-                                            <button
-                                              onClick={() => printSuc({ sucursal: suc.nombre, matRows: matSnapRows, medRows: medSnapRows, usuario: h.actualizadoPor || '', fecha: h.fecha })}
-                                              className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all" title="Imprimir este envío"
-                                            >
-                                              <Printer size={15} />
-                                            </button>
-                                          </div>
-                                        </td>
-                                      </tr>
+                        <>
+                          {/* ── Filtro por mes ── */}
+                          {(() => {
+                            const mesesUnicos = [...new Set(
+                              historial[suc.nombre]
+                                .map(h => h.mes || (h.fecha?.toDate ? h.fecha.toDate() : h.fecha ? new Date(h.fecha) : null))
+                                .filter(Boolean)
+                                .map(m => typeof m === 'string' ? m : m.toLocaleDateString('en-CA').slice(0, 7))
+                            )].sort().reverse();
+                            const MESES_LABEL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+                            const mesLabel = (ym) => { const [, m] = ym.split('-'); return `${MESES_LABEL[Number(m)-1]} ${ym.split('-')[0]}`; };
+                            const entradasFiltradas = historialMesFilter
+                              ? historial[suc.nombre].filter(h => {
+                                  const entryMes = h.mes || (h.fecha?.toDate ? h.fecha.toDate() : h.fecha ? new Date(h.fecha) : null);
+                                  if (!entryMes) return false;
+                                  return (typeof entryMes === 'string' ? entryMes : entryMes.toLocaleDateString('en-CA').slice(0, 7)) === historialMesFilter;
+                                })
+                              : historial[suc.nombre];
 
-                                      {isOpen && (
-                                        <tr className={`${stripe}`}>
-                                          <td colSpan={8} className="px-4 sm:px-5 py-4 bg-white">
-                                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                                              <div>
-                                                <p className="text-[12px] font-black text-slate-700">Detalle del envío</p>
-                                                <p className="text-[10px] text-slate-400 font-semibold">
-                                                  {fecha ? fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}
-                                                  {fecha ? ` · ${fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                                </p>
-                                              </div>
-                                              <button
-                                                onClick={() => printSuc({ sucursal: suc.nombre, matRows: matSnapRows, medRows: medSnapRows, usuario: h.actualizadoPor || '', fecha: h.fecha })}
-                                                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 text-white rounded-xl text-[11px] font-bold hover:bg-slate-800 transition-all active:scale-[0.97]"
-                                              >
-                                                <Printer size={14} /> Imprimir este envío
-                                              </button>
-                                            </div>
+                            return (
+                              <>
+                                {mesesUnicos.length > 1 && (
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Filtrar mes:</span>
+                                    <div className="relative">
+                                      <select
+                                        value={historialMesFilter}
+                                        onChange={e => setHistorialMesFilter(e.target.value)}
+                                        className="pl-3 pr-7 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50 transition-all appearance-none"
+                                      >
+                                        <option value="">Todos los meses</option>
+                                        {mesesUnicos.map(ym => (
+                                          <option key={ym} value={ym}>{mesLabel(ym)}</option>
+                                        ))}
+                                      </select>
+                                      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
+                                    </div>
+                                    {historialMesFilter && (
+                                      <button onClick={() => setHistorialMesFilter('')} className="text-[10px] font-bold text-blue-500 hover:text-blue-600">
+                                        Limpiar
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
 
-                                            <div className="space-y-3">
-                                              {renderSucursalTabla({ title: 'Material de curación', Icon: Package, rows: matSnapRows })}
-                                              {renderSucursalTabla({ title: 'Medicamentos', Icon: Pill, rows: medSnapRows })}
-                                            </div>
-                                          </td>
+                                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                                  <div className="overflow-x-auto">
+                                    <table className="min-w-[760px] w-full text-sm border-collapse">
+                                      <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200">
+                                          <th className="px-3 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Mes</th>
+                                          <th className="px-3 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Fecha</th>
+                                          <th className="px-3 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Usuario</th>
+                                          <th className="px-2 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Capt.</th>
+                                          <th className="px-2 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">OK</th>
+                                          <th className="px-2 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Bajo</th>
+                                          <th className="px-2 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Crit.</th>
+                                          <th className="px-2 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Venc.</th>
+                                          <th className="px-4 py-3 text-right text-[10px] font-black uppercase tracking-widest text-slate-400">Acciones</th>
                                         </tr>
-                                      )}
-                                    </React.Fragment>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {entradasFiltradas.map((h, i) => {
+                                          const fecha = h.fecha?.toDate ? h.fecha.toDate() : h.fecha ? new Date(h.fecha) : null;
+                                          const entryMes = h.mes || (fecha ? fecha.toLocaleDateString('en-CA').slice(0, 7) : '—');
+                                          const plMatSnap = h.plantillaMaterial || pMat;
+                                          const plMedSnap = h.plantillaMedicamento || pMed;
+                                          const m = snapshotMetrics({ pMat: plMatSnap, pMed: plMedSnap, materialData: h.materialData, medicamentoData: h.medicamentoData, baseDate: fecha || new Date() });
+                                          const isOpen = openHistRow[suc.nombre] === h.id;
+                                          const matSnapRows = mergeHist(plMatSnap, h.materialData);
+                                          const medSnapRows = mergeHist(plMedSnap, h.medicamentoData);
+                                          const stripe = i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30';
+                                          return (
+                                            <React.Fragment key={h.id}>
+                                              <tr className={`${stripe} hover:bg-blue-50/30 transition-colors`}>
+                                                <td className="px-3 py-3">
+                                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black ${
+                                                    entryMes === mesActual ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
+                                                  }`}>
+                                                    {entryMes !== '—' && entryMes.includes('-') ? entryMes.split('-').reverse().join('/') : entryMes}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-3">
+                                                  <div className="font-bold text-slate-700 text-[12px]">
+                                                    {fecha ? fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                                  </div>
+                                                  <div className="text-[10px] text-slate-400 font-medium tabular-nums">
+                                                    {fecha ? fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                                  </div>
+                                                </td>
+                                                <td className="px-3 py-3">
+                                                  <div className="text-[12px] font-bold text-slate-700 flex items-center gap-1.5">
+                                                    <User size={12} className="text-slate-300" />
+                                                    <span className="truncate max-w-[180px]">{h.actualizadoPor || '—'}</span>
+                                                  </div>
+                                                  <div className="text-[10px] text-slate-400 font-medium capitalize">{h.actualizadoPorRol || ''}</div>
+                                                </td>
+                                                <td className="px-2 py-3 text-center">
+                                                  <span className="text-[12px] font-black tabular-nums text-slate-700">{m.capturados}</span>
+                                                  <span className="text-[10px] text-slate-400 font-medium">/{m.total}</span>
+                                                </td>
+                                                <td className="px-2 py-3 text-center text-[12px] font-black tabular-nums text-emerald-600">{m.ok}</td>
+                                                <td className="px-2 py-3 text-center text-[12px] font-black tabular-nums text-amber-600">{m.bajo}</td>
+                                                <td className="px-2 py-3 text-center text-[12px] font-black tabular-nums text-red-600">{m.critico}</td>
+                                                <td className={`px-2 py-3 text-center text-[12px] font-black tabular-nums ${m.vencidos > 0 ? 'text-red-600' : 'text-slate-300'}`}>{m.vencidos}</td>
+                                                <td className="px-4 py-3 text-right">
+                                                  <div className="inline-flex items-center gap-1">
+                                                    <button
+                                                      onClick={() => setOpenHistRow(p => ({ ...p, [suc.nombre]: (p[suc.nombre] === h.id ? null : h.id) }))}
+                                                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                                    >
+                                                      <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                                      {isOpen ? 'Ocultar' : 'Ver'}
+                                                    </button>
+                                                    <button
+                                                      onClick={() => printSuc({ sucursal: suc.nombre, matRows: matSnapRows, medRows: medSnapRows, usuario: h.actualizadoPor || '', fecha: h.fecha })}
+                                                      className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all" title="Imprimir este envío"
+                                                    >
+                                                      <Printer size={15} />
+                                                    </button>
+                                                  </div>
+                                                </td>
+                                              </tr>
+
+                                              {isOpen && (
+                                                <tr className={`${stripe}`}>
+                                                  <td colSpan={9} className="px-4 sm:px-5 py-4 bg-white">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                                      <div>
+                                                        <p className="text-[12px] font-black text-slate-700">Detalle del envío</p>
+                                                        <p className="text-[10px] text-slate-400 font-semibold">
+                                                          {fecha ? fecha.toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}
+                                                          {fecha ? ` · ${fecha.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                                        </p>
+                                                      </div>
+                                                      <button
+                                                        onClick={() => printSuc({ sucursal: suc.nombre, matRows: matSnapRows, medRows: medSnapRows, usuario: h.actualizadoPor || '', fecha: h.fecha })}
+                                                        className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 text-white rounded-xl text-[11px] font-bold hover:bg-slate-800 transition-all active:scale-[0.97]"
+                                                      >
+                                                        <Printer size={14} /> Imprimir este envío
+                                                      </button>
+                                                    </div>
+
+                                                    <div className="space-y-3">
+                                                      {renderSucursalTabla({ title: 'Material de curación', Icon: Package, rows: matSnapRows })}
+                                                      {renderSucursalTabla({ title: 'Medicamentos', Icon: Pill, rows: medSnapRows })}
+                                                    </div>
+                                                  </td>
+                                                </tr>
+                                              )}
+                                            </React.Fragment>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </>
                       )}
                     </div>
                   )}

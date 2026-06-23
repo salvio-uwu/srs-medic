@@ -23,6 +23,7 @@ import CustomDropdown from '../../components/CustomDropdown';
 import { PAYMENT_METHOD_OPTIONS } from '../../services/enfermeriaPatientLogService';
 import EstadoPacienteBadge from '../../components/EstadoPacienteBadge';
 import { getEstadoDetallado } from '../../utils/citaStatus';
+import useIsMobile from '../../hooks/useIsMobile';
 
 const formatDateLabel = (dateValue, options = { day: '2-digit', month: 'short', year: 'numeric' }) => {
     if (!dateValue) return 'Sin registro';
@@ -52,6 +53,7 @@ const AgendaEnfermeria = () => {
   const { user, logout } = useAuth();
   const { sessionSucursal } = useSessionLocation();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const scrollRef = useRef(null); 
   
     // --- CONFIGURACIÓN ---
@@ -85,6 +87,8 @@ const AgendaEnfermeria = () => {
   const [showCambiarConsultorio, setShowCambiarConsultorio] = useState(false);
   const [cambiarConsultorioData, setCambiarConsultorioData] = useState({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' });
     const [showResumenJornada, setShowResumenJornada] = useState(false);
+    const [horaInicioRango, setHoraInicioRango] = useState('08:00');
+    const [horaFinRango, setHoraFinRango] = useState('23:59');
     const [selectedPacienteDetalle, setSelectedPacienteDetalle] = useState(null);
     const [selectedPacienteLoading, setSelectedPacienteLoading] = useState(false);
     const [showModalSelectDoctorDocumentos, setShowModalSelectDoctorDocumentos] = useState(false);
@@ -510,15 +514,42 @@ const AgendaEnfermeria = () => {
         [citasFiltradasConsultorio]
     );
 
-    const misCitasHoy = useMemo(
-        () => citas.filter((cita) => cita.creadoPor === user?.uid && cita.estado !== 'cancelada')
-            .sort((a, b) => (a.hora || '').localeCompare(b.hora || '')),
-        [citas, user?.uid]
-    );
+    // ── Mapa de UID → nombre para resolver quién creó cada cita ──
+    const nombresCreadores = useMemo(() => {
+        const map = {};
+        enfermeros.forEach((e) => { if (e.id) map[e.id] = e.nombre || e.id; });
+        doctores.forEach((d) => { if (d.id) map[d.id] = d.nombre || d.id; });
+        if (user?.uid) map[user.uid] = user.nombre || user.uid;
+        return map;
+    }, [enfermeros, doctores, user?.uid, user?.nombre]);
+
+    const citasJornadaSucursal = useMemo(() => {
+        const sucursalIdActual = String(sucursalPredeterminada?.id || '').trim();
+        if (!sucursalIdActual) return [];
+        return citas
+            .filter((cita) => String(cita.sucursalId || '').trim() === sucursalIdActual && cita.estado !== 'cancelada')
+            .sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+    }, [citas, sucursalPredeterminada]);
+
+    const citasEnRango = useMemo(() => {
+        return citasJornadaSucursal.filter((cita) => {
+            const hora = cita.hora || '';
+            if (!hora) return true; // sin hora: siempre se muestran
+            return hora >= horaInicioRango && hora <= horaFinRango;
+        });
+    }, [citasJornadaSucursal, horaInicioRango, horaFinRango]);
 
   // --- HELPERS ---
+  const SESION_STALE_MS = 5 * 60 * 1000; // 5 min — el heartbeat corre cada 2 min
+
+  const isSessionStale = (docData) => {
+    if (!docData.lastSeen) return true;
+    return Date.now() - new Date(docData.lastSeen).getTime() > SESION_STALE_MS;
+  };
+
   const getDoctorStatus = (docData) => {
-    if (!docData.isOnline) return { color: 'bg-slate-300', text: 'Fuera de Línea' };
+    if (!docData.isOnline || isSessionStale(docData))
+      return { color: 'bg-slate-300', text: 'Fuera de Línea' };
     if (docData.statusOperativo === 'ocupado') return { color: 'bg-rose-500', text: 'Ocupado' };
     if (docData.statusOperativo === 'comida') return { color: 'bg-amber-500', text: 'Comida' };
     return { color: 'bg-emerald-500', text: 'Disponible' };
@@ -914,6 +945,26 @@ const handleGuardarCita = async (e) => {
     setActionLoading('');
   };
 
+  const handleFinalizarCita = async () => {
+    if (!selectedCita) return;
+    setActionLoading('finalizar');
+    try {
+      await updateDoc(doc(db, 'citas', selectedCita.id), {
+        estado: 'completada',
+        completadaAt: serverTimestamp(),
+        procedimientoFinalizadoAt: serverTimestamp(),
+        procedimientoFinalizadoPor: user?.uid || '',
+        procedimientoFinalizadoPorNombre: user?.nombre || ''
+      });
+      setSelectedCita(prev => prev ? { ...prev, estado: 'completada' } : null);
+      showToast("Cita de enfermería finalizada correctamente", "success");
+    } catch (e) {
+      console.error(e);
+      showToast("Error al finalizar la cita", "error");
+    }
+    setActionLoading('');
+  };
+
   const handleEnviarRecordatorio = async () => {
     if (!selectedCita) return;
     setActionLoading('whatsapp');
@@ -1211,12 +1262,6 @@ const handleGuardarCita = async (e) => {
         setDragOverCitaId(null);
     };
 
-    const metrics = useMemo(() => ({
-        espera: citas.filter(c => c.estado === 'pendiente' || c.estado === 'en_espera').length,
-        consulta: citas.filter(c => c.estado === 'en_consulta').length,
-        fin: citas.filter(c => c.estado === 'completada').length
-    }), [citas]);
-
     const doctoresFiltrados = useMemo(() => {
         const sucursalNurseId = String(sucursalPredeterminada?.id || '').trim();
         const sucursalNurseNombre = (sucursalPredeterminada?.nombre || '').trim().toLowerCase();
@@ -1230,7 +1275,7 @@ const handleGuardarCita = async (e) => {
                 || (sucursalNurseNombre && docSucursalNombre && docSucursalNombre.includes(sucursalNurseNombre))
                 || (sucursalNurseNombre && docSucursalNombre && sucursalNurseNombre.includes(docSucursalNombre));
 
-            const isOnline = doc.isOnline === true;
+            const isOnline = doc.isOnline === true && !isSessionStale(doc);
             const isActive = isOnline && (doc.statusOperativo !== 'ocupado' && doc.statusOperativo !== 'comida');
 
             let group = 3;
@@ -1556,7 +1601,7 @@ const handleGuardarCita = async (e) => {
                 onClick={() => setShowResumenJornada(true)} 
                 className="hidden md:flex text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-200 font-bold text-xs px-4 py-2 rounded-xl transition-all items-center gap-2 shadow-sm"
             >
-                <ReceiptText size={16} /> Jornada ({misCitasHoy.length})
+                <ReceiptText size={16} /> Jornada
             </button>
 
             {/* BOTÓN EXISTENTE: DIRECTORIO */}
@@ -1608,48 +1653,48 @@ const handleGuardarCita = async (e) => {
           <div className="flex-1 flex flex-col relative overflow-hidden glass-panel rounded-2xl sm:rounded-3xl min-w-0">
               
              {/* HUD DE MÉTRICAS & SELECTOR DE CONSULTORIO */}
-              <div className="px-3 sm:px-6 py-2 border-b border-slate-200/50 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-3 shrink-0 bg-white/40">
-                  <div className="flex gap-1.5 sm:gap-2 w-full md:w-auto overflow-x-auto">
-                      <MetricCard label="En Espera" value={metrics.espera} icon={<Clock size={14}/>} color="text-orange-600" bg="bg-orange-50" onClick={()=>setViewFilter('pendientes')} active={viewFilter==='pendientes'} />
-                      <MetricCard label="En Consulta" value={metrics.consulta} icon={<Stethoscope size={14}/>} color="text-blue-600" bg="bg-blue-50" onClick={()=>setViewFilter('en_consulta')} active={viewFilter==='en_consulta'} />
-                      <MetricCard label="Finalizados" value={metrics.fin} icon={<CheckCircle size={14}/>} color="text-emerald-600" bg="bg-emerald-50" onClick={()=>setViewFilter('finalizados')} active={viewFilter==='finalizados'} />
-                  </div>
+              <div className="px-3 sm:px-6 py-2 border-b border-slate-200/50 flex justify-between items-center gap-2 sm:gap-3 shrink-0 bg-white/40" />
 
-                  <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-300 transition-colors shrink-0 w-full md:w-auto">
-                      <div className="bg-indigo-50 p-1.5 rounded-lg text-indigo-600"><Building size={14}/></div>
-                      <div className="relative flex-1 md:flex-initial">
-                          <select 
-                            value={selectedConsultorio} onChange={(e) => setSelectedConsultorio(e.target.value)}
-                            className="bg-transparent border-none outline-none font-bold text-[11px] text-slate-800 pr-6 cursor-pointer font-jakarta appearance-none w-full"
-                          >
-                             <option value="Todos">Todos los Consultorios</option>
-                                      {consultoriosNombres.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                          <ChevronDown size={14} className="absolute right-1 top-0.5 text-slate-400 pointer-events-none"/>
-                      </div>
-                  </div>
-              </div>
 
               {/* FILTROS */}
               <div className="timeline-toolbar flex-col sm:flex-row gap-2">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 sora shrink-0">Consultas del día</h2>
-                  <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 -mb-1 sm:mb-0">
-                      <button onClick={()=>setViewFilter('timeline')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='timeline' ? 'active' : ''}`}>
-                          <Clock size={11}/> Ahora
-                      </button>
-                      <button onClick={()=>setViewFilter('pendientes')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='pendientes' ? 'active' : ''}`}>
-                          <AlertTriangle size={11}/> Pendientes
-                      </button>
-                      <button onClick={()=>setViewFilter('en_consulta')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='en_consulta' ? 'active' : ''}`}>
-                          <Stethoscope size={11}/> En Consulta
-                      </button>
-                      <button onClick={()=>setViewFilter('finalizados')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='finalizados' ? 'active' : ''}`}>
-                          <CheckCircle size={11}/> Finalizados
-                      </button>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                      {/* Selector de consultorio */}
+                      <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 shadow-sm shrink-0">
+                          <div className="bg-indigo-50 p-1 rounded-md text-indigo-600"><Building size={12}/></div>
+                          <div className="relative">
+                              <select 
+                                value={selectedConsultorio} onChange={(e) => setSelectedConsultorio(e.target.value)}
+                                className="bg-transparent border-none outline-none font-bold text-[10px] text-slate-800 pr-4 cursor-pointer font-jakarta appearance-none w-full"
+                              >
+                                 <option value="Todos">Todos los Consultorios</option>
+                                          {consultoriosNombres.map(c => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                              <ChevronDown size={12} className="absolute right-0 top-0 text-slate-400 pointer-events-none"/>
+                          </div>
+                      </div>
+
+                      <span className="w-px h-4 bg-slate-200 hidden sm:block" />
+
+                      <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto">
+                          <button onClick={()=>setViewFilter('timeline')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='timeline' ? 'active' : ''}`}>
+                              <Clock size={11}/> Ahora
+                          </button>
+                          <button onClick={()=>setViewFilter('pendientes')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='pendientes' ? 'active' : ''}`}>
+                              <AlertTriangle size={11}/> Pendientes
+                          </button>
+                          <button onClick={()=>setViewFilter('en_consulta')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='en_consulta' ? 'active' : ''}`}>
+                              <Stethoscope size={11}/> En Consulta
+                          </button>
+                          <button onClick={()=>setViewFilter('finalizados')} className={`timeline-chip-lite whitespace-nowrap ${viewFilter==='finalizados' ? 'active' : ''}`}>
+                              <CheckCircle size={11}/> Finalizados
+                          </button>
+                      </div>
                   </div>
               </div>
 
-              {/* TIMELINE ESTILO RANGOS (14:00 - 14:10) */}
+              {/* TIMELINE */}
               <div className="flex-1 overflow-y-auto px-2 sm:px-6 md:px-10 pb-10 pt-4 sm:pt-8 custom-scrollbar bg-slate-50/40">
                   {viewFilter === 'timeline' ? (
                       <div className="max-w-6xl mx-auto bg-white border border-slate-200 rounded-2xl sm:rounded-3xl shadow-sm overflow-hidden">
@@ -2329,155 +2374,167 @@ const handleGuardarCita = async (e) => {
 
         {/* ═══ MODAL FLOTANTE DETALLE ═══ */}
         {selectedCita && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6" onClick={cerrarDetalleCita}>
-                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+            <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '12px' : '24px' }} onClick={cerrarDetalleCita}>
+                <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.4)', backdropFilter: 'blur(4px)' }} />
 
                 <div 
-                    className="relative bg-white rounded-2xl md:rounded-3xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden animate-in border border-slate-100"
+                    style={{ position: 'relative', background: '#fff', borderRadius: '16px', boxShadow: '0 24px 60px rgba(15,23,42,.18)', width: '100%', maxWidth: '1080px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalIn .25s ease-out' }}
                     onClick={e => e.stopPropagation()}
-                    style={{ animation: 'modalIn .25s ease-out' }}
                 >
                     {/* ─── HEADER ─── */}
-                    <div className="relative shrink-0 bg-gradient-to-r from-slate-50 via-white to-slate-50 border-b border-slate-100">
-                        <button onClick={cerrarDetalleCita} className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-xl transition-all z-10">
-                            <X size={18}/>
-                        </button>
+                    <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', flexShrink: 0 }}>
+                        <div style={{ display: 'flex', gap: '14px' }}>
+                            {/* Avatar */}
+                            <AvatarPaciente
+                                sexo={detallePacienteActivo?.sexo || ''}
+                                fechaNacimiento={detallePacienteActivo?.fechaNacimiento || ''}
+                                size="xl"
+                                className="hidden sm:flex shrink-0"
+                            />
 
-                        <div className="px-6 pt-5 pb-4">
-                             {/* Top row: badges + estado */}
-                             <div className="flex flex-wrap items-center gap-1.5 mb-3 pr-10">
-                                 <EstadoPacienteBadge cita={selectedCita} size="sm" showUrgencia />
-                                <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border bg-slate-100 text-slate-500 border-slate-200">
-                                    {selectedCita.consultorio || 'Sin consultorio'}
-                                </span>
-                                {selectedCita.esTeleconsulta && (
-                                    <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border bg-indigo-50 text-indigo-600 border-indigo-200">
-                                        <Video size={10} className="inline mr-1" />Teleconsulta
+                            {/* Centro */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                {/* Badges */}
+                                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '6px' }}>
+                                    <EstadoPacienteBadge cita={selectedCita} size="sm" showUrgencia />
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', border: '1px solid #e5e7eb', background: '#f3f4f6', color: '#6b7280' }}>
+                                        {selectedCita.consultorio || 'Sin consultorio'}
                                     </span>
-                                )}
-                                {selectedCita.esCitaEnfermeria && (
-                                    <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border bg-teal-50 text-teal-600 border-teal-200">
-                                        Enfermería
-                                    </span>
-                                )}
-                                {selectedPacienteLoading && (
-                                    <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border bg-slate-100 text-slate-400 border-slate-200 animate-pulse">Cargando...</span>
-                                )}
-                            </div>
-
-                            {/* Patient identity */}
-                            <div className="flex items-start gap-4">
-                                <AvatarPaciente
-                                    sexo={detallePacienteActivo?.sexo || ''}
-                                    fechaNacimiento={detallePacienteActivo?.fechaNacimiento || ''}
-                                    size="xl"
-                                    className="hidden sm:flex shrink-0"
-                                />
-                                <div className="min-w-0 flex-1">
-                                    <h2 className="text-xl md:text-2xl font-black text-slate-900 leading-tight tracking-tight uppercase font-jakarta">
-                                        {detallePacienteActivo?.nombre || selectedCita.paciente}
-                                    </h2>
-                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
-                                        <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-                                            <Clock size={11} className="text-slate-400" /> {selectedCita.hora || '—'}
+                                    {selectedCita.esTeleconsulta && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5' }}>
+                                            <Video size={10} /> Teleconsulta
                                         </span>
-                                        <span className="text-slate-300">·</span>
-                                        <span className="text-xs font-semibold text-slate-500">{selectedCita.motivo || 'Consulta general'}</span>
-                                        {selectedCita.doctorAsignado && (
-                                            <>
-                                                <span className="text-slate-300">·</span>
-                                                <span className="text-xs font-semibold text-slate-500">Dr. {selectedCita.doctorAsignado}</span>
-                                            </>
-                                        )}
-                                        {detallePacienteActivo?.idPaciente && (
-                                            <>
-                                                <span className="text-slate-300">·</span>
-                                                <span className="text-[10px] font-bold text-slate-400 font-mono tracking-wide">{detallePacienteActivo.idPaciente}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                    {/* Chips */}
-                                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                                        {[
-                                            detallePacienteActivo?.edad !== null && detallePacienteActivo?.edad !== undefined ? `${detallePacienteActivo.edad} años` : null,
-                                            detallePacienteActivo?.sexo || null,
-                                            detallePacienteActivo?.grupoSanguineo || null
-                                        ].filter(Boolean).map((chip, i) => (
-                                            <span key={i} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 shadow-sm">{chip}</span>
-                                        ))}
-                                        {selectedCita.tipoConsulta && (
-                                            <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 shadow-sm">{selectedCita.tipoConsulta}</span>
-                                        )}
-                                    </div>
-                                    {/* Quick links */}
-                                    <div className="flex flex-wrap items-center gap-1.5 mt-3">
-                                        {selectedCita.pacienteId && (
-                                            <button onClick={async () => {
-                                                if (selectedPacienteDetalle?.id) { setPacienteAEditar(selectedPacienteDetalle); setShowPacienteModal(true); return; }
-                                                try { const snap = await getDoc(doc(db, 'pacientes', selectedCita.pacienteId)); if (snap.exists()) { setPacienteAEditar({ id: snap.id, ...snap.data() }); setShowPacienteModal(true); } } catch {}
-                                            }} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg border border-blue-100 transition-all active:scale-95">
-                                                <Edit3 size={11}/> Editar paciente
-                                            </button>
-                                        )}
-                                        {selectedCita.esTeleconsulta && selectedCita.meetLink && (
-                                            <button onClick={() => window.open(selectedCita.meetLink, '_blank')} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg border border-indigo-100 transition-all">
-                                                <Video size={11}/> Unirse a Meet
-                                            </button>
-                                        )}
-                                        {selectedCita.esCitaEnfermeria && (
-                                            <button onClick={() => window.open(`/enfermeria/orden-servicio?citaId=${selectedCita.id}`, '_blank')} className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg border border-emerald-100 transition-all active:scale-95">
-                                                <ClipboardList size={11}/> Orden de servicio
-                                            </button>
-                                        )}
-                                    </div>
+                                    )}
+                                    {selectedCita.esCitaEnfermeria && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, border: '1px solid #99f6e4', background: '#f0fdfa', color: '#0d9488' }}>
+                                            Enfermería
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* Nombre + chips */}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginBottom: '6px' }}>
+                                    <span style={{ fontSize: '18px', fontWeight: 800, color: '#111', lineHeight: 1.2, textTransform: 'uppercase', fontFamily: 'Sora, sans-serif' }}>
+                                        {detallePacienteActivo?.nombre || selectedCita.paciente}
+                                    </span>
+                                    {[
+                                        detallePacienteActivo?.edad !== null && detallePacienteActivo?.edad !== undefined ? `${detallePacienteActivo.edad} años` : null,
+                                        detallePacienteActivo?.sexo || null,
+                                        detallePacienteActivo?.grupoSanguineo || null,
+                                        selectedCita.tipoConsulta || null
+                                    ].filter(Boolean).map((chip, i) => (
+                                        <span key={i} style={{ display: 'inline-flex', padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, border: '1px solid #e5e7eb', background: '#fff', color: '#4b5563' }}>{chip}</span>
+                                    ))}
+                                </div>
+
+                                {/* Info + acciones en una línea */}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: '10px', rowGap: '5px' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>
+                                        <Clock size={11} style={{ color: '#9ca3af' }} /> {selectedCita.hora || '—'}
+                                    </span>
+                                    <span style={{ color: '#d1d5db', fontSize: '11px', userSelect: 'none' }}>·</span>
+                                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedCita.motivo || 'Consulta general'}</span>
+                                    {selectedCita.doctorAsignado && (<>
+                                        <span style={{ color: '#d1d5db', fontSize: '11px', userSelect: 'none' }}>·</span>
+                                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>Dr. {selectedCita.doctorAsignado}</span>
+                                    </>)}
+                                    {detallePacienteActivo?.idPaciente && (<>
+                                        <span style={{ color: '#d1d5db', fontSize: '11px', userSelect: 'none' }}>·</span>
+                                        <span style={{ fontSize: '10px', fontWeight: 700, color: '#9ca3af', fontFamily: 'monospace' }}>{detallePacienteActivo.idPaciente}</span>
+                                    </>)}
+                                    {/* Acciones */}
+                                    {selectedCita.pacienteId && (
+                                        <button onClick={async () => {
+                                            if (selectedPacienteDetalle?.id) { setPacienteAEditar(selectedPacienteDetalle); setShowPacienteModal(true); return; }
+                                            try { const snap = await getDoc(doc(db, 'pacientes', selectedCita.pacienteId)); if (snap.exists()) { setPacienteAEditar({ id: snap.id, ...snap.data() }); setShowPacienteModal(true); } } catch {}
+                                        }} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                            <Edit3 size={11} /> Editar paciente
+                                        </button>
+                                    )}
+                                    {selectedCita.esTeleconsulta && selectedCita.meetLink && (
+                                        <button onClick={() => window.open(selectedCita.meetLink, '_blank')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                            <Video size={11} /> Unirse a Meet
+                                        </button>
+                                    )}
+                                    {selectedCita.esCitaEnfermeria && (
+                                        <button onClick={() => window.open(`/enfermeria/orden-servicio?citaId=${selectedCita.id}`, '_blank')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #99f6e4', background: '#f0fdfa', color: '#0d9488', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                            <ClipboardList size={11} /> Orden de servicio
+                                        </button>
+                                    )}
                                 </div>
                             </div>
+
+                            {/* Cerrar */}
+                            <button onClick={cerrarDetalleCita} style={{ width: '30px', height: '30px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', flexShrink: 0 }}>
+                                <X size={14} />
+                            </button>
                         </div>
                     </div>
 
-                    {/* ─── BODY: 3-column grid ─── */}
-                    <div className="flex-1 overflow-y-auto">
-                        <div className="grid gap-4 p-5 xl:grid-cols-3">
-                            
-                            {/* ── COL 1: PERFIL ── */}
-                            <div className="space-y-4">
-                                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                    <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2"><User size={12}/> Datos del paciente</p>
+                    {/* ─── BODY ─── */}
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px', padding: '16px 20px' }}>
+
+                            {/* ── COL IZQUIERDA ── */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                                {/* DATOS DEL PACIENTE */}
+                                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <User size={13} style={{ color: '#9ca3af' }} /> Datos del paciente
                                     </div>
-                                    <div className="p-3 space-y-1">
-                                        <InfoRow icon={<Phone size={12}/>} label="Teléfono" value={detallePacienteActivo?.telefonoPrincipal || 'Sin registro'} />
-                                        <InfoRow icon={<Shield size={12}/>} label="Cobertura" value={detallePacienteActivo?.derechohabiente || 'Sin derechohabiencia'} />
-                                        <InfoRow icon={<MapPin size={12}/>} label="Ubicación" value={detallePacienteActivo?.direccion || 'Sin domicilio'} truncate />
-                                        <InfoRow icon={<Stethoscope size={12}/>} label="Tipo consulta" value={selectedCita.tipoConsulta || 'General'} />
-                                        <InfoRow icon={<ReceiptText size={12}/>} label="Forma de pago" value={selectedCita.formaPago ? (PAYMENT_METHOD_OPTIONS.find(o => o.value === selectedCita.formaPago)?.label || selectedCita.formaPago) : 'Sin registro'} tone={selectedCita.formaPago ? 'neutral' : 'warn'} />
-                                        {detallePacienteActivo?.email && (
-                                            <InfoRow icon={<Mail size={12}/>} label="Email" value={detallePacienteActivo.email} truncate />
-                                        )}
+                                    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        {[
+                                            { icon: <Phone size={11} style={{ color: '#9ca3af' }} />, label: 'Teléfono', value: detallePacienteActivo?.telefonoPrincipal || 'Sin registro' },
+                                            { icon: <Shield size={11} style={{ color: '#9ca3af' }} />, label: 'Cobertura', value: detallePacienteActivo?.derechohabiente || 'Sin derechohabiencia' },
+                                            { icon: <MapPin size={11} style={{ color: '#9ca3af' }} />, label: 'Ubicación', value: detallePacienteActivo?.direccion || 'Sin domicilio', truncate: true },
+                                            { icon: <Stethoscope size={11} style={{ color: '#9ca3af' }} />, label: 'Tipo consulta', value: selectedCita.tipoConsulta || 'General' },
+                                            { icon: <ReceiptText size={11} style={{ color: '#9ca3af' }} />, label: 'Forma de pago', value: selectedCita.formaPago ? (PAYMENT_METHOD_OPTIONS.find(o => o.value === selectedCita.formaPago)?.label || selectedCita.formaPago) : 'Sin registro', warn: !selectedCita.formaPago },
+                                            detallePacienteActivo?.email ? { icon: <Mail size={11} style={{ color: '#9ca3af' }} />, label: 'Email', value: detallePacienteActivo.email, truncate: true } : null,
+                                        ].filter(Boolean).map((row, i) => (
+                                            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '7px 10px', borderRadius: '6px', background: i % 2 === 0 ? '#fafafa' : '#fff' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+                                                    {row.icon}
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>{row.label}</span>
+                                                </div>
+                                                <span style={{ fontSize: '11px', fontWeight: 700, color: row.warn ? '#d97706' : '#111', textAlign: 'right', maxWidth: row.truncate ? '140px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</span>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
 
-                                {/* Última visita */}
+                                {/* ÚLTIMA VISITA */}
                                 {ultimaVisita && (
-                                    <div className="rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50 to-emerald-50 shadow-sm overflow-hidden">
-                                        <div className="px-4 py-2.5 border-b border-teal-100 bg-teal-50/70">
-                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-teal-600 flex items-center gap-2"><CalendarClock size={12}/> Última consulta</p>
+                                    <div style={{ background: '#fff', border: '1px solid #d1fae5', borderRadius: '8px', overflow: 'hidden' }}>
+                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #d1fae5', background: '#ecfdf5', fontSize: '12px', fontWeight: 700, color: '#065f46', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <CalendarClock size={13} style={{ color: '#059669' }} /> Última consulta
                                         </div>
-                                        <div className="p-3 space-y-1">
+                                        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                             {(() => {
                                                 const fu = ultimaVisita.fechaHora ? new Date(ultimaVisita.fechaHora) : null;
                                                 const fl = fu && !Number.isNaN(fu.getTime()) ? fu.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
                                                 const hl = fu && !Number.isNaN(fu.getTime()) ? fu.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '—';
                                                 const dias = fu && !Number.isNaN(fu.getTime()) ? Math.floor((new Date() - fu) / 86400000) : null;
+                                                const rows = [
+                                                    { icon: <CalendarDays size={11} style={{ color: '#9ca3af' }} />, label: 'Fecha', value: fl },
+                                                    { icon: <Clock size={11} style={{ color: '#9ca3af' }} />, label: 'Hora', value: hl },
+                                                    { icon: <Building size={11} style={{ color: '#9ca3af' }} />, label: 'Sucursal', value: ultimaVisita.sucursal || '—' },
+                                                    { icon: <User size={11} style={{ color: '#9ca3af' }} />, label: 'Médico', value: ultimaVisita.doctorAsignado ? `Dr. ${ultimaVisita.doctorAsignado}` : '—' },
+                                                    { icon: <Activity size={11} style={{ color: '#9ca3af' }} />, label: 'Motivo', value: ultimaVisita.motivo || '—' },
+                                                ];
                                                 return (<>
-                                                    <InfoRow icon={<CalendarDays size={12}/>} label="Fecha" value={fl} />
-                                                    <InfoRow icon={<Clock size={12}/>} label="Hora" value={hl} />
-                                                    <InfoRow icon={<Building size={12}/>} label="Sucursal" value={ultimaVisita.sucursal || '—'} />
-                                                    <InfoRow icon={<User size={12}/>} label="Médico" value={ultimaVisita.doctorAsignado ? `Dr. ${ultimaVisita.doctorAsignado}` : '—'} />
-                                                    <InfoRow icon={<Activity size={12}/>} label="Motivo" value={ultimaVisita.motivo || '—'} />
+                                                    {rows.map((row, i) => (
+                                                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '7px 10px', borderRadius: '6px', background: i % 2 === 0 ? '#fafafa' : '#fff' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                                {row.icon}
+                                                                <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>{row.label}</span>
+                                                            </div>
+                                                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#111' }}>{row.value}</span>
+                                                        </div>
+                                                    ))}
                                                     {dias !== null && dias >= 0 && (
-                                                        <div className={`px-3 py-1.5 rounded-lg text-center mt-1.5 ${dias > 30 ? 'bg-amber-50 border border-amber-200' : 'bg-emerald-50 border border-emerald-200'}`}>
-                                                            <span className={`text-[10px] font-black uppercase tracking-wider ${dias > 30 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                                        <div style={{ padding: '6px 10px', borderRadius: '6px', textAlign: 'center', marginTop: '4px', background: dias > 30 ? '#fef3c7' : '#d1fae5', border: `1px solid ${dias > 30 ? '#fde68a' : '#a7f3d0'}` }}>
+                                                            <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: dias > 30 ? '#92400e' : '#065f46' }}>
                                                                 Hace {dias === 0 ? 'hoy' : `${dias} día${dias !== 1 ? 's' : ''}`}
                                                             </span>
                                                         </div>
@@ -2487,65 +2544,58 @@ const handleGuardarCita = async (e) => {
                                         </div>
                                     </div>
                                 )}
-                            </div>
 
-                            {/* ── COL 2: CLÍNICA ── */}
-                            <div className="space-y-4">
-                                {/* Triage pendiente */}
+                                {/* TRIAGE PENDIENTE */}
                                 {!selectedCita.signos_vitales && selectedCita.estado !== 'completada' && selectedCita.estado !== 'cancelada' && (
-                                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-200/60">
-                                        <div className="flex items-center gap-3 mb-3">
-                                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-500 shadow-sm border border-amber-100"><AlertCircle size={20}/></div>
+                                    <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '16px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                                            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #fde68a' }}>
+                                                <AlertCircle size={18} style={{ color: '#f59e0b' }} />
+                                            </div>
                                             <div>
-                                                <h4 className="font-bold text-amber-800 text-sm">Triage Pendiente</h4>
-                                                <p className="text-[11px] text-amber-600/80">Toma de signos vitales requerida</p>
+                                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#92400e' }}>Triage Pendiente</div>
+                                                <div style={{ fontSize: '11px', color: '#a16207' }}>Toma de signos vitales requerida</div>
                                             </div>
                                         </div>
-                                        <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente } })} className="w-full py-3 bg-amber-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-amber-500/20 hover:bg-amber-600 transition-all active:scale-[0.97]">
+                                        <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente } })}
+                                            style={{ width: '100%', height: '36px', borderRadius: '8px', border: 'none', background: '#f59e0b', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
                                             Iniciar Triage
                                         </button>
                                     </div>
                                 )}
 
-                                {/* Triage completado */}
+                                {/* SIGNOS VITALES */}
                                 {selectedCita.signos_vitales && (
-                                    <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-sm">
-                                        <div className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
-                                            <div className="flex items-center gap-2">
-                                                <CheckCircle2 size={14} className="text-blue-500"/>
-                                                <span className="text-[11px] font-bold text-blue-700">Signos Vitales</span>
+                                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #bfdbfe', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <CheckCircle2 size={14} style={{ color: '#3b82f6' }} />
+                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e40af' }}>Signos Vitales</span>
                                             </div>
-                                            <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente, editMode: true } })} className="text-[10px] font-bold text-blue-500 hover:text-blue-700 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-blue-100/50 transition-all">
-                                                <Edit3 size={10}/> Editar
+                                            <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente, editMode: true } })}
+                                                style={{ fontSize: '10px', fontWeight: 700, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <Edit3 size={10} /> Editar
                                             </button>
                                         </div>
-                                        <div className="grid grid-cols-4 divide-x divide-slate-100">
-                                            {[{ l: 'Peso', v: selectedCita.signos_vitales.peso, u: 'kg' }, { l: 'Talla', v: selectedCita.signos_vitales.talla, u: 'm' }, { l: 'Temp', v: selectedCita.signos_vitales.temp, u: '°C' }, { l: 'T/A', v: selectedCita.signos_vitales.ta, u: '' }].map((s, i) => (
-                                                <div key={i} className="py-2.5 px-2 text-center">
-                                                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">{s.l}</p>
-                                                    <p className="text-sm font-black text-slate-800 leading-tight mt-0.5">{s.v || '--'}</p>
-                                                    {s.u && <p className="text-[8px] text-slate-400 mt-0.5">{s.u}</p>}
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <div className="grid grid-cols-4 divide-x divide-slate-100 border-t border-slate-100">
-                                            {[{ l: 'F.C.', v: selectedCita.signos_vitales.fc, u: 'lpm' }, { l: 'F.R.', v: selectedCita.signos_vitales.fr, u: 'rpm' }, { l: 'SpO2', v: selectedCita.signos_vitales.spo2, u: '%' }, { l: 'IMC', v: selectedCita.signos_vitales.imc, u: '' }].map((s, i) => (
-                                                <div key={i} className="py-2.5 px-2 text-center">
-                                                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">{s.l}</p>
-                                                    <p className="text-sm font-black text-slate-800 leading-tight mt-0.5">{s.v || '--'}</p>
-                                                    {s.u && <p className="text-[8px] text-slate-400 mt-0.5">{s.u}</p>}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                                            {[{ l: 'Peso', v: selectedCita.signos_vitales.peso, u: 'kg' }, { l: 'Talla', v: selectedCita.signos_vitales.talla, u: 'm' }, { l: 'Temp', v: selectedCita.signos_vitales.temp, u: '°C' }, { l: 'T/A', v: selectedCita.signos_vitales.ta, u: '' },
+                                              { l: 'F.C.', v: selectedCita.signos_vitales.fc, u: 'lpm' }, { l: 'F.R.', v: selectedCita.signos_vitales.fr, u: 'rpm' }, { l: 'SpO2', v: selectedCita.signos_vitales.spo2, u: '%' }, { l: 'IMC', v: selectedCita.signos_vitales.imc, u: '' }].map((s, i) => (
+                                                <div key={i} style={{ padding: '10px 6px', textAlign: 'center', borderRight: i % 4 !== 3 ? '1px solid #f3f4f6' : 'none', borderTop: i >= 4 ? '1px solid #f3f4f6' : 'none' }}>
+                                                    <div style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.l}</div>
+                                                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#111', marginTop: '2px' }}>{s.v || '--'}</div>
+                                                    {s.u && <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '1px' }}>{s.u}</div>}
                                                 </div>
                                             ))}
                                         </div>
                                         {(selectedCita.triage_alergias || (selectedCita.triage_enfermedades && !selectedCita.triage_enfermedades.preguntados_y_negados && (selectedCita.triage_enfermedades.lista?.length > 0 || selectedCita.triage_enfermedades.otros))) && (
-                                            <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50 flex flex-wrap gap-1.5">
+                                            <div style={{ padding: '8px 16px', borderTop: '1px solid #e5e7eb', background: '#fafafa', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                                                 {selectedCita.triage_alergias && (
-                                                    <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-600 border border-rose-200 px-2.5 py-0.5 rounded-md text-[10px] font-bold">
-                                                        <AlertCircle size={10}/> {selectedCita.triage_alergias}
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3', padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700 }}>
+                                                        <AlertCircle size={10} /> {selectedCita.triage_alergias}
                                                     </span>
                                                 )}
                                                 {selectedCita.triage_enfermedades && !selectedCita.triage_enfermedades.preguntados_y_negados && (selectedCita.triage_enfermedades.lista?.length > 0 || selectedCita.triage_enfermedades.otros) && (
-                                                    <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-200 px-2.5 py-0.5 rounded-md text-[10px] font-bold">
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700 }}>
                                                         {[...(selectedCita.triage_enfermedades.lista || []), ...(selectedCita.triage_enfermedades.otros ? [selectedCita.triage_enfermedades.otros] : [])].join(', ')}
                                                     </span>
                                                 )}
@@ -2554,90 +2604,117 @@ const handleGuardarCita = async (e) => {
                                     </div>
                                 )}
 
-                                {/* Alertas y antecedentes */}
-                                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                    <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2"><AlertTriangle size={12}/> Antecedentes</p>
+                                {/* ANTECEDENTES */}
+                                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <AlertTriangle size={13} style={{ color: '#f59e0b' }} /> Antecedentes
                                     </div>
-                                    <div className="p-3 space-y-3">
+                                    <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                         {detallePacienteActivo?.alertasClinicas?.length > 0 && (
                                             <div>
-                                                <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider mb-2">Alertas clínicas</p>
-                                                <div className="flex flex-wrap gap-1.5">
+                                                <div style={{ fontSize: '10px', fontWeight: 700, color: '#e11d48', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Alertas clínicas</div>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                                     {detallePacienteActivo.alertasClinicas.map(item => (
-                                                        <span key={item} className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1 rounded-lg text-[11px] font-bold">
-                                                            <AlertCircle size={10}/> {item}
+                                                        <span key={item} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>
+                                                            <AlertCircle size={10} /> {item}
                                                         </span>
                                                     ))}
                                                 </div>
                                             </div>
                                         )}
                                         <div>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Padecimientos base</p>
+                                            <div style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Padecimientos base</div>
                                             {detallePacienteActivo?.padecimientosBase?.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1.5">
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                                     {detallePacienteActivo.padecimientosBase.map(item => (
-                                                        <span key={item} className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700">{item}</span>
+                                                        <span key={item} style={{ padding: '3px 8px', borderRadius: '6px', background: '#f3f4f6', border: '1px solid #e5e7eb', fontSize: '11px', fontWeight: 700, color: '#374151' }}>{item}</span>
                                                     ))}
                                                 </div>
-                                            ) : <p className="text-xs text-slate-400">Sin padecimientos registrados.</p>}
+                                            ) : <div style={{ fontSize: '11px', color: '#9ca3af' }}>Sin padecimientos registrados.</div>}
                                         </div>
                                         <div>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Notas del paciente</p>
-                                            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 rounded-xl p-2.5 border border-slate-100">{detallePacienteActivo?.notas || 'Sin notas registradas.'}</p>
+                                            <div style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Notas del paciente</div>
+                                            <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: 1.5, background: '#fafafa', borderRadius: '6px', padding: '8px 10px', border: '1px solid #f3f4f6' }}>{detallePacienteActivo?.notas || 'Sin notas registradas.'}</div>
                                         </div>
+                                        {selectedCita.estado === 'cancelada' && (
+                                            <div style={{ background: '#fff1f2', borderRadius: '8px', padding: '12px', border: '1px solid #fecdd3', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #fecdd3' }}>
+                                                    <Ban size={16} style={{ color: '#f43f5e' }} />
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>Cita Cancelada</div>
+                                                    {selectedCita.canceladaMotivo && <div style={{ fontSize: '11px', color: '#e11d48', marginTop: '2px' }}>{selectedCita.canceladaMotivo}</div>}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* ── COL DERECHA ── */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                                {/* RESUMEN OPERATIVO */}
+                                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Zap size={13} style={{ color: '#9ca3af' }} /> Resumen operativo
+                                    </div>
+                                    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        {[
+                                            { label: 'Doctor', value: selectedCita.doctorAsignado ? `Dr. ${selectedCita.doctorAsignado}` : 'Sin asignar' },
+                                            { label: 'Sucursal', value: selectedCita.sucursal || user?.sucursal || 'Sin sucursal' },
+                                            { label: 'Consultorio', value: selectedCita.consultorio || 'Sin consultorio' },
+                                            { label: 'Llegada', value: selectedCita.llegadaRegistrada ? 'Confirmada' : 'Pendiente', tone: selectedCita.llegadaRegistrada ? 'success' : 'warning' },
+                                            { label: 'Recordatorio', value: selectedCita.recordatorioEnviado ? 'Enviado' : 'Pendiente', tone: selectedCita.recordatorioEnviado ? 'success' : 'neutral' },
+                                            { label: 'Modalidad', value: selectedCita.esTeleconsulta ? 'Teleconsulta' : 'Presencial' },
+                                        ].map((row, i) => {
+                                            const toneColors = row.tone === 'success' ? { bg: '#d1fae5', color: '#065f46' } : row.tone === 'warning' ? { bg: '#fef3c7', color: '#92400e' } : { bg: '#f3f4f6', color: '#374151' };
+                                            return (
+                                                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '7px 10px', borderRadius: '6px', background: i % 2 === 0 ? '#fafafa' : '#fff' }}>
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>{row.label}</span>
+                                                    <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: toneColors.bg, color: toneColors.color }}>{row.value}</span>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
-                                {selectedCita.estado === 'cancelada' && (
-                                    <div className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-red-500 shadow-sm border border-red-100"><Ban size={18}/></div>
-                                        <div>
-                                            <p className="text-sm font-bold text-red-700">Cita Cancelada</p>
-                                            {selectedCita.canceladaMotivo && <p className="text-xs text-red-500 mt-0.5">{selectedCita.canceladaMotivo}</p>}
+                                {/* ACCIONES RÁPIDAS */}
+                                {selectedCita.estado !== 'cancelada' && selectedCita.estado !== 'completada' && (
+                                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Zap size={13} style={{ color: '#6366f1' }} /> Acciones rápidas
+                                        </div>
+                                        <div style={{ padding: '12px' }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                                <ActionBtn icon={<LogIn size={14}/>} label="Llegada" sub={selectedCita.llegadaRegistrada ? 'Confirmada' : 'Registrar'} done={selectedCita.llegadaRegistrada} loading={actionLoading === 'llegada'} onClick={handleRegistrarLlegada} disabled={selectedCita.llegadaRegistrada} color="emerald" />
+                                                <ActionBtn icon={<MessageSquare size={14}/>} label="WhatsApp" sub={selectedCita.recordatorioEnviado ? 'Enviado' : 'Enviar'} done={selectedCita.recordatorioEnviado} loading={actionLoading === 'whatsapp'} onClick={handleEnviarRecordatorio} disabled={selectedCita.recordatorioEnviado} color="green" />
+                                                <ActionBtn icon={<CalendarClock size={14}/>} label="Reprogramar" sub="Fecha/Hora" onClick={() => { setReprogramarData({ fecha: selectedCita.fecha || toInputDateValue(new Date()), hora: selectedCita.hora || '', horaFin: selectedCita.horaFin || '' }); setShowReprogramar(true); }} color="indigo" />
+                                                <ActionBtn icon={<Edit3 size={14}/>} label="Editar cita" sub="Modal completo" onClick={() => abrirModalEditarCita(selectedCita)} color="slate" />
+                                                {selectedCita.pacienteId && <ActionBtn icon={<FileText size={14}/>} label="Antecedentes" sub="Editar historial" onClick={handleEditarAntecedentes} color="blue" />}
+                                                {selectedCita.pacienteId && <ActionBtn icon={<ClipboardList size={14}/>} label="Documentos" sub="Generar plantilla" onClick={handleGenerarDocumento} color="orange" />}
+                                                {selectedCita.pacienteId && <ActionBtn icon={<Upload size={14}/>} label="Estudios" sub="Subir archivo" onClick={handleUploadEstudioClick} disabled={uploadingEstudio} loading={uploadingEstudio} color="teal" />}
+                                                <ActionBtn icon={<ArrowLeftRight size={14}/>} label="Reasignar" sub="Cambiar doctor" onClick={() => { setReasignarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); setShowReasignar(true); }} color="amber" />
+                                                <ActionBtn icon={<Building size={14}/>} label="Consultorio" sub="Cambiar ubicación" onClick={() => { setCambiarConsultorioData({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' }); setShowCambiarConsultorio(true); }} color="slate" />
+                                                {selectedCita.pacienteId && <ActionBtn icon={<GitMerge size={14}/>} label="Unificar" sub="Fusionar duplicados" onClick={() => setShowUnificar(true)} color="violet" />}
+                                                {selectedCita.esCitaEnfermeria && (
+                                                    <ActionBtn icon={<CheckCircle2 size={14}/>} label="Finalizar" sub="Completar atención" onClick={handleFinalizarCita} loading={actionLoading === 'finalizar'} color="emerald" />
+                                                )}
+                                            </div>
+                                            <button onClick={() => setShowCancelarConfirm(true)}
+                                                style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px', borderRadius: '6px', border: '1px solid #fecdd3', background: '#fff', color: '#f43f5e', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                                                <XCircle size={13} /> Cancelar esta cita
+                                            </button>
                                         </div>
                                     </div>
                                 )}
-                            </div>
 
-                            {/* ── COL 3: OPERATIVA + ACCIONES ── */}
-                            <div className="space-y-4">
-                                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                    <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2"><Zap size={12}/> Resumen operativo</p>
-                                    </div>
-                                    <div className="p-3 space-y-1">
-                                        <DetailRow label="Doctor" value={selectedCita.doctorAsignado ? `Dr. ${selectedCita.doctorAsignado}` : 'Sin asignar'} />
-                                        <DetailRow label="Sucursal" value={selectedCita.sucursal || user?.sucursal || 'Sin sucursal'} />
-                                        <DetailRow label="Consultorio" value={selectedCita.consultorio || 'Sin consultorio'} />
-                                        <DetailRow label="Llegada" value={selectedCita.llegadaRegistrada ? 'Confirmada' : 'Pendiente'} statusTone={selectedCita.llegadaRegistrada ? 'success' : 'warning'} />
-                                        <DetailRow label="Recordatorio" value={selectedCita.recordatorioEnviado ? 'Enviado' : 'Pendiente'} statusTone={selectedCita.recordatorioEnviado ? 'success' : 'neutral'} />
-                                        <DetailRow label="Modalidad" value={selectedCita.esTeleconsulta ? 'Teleconsulta' : 'Presencial'} />
-                                    </div>
-                                </div>
-
-                                {selectedCita.estado !== 'cancelada' && (
-                                    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                        <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
-                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2"><Zap size={12}/> Acciones rápidas</p>
-                                        </div>
-                                        <div className="p-3">
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <ActionBtn icon={<LogIn size={16}/>} label="Llegada" sub={selectedCita.llegadaRegistrada ? 'Confirmada ✓' : 'Registrar'} done={selectedCita.llegadaRegistrada} loading={actionLoading === 'llegada'} onClick={handleRegistrarLlegada} disabled={selectedCita.llegadaRegistrada} color="emerald" />
-                                                <ActionBtn icon={<MessageSquare size={16}/>} label="WhatsApp" sub={selectedCita.recordatorioEnviado ? 'Enviado ✓' : 'Enviar'} done={selectedCita.recordatorioEnviado} loading={actionLoading === 'whatsapp'} onClick={handleEnviarRecordatorio} disabled={selectedCita.recordatorioEnviado} color="green" />
-                                                <ActionBtn icon={<CalendarClock size={16}/>} label="Reprogramar" sub="Fecha/Hora" onClick={() => { setReprogramarData({ fecha: selectedCita.fecha || toInputDateValue(new Date()), hora: selectedCita.hora || '', horaFin: selectedCita.horaFin || '' }); setShowReprogramar(true); }} color="indigo" />
-                                                <ActionBtn icon={<Edit3 size={16}/>} label="Editar cita" sub="Usar modal completo" onClick={() => abrirModalEditarCita(selectedCita)} color="slate" />
-                                                {selectedCita.pacienteId && <ActionBtn icon={<FileText size={16}/>} label="Antecedentes" sub="Editar historial" onClick={handleEditarAntecedentes} color="blue" />}
-                                                {selectedCita.pacienteId && <ActionBtn icon={<ClipboardList size={16}/>} label="Documentos" sub="Generar plantilla" onClick={handleGenerarDocumento} color="orange" />}
-                                                {selectedCita.pacienteId && <ActionBtn icon={<Upload size={16}/>} label="Estudios" sub="Subir archivo" onClick={handleUploadEstudioClick} disabled={uploadingEstudio} loading={uploadingEstudio} color="teal" />}
-                                                <ActionBtn icon={<ArrowLeftRight size={16}/>} label="Reasignar" sub="Cambiar doctor" onClick={() => { setReasignarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); setShowReasignar(true); }} color="amber" />
-                                                <ActionBtn icon={<Building size={16}/>} label="Consultorio" sub="Cambiar ubicación" onClick={() => { setCambiarConsultorioData({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' }); setShowCambiarConsultorio(true); }} color="slate" />
-                                                {selectedCita.pacienteId && <ActionBtn icon={<GitMerge size={16}/>} label="Unificar" sub="Fusionar duplicados" onClick={() => setShowUnificar(true)} color="violet" />}
-                                            </div>
-                                            <button onClick={() => setShowCancelarConfirm(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-red-400 hover:text-red-600 hover:bg-red-50 transition-all mt-3">
-                                                <XCircle size={14}/> <span className="text-[11px] font-semibold">Cancelar esta cita</span>
-                                            </button>
-                                        </div>
+                                {/* COMPLETADA */}
+                                {selectedCita.estado === 'completada' && (
+                                    <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
+                                        <CheckCircle2 size={28} style={{ color: '#10b981', margin: '0 auto 8px' }} />
+                                        <div style={{ fontSize: '13px', fontWeight: 800, color: '#065f46' }}>Atención completada</div>
+                                        <div style={{ fontSize: '11px', color: '#059669', marginTop: '4px' }}>Esta cita ya fue finalizada</div>
                                     </div>
                                 )}
                             </div>
@@ -2996,107 +3073,212 @@ const handleGuardarCita = async (e) => {
             />
         )}
 
-        {/* ═══ MODAL RESUMEN DE JORNADA ═══ */}
-        {showResumenJornada && (
+        {/* ═══ MODAL RESUMEN DE JORNADA (POR SUCURSAL Y TURNOS) ═══ */}
+        {showResumenJornada && (() => {
+            const totalDia = citasJornadaSucursal.length;
+            const enRango = citasEnRango.length;
+            const mostrarFiltrado = horaInicioRango !== '00:00' || horaFinRango !== '23:59';
+            return (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setShowResumenJornada(false)}>
                 <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
                 <div className="relative bg-white rounded-2xl md:rounded-3xl shadow-2xl w-full max-w-[95vw] xl:max-w-7xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100" onClick={e => e.stopPropagation()}>
-                    <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-teal-50 to-emerald-50 flex justify-between items-center shrink-0">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-white border border-teal-200 flex items-center justify-center text-teal-600 shadow-sm">
-                                <ReceiptText size={20} />
+                    {/* ── Encabezado ── */}
+                    <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-teal-50 to-emerald-50 shrink-0 space-y-3">
+                        {/* Título + fecha + cierre */}
+                        <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white border border-teal-200 flex items-center justify-center text-teal-600 shadow-sm">
+                                        <Users size={20} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-black text-slate-800 font-jakarta">Resumen de Jornada</h2>
+                                        <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
+                                            <MapPin size={10} className="text-slate-400" />
+                                            {sucursalPredeterminada?.nombre || 'Sin sucursal'}
+                                        </p>
+                                    </div>
+                                </div>
+                                {/* Navegación de fecha */}
+                                <div className="flex items-center gap-1 ml-2">
+                                    <button onClick={() => cambiarDia(-1)} className="p-1.5 hover:bg-white/60 rounded-lg text-slate-500 transition-all">
+                                        <ChevronLeft size={15} />
+                                    </button>
+                                    <div className="relative flex items-center cursor-pointer px-2">
+                                        <input
+                                            type="date"
+                                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            value={toInputDateValue(currentDate)}
+                                            onChange={(e) => { if (e.target.value) setCurrentDate(new Date(e.target.value + 'T12:00:00')); }}
+                                        />
+                                        <CalIcon size={13} className="text-slate-400 mr-1.5" />
+                                        <span className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                                            {currentDate.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                                        </span>
+                                    </div>
+                                    <button onClick={() => cambiarDia(1)} className="p-1.5 hover:bg-white/60 rounded-lg text-slate-500 transition-all">
+                                        <ChevronRight size={15} />
+                                    </button>
+                                </div>
                             </div>
-                            <div>
-                                <h2 className="text-lg font-black text-slate-800 font-jakarta">Resumen de Jornada</h2>
-                                <p className="text-[11px] font-semibold text-slate-500">
-                                    {currentDate.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                                    <span className="text-slate-300 mx-1.5">·</span>
-                                    {user?.nombre || 'Enfermero/a'}
-                                </p>
+                            <button onClick={() => setShowResumenJornada(false)} className="p-2 bg-white border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all shadow-sm">
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {/* Filtro de horario */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Horario:</span>
+                            {[
+                                { label: 'Todo el día',        inicio: '00:00', fin: '23:59' },
+                                { label: 'Matutino',           inicio: '08:00', fin: '13:59' },
+                                { label: 'Vespertino',         inicio: '14:00', fin: '19:59' },
+                                { label: 'Nocturno',           inicio: '20:00', fin: '23:59' },
+                            ].map(p => {
+                                const activo = horaInicioRango === p.inicio && horaFinRango === p.fin;
+                                return (
+                                    <button
+                                        key={p.label}
+                                        onClick={() => { setHoraInicioRango(p.inicio); setHoraFinRango(p.fin); }}
+                                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border"
+                                        style={{
+                                            background: activo ? '#0d9488' : '#ffffff',
+                                            color: activo ? '#ffffff' : '#64748b',
+                                            borderColor: activo ? '#0d9488' : '#e2e8f0',
+                                        }}
+                                    >
+                                        {p.label}
+                                    </button>
+                                );
+                            })}
+                            <div className="flex items-center gap-1.5 ml-1">
+                                <Clock size={12} className="text-slate-400 shrink-0" />
+                                <input
+                                    type="time"
+                                    value={horaInicioRango}
+                                    onChange={(e) => setHoraInicioRango(e.target.value)}
+                                    className="w-[90px] px-2 py-1 rounded-lg border border-slate-200 text-[11px] font-semibold text-slate-700 outline-none focus:border-teal-400 bg-white"
+                                />
+                                <span className="text-[10px] text-slate-400">a</span>
+                                <input
+                                    type="time"
+                                    value={horaFinRango}
+                                    onChange={(e) => setHoraFinRango(e.target.value)}
+                                    className="w-[90px] px-2 py-1 rounded-lg border border-slate-200 text-[11px] font-semibold text-slate-700 outline-none focus:border-teal-400 bg-white"
+                                />
                             </div>
                         </div>
-                        <button onClick={() => setShowResumenJornada(false)} className="p-2 bg-white border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all shadow-sm">
-                            <X size={16}/>
-                        </button>
                     </div>
+
+                    {/* ── Contenido ── */}
                     <div className="flex-1 overflow-auto">
-                        {misCitasHoy.length === 0 ? (
+                        {totalDia === 0 ? (
                             <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
-                                <ReceiptText size={32} className="text-slate-300" />
-                                <p className="text-sm font-bold">Sin pacientes registrados hoy</p>
-                                <p className="text-xs text-slate-400">No hay citas creadas por ti en esta fecha.</p>
+                                <Users size={32} className="text-slate-300" />
+                                <p className="text-sm font-bold">Sin pacientes registrados</p>
+                                <p className="text-xs text-slate-400">No hay citas en {sucursalPredeterminada?.nombre || 'esta sucursal'} en esta fecha.</p>
+                            </div>
+                        ) : enRango === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
+                                <Clock size={32} className="text-slate-300" />
+                                <p className="text-sm font-bold">Sin pacientes en este horario</p>
+                                <p className="text-xs text-slate-400">
+                                    Hay {totalDia} paciente{totalDia !== 1 ? 's' : ''} en el día, pero ninguno entre {horaInicioRango} y {horaFinRango}.
+                                </p>
                             </div>
                         ) : (
-                            <table className="min-w-[1220px] w-full border-collapse text-sm">
-                                <thead className="sticky top-0 z-10 bg-white">
-                                    <tr className="bg-slate-100 border-b-2 border-slate-300">
-                                        <th className="px-2 py-3 text-center text-[10px] font-black text-slate-700 uppercase tracking-widest border-r border-slate-300">No. Receta</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">E/T</th>
-                                        <th className="px-3 py-3 text-left text-[10px] font-black text-slate-700 uppercase tracking-widest border-r border-slate-300">Motivo</th>
-                                        <th className="px-3 py-3 text-left text-[10px] font-black text-slate-700 uppercase tracking-widest border-r border-slate-300">Nombre completo</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">Edad</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">Peso</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">Talla</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">T°</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">F.R.</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">St. O2</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">F.C.</th>
-                                        <th className="px-2 py-3 text-center text-[11px] font-black text-slate-700 uppercase border-r border-slate-300">T/A</th>
-                                        <th className="px-3 py-3 text-center text-[11px] font-black text-slate-700 uppercase">Estado</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {misCitasHoy.map((cita, idx) => {
-                                        const stripe = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50';
-                                        const sv = cita.signos_vitales || {};
-                                        const pagoMeta = PAYMENT_METHOD_OPTIONS.find(o => o.value === cita.formaPago);
-                                        const pagoClass = pagoMeta
-                                            ? 'text-slate-800 bg-slate-100 border-slate-200'
-                                            : 'text-amber-700 bg-amber-50 border-amber-200';
+                            <div className="overflow-x-auto">
+                                <table className="min-w-[1360px] w-full border-collapse text-sm">
+                                    <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+                                            <th className="px-2 py-2.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-200">Hora</th>
+                                            <th className="px-2 py-2.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-200">Creado por</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">E/T</th>
+                                            <th className="px-3 py-2.5 text-left text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-200">Motivo</th>
+                                            <th className="px-3 py-2.5 text-left text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-200">Nombre completo</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">Edad</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">Peso</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">Talla</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">T°</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">F.R.</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">St. O2</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">F.C.</th>
+                                            <th className="px-2 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase border-r border-slate-200">T/A</th>
+                                            <th className="px-3 py-2.5 text-center text-[11px] font-black text-slate-500 uppercase">Estado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {citasEnRango.map((cita, idx) => {
+                                            const stripe = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30';
+                                            const sv = cita.signos_vitales || {};
+                                            const pagoMeta = PAYMENT_METHOD_OPTIONS.find(o => o.value === cita.formaPago);
+                                            const pagoClass = pagoMeta
+                                                ? 'text-slate-800 bg-slate-100 border-slate-200'
+                                                : 'text-amber-700 bg-amber-50 border-amber-200';
+                                            const creadorNombre = nombresCreadores[cita.creadoPor] || cita.creadoPorNombre || cita.creadoPor || '-';
 
-                                        return (
-                                            <tr
-                                                key={cita.id}
-                                                className={`${stripe} border-b border-slate-200 hover:bg-blue-50/20 cursor-pointer`}
-                                                onClick={() => { setShowResumenJornada(false); setSelectedCita(cita); }}
-                                            >
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 font-black text-[12px] text-slate-700 tabular-nums whitespace-nowrap">—</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200">
-                                                    <span className={`inline-flex items-center justify-center min-w-9 px-2 py-1 rounded-lg border text-[11px] font-black ${pagoClass}`}>
-                                                        {pagoMeta?.shortLabel || '—'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-3 py-2.5 border-r border-slate-200 text-[12px] font-semibold text-slate-700 min-w-[180px]">{cita.motivo || '—'}</td>
-                                                <td className="px-3 py-2.5 border-r border-slate-200 text-[12px] font-semibold text-slate-800 min-w-[280px]">{cita.paciente || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.edad || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.peso || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.talla || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.temp || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.fr || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.spo2 || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.fc || '—'}</td>
-                                                <td className="px-2 py-2.5 text-center border-r border-slate-200 text-[12px] font-bold text-slate-700">{sv.ta || '—'}</td>
-                                                 <td className="px-3 py-2.5 text-center">
-                                                    <EstadoPacienteBadge cita={cita} size="xs" />
-                                                 </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
+                                            return (
+                                                <tr
+                                                    key={cita.id}
+                                                    className={`${stripe} border-b border-slate-100 hover:bg-blue-50/20 cursor-pointer`}
+                                                    onClick={() => { setShowResumenJornada(false); setSelectedCita(cita); }}
+                                                >
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[11px] font-bold text-slate-500 whitespace-nowrap">
+                                                        {cita.hora || '-'}
+                                                    </td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[11px] font-semibold text-slate-600 whitespace-nowrap max-w-[120px] truncate" title={creadorNombre}>
+                                                        {creadorNombre}
+                                                    </td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100">
+                                                        <span className={`inline-flex items-center justify-center min-w-9 px-2 py-1 rounded-lg border text-[11px] font-black ${pagoClass}`}>
+                                                            {pagoMeta?.shortLabel || '-'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-1.5 border-r border-slate-100 text-[12px] font-semibold text-slate-700 min-w-[160px]">{cita.motivo || '-'}</td>
+                                                    <td className="px-3 py-1.5 border-r border-slate-100 text-[12px] font-semibold text-slate-800 min-w-[240px]">{cita.paciente || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.edad || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.peso || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.talla || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.temp || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.fr || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.spo2 || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.fc || '-'}</td>
+                                                    <td className="px-2 py-1.5 text-center border-r border-slate-100 text-[12px] font-bold text-slate-700">{sv.ta || '-'}</td>
+                                                    <td className="px-3 py-1.5 text-center">
+                                                        <EstadoPacienteBadge cita={cita} size="xs" />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
                         )}
                     </div>
+
+                    {/* ── Footer ── */}
                     <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
-                        <p className="text-xs font-bold text-slate-500">
-                            Total: <span className="text-slate-800">{misCitasHoy.length} paciente{misCitasHoy.length !== 1 ? 's' : ''}</span>
-                        </p>
+                        <div className="flex items-center gap-4">
+                            {mostrarFiltrado ? (
+                                <p className="text-xs font-bold text-slate-500">
+                                    Mostrando <span className="text-slate-800">{enRango}</span> de{' '}
+                                    <span className="text-slate-800">{totalDia}</span> paciente{totalDia !== 1 ? 's' : ''}
+                                    {' '}<span className="text-slate-400 font-medium">({horaInicioRango} – {horaFinRango})</span>
+                                </p>
+                            ) : (
+                                <p className="text-xs font-bold text-slate-500">
+                                    Total: <span className="text-slate-800">{totalDia} paciente{totalDia !== 1 ? 's' : ''}</span>
+                                </p>
+                            )}
+                        </div>
                         <button onClick={() => setShowResumenJornada(false)} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-black transition-all active:scale-95 shadow-sm">
                             Cerrar
                         </button>
                     </div>
                 </div>
             </div>
-        )}
+            );
+        })()}
 
             {/* --- MONTAR EL MODAL DE REGISTROS --- */}
         {showRegistrosModal && (
@@ -3111,21 +3293,6 @@ const handleGuardarCita = async (e) => {
 };
 
 // --- COMPONENTES VISUALES ---
-const MetricCard = ({ label, value, icon, color, bg, onClick, active }) => (
-    <div 
-        onClick={onClick}
-        className={`px-2 sm:px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-2 sm:gap-3 flex-1 min-w-0 group ${active ? 'border-slate-800 shadow-sm ring-1 ring-slate-800 bg-white' : 'border-slate-200/60 bg-white/60 hover:bg-white hover:border-slate-300 shadow-sm'}`}
-    >
-        <div className="flex flex-col justify-center min-w-0">
-            <p className="text-[8px] sm:text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5 truncate">{label}</p>
-            <p className="text-base sm:text-lg font-black text-slate-800 font-jakarta leading-none">{value}</p>
-        </div>
-        <div className={`w-6 h-6 sm:w-7 sm:h-7 ml-auto rounded-lg flex items-center justify-center shrink-0 ${bg} ${color} group-hover:scale-110 transition-transform shadow-sm`}>
-            {icon}
-        </div>
-    </div>
-);
-
 const QuickInfoCard = ({ icon, label, value, helper, tone = 'slate' }) => {
     const toneStyles = {
         emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100',
@@ -3244,7 +3411,7 @@ const CardCita = ({ cita, onClick, navigate }) => {
             <h3 className={`font-black text-xl mb-2 font-jakarta truncate ${esCancelada ? 'text-slate-400 line-through decoration-red-300' : 'text-slate-800'}`}>{cita.paciente}</h3>
             {!esCancelada && (cita.estado === 'pendiente' || cita.estado === 'en_espera') && minutosEspera > 0 && (
                 <p className={`text-xs font-bold mt-1 ${esRetrasada ? 'text-red-500' : 'text-slate-400'}`}>
-                    ⏱ {minutosEspera} min esperando
+                    {minutosEspera} min esperando
                 </p>
             )}
             {esCancelada && cita.canceladaMotivo && (

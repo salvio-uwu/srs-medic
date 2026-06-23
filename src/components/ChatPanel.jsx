@@ -10,6 +10,7 @@ import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, getDoc
 import { ref, uploadBytesResumable, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useAuth } from '../context/AuthContext';
 import { buildLastMessageSignature, isNewSignature, getMillis } from '../shared/chatSignatureCache';
+import { isUserOnline } from '../hooks/useMonitorData';
 
 // ─── STICKER PACKS ───────────────────────────────────────────────────────────
 const STICKER_PACKS = {
@@ -23,7 +24,7 @@ const MESSAGES_LOAD_MORE = 30;
 const USERS_CACHE_KEY = 'chat_users_cache_v1';
 const USERS_CACHE_TTL = 10 * 60 * 1000;
 const TYPING_TTL = 4000;
-const TYPING_SEND_INTERVAL = 2000;
+const TYPING_SEND_INTERVAL = 5000;
 const CUSTOM_STICKERS_KEY = 'chat_mis_stickers_v1';
 const CUSTOM_IMAGE_STICKERS_KEY = 'chat_mis_stickers_img_v1';
 const MESSAGE_GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -351,6 +352,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
   const lastTypingSendRef = useRef(0);
   const activeChatRef = useRef(activeChat);
   activeChatRef.current = activeChat;
+  const listenerStartedAt = useRef(0);
   
   const canCreateChannels = useMemo(() => {
     const rol = (user?.rol || '').toLowerCase();
@@ -363,6 +365,8 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
   // 1. CARGA DE CANALES
   useEffect(() => {
     if (!isOpen || !user) return;
+    listenerStartedAt.current = Date.now();
+    const canalesInitRef = { current: false };
     const qCanales = query(collection(db, 'canales'), orderBy('ultimoMensajeAt', 'desc'), limit(30));
     const unsub = onSnapshot(qCanales, (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -375,12 +379,16 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
         if (change.type === 'modified' || change.type === 'added') {
           const d = change.doc.data();
           if (!d?.ultimoMensajeAt) return;
+          if (!canalesInitRef.current) return;
+          const ts = getMillis(d.ultimoMensajeAt);
+          if (!ts || ts < listenerStartedAt.current - 5000) return;
           const signature = buildLastMessageSignature(change.doc.id, d);
           const isNew = isNewSignature(signature);
           if (isNew && d.ultimoRemitenteId !== user.uid && activeChatRef.current.id !== change.doc.id)
             setChatsNoLeidos(prev => ({ ...prev, [change.doc.id]: (prev[change.doc.id] || 0) + 1 }));
         }
       });
+      canalesInitRef.current = true;
       setCanales(visible);
     });
     return () => unsub();
@@ -389,6 +397,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
   // 2. CARGA DE CHATS PRIVADOS
   useEffect(() => {
     if (!isOpen || !user?.uid) return;
+    const privadosInitRef = { current: false };
     const qPrivados = query(collection(db, 'chats_privados'), where('participantes', 'array-contains', user.uid), limit(80));
     const unsub = onSnapshot(qPrivados, (snap) => {
       const meta = snap.docs
@@ -406,6 +415,9 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
         if (!otherUserId) return;
         if (!d?.ultimoMensajeAt) return;
         if ((change.type === 'modified' || change.type === 'added') && d.ultimoRemitenteId !== user.uid) {
+          if (!privadosInitRef.current) return;
+          const ts = getMillis(d.ultimoMensajeAt);
+          if (!ts || ts < listenerStartedAt.current - 5000) return;
           const signature = buildLastMessageSignature(change.doc.id, d);
           const isNew = isNewSignature(signature);
           if (!isNew) return;
@@ -414,6 +426,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
             setChatsNoLeidos(prev => ({ ...prev, [otherUserId]: (prev[otherUserId] || 0) + 1 }));
         }
       });
+      privadosInitRef.current = true;
       setPrivadosMeta(meta);
     });
     return () => unsub();
@@ -959,7 +972,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
 
   const canalesFiltrados = canales.filter(c => normalizeText(c.nombre).includes(normalizeText(searchTerm)));
 
-  // Conversaciones activas: solo usuarios CON mensajes previos, ordenadas por no leídos y luego por fecha
+  // Conversaciones activas: solo usuarios CON mensajes previos, ordenadas por fecha del último mensaje
   const conversacionesActivas = useMemo(() => {
     const term = normalizeText(searchTerm);
     return privadosMeta
@@ -970,16 +983,12 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
           ...meta,
           nombre: otherUser?.nombre || `Usuario ${(meta.otherUserId || '').slice(0, 6)}`,
           rol: otherUser?.rol,
-          isOnline: otherUser?.isOnline || false,
+          isOnline: otherUser ? isUserOnline(otherUser) : false,
           unread
         };
       })
       .filter(c => !term || normalizeText(c.nombre).includes(term))
-      .sort((a, b) => {
-        if (a.unread > 0 && b.unread === 0) return -1;
-        if (a.unread === 0 && b.unread > 0) return 1;
-        return getMillis(b.ultimoMensajeAt) - getMillis(a.ultimoMensajeAt);
-      });
+      .sort((a, b) => getMillis(b.ultimoMensajeAt) - getMillis(a.ultimoMensajeAt));
   }, [privadosMeta, usuarios, chatsNoLeidos, searchTerm]);
 
   // Contactos para nuevo mensaje: búsqueda explícita para evitar listar todos

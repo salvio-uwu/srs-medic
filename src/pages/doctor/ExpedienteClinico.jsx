@@ -857,6 +857,7 @@ const ExpedienteClinico = () => {
   const [plantillaActiva, setPlantillaActiva] = useState(null);
   const [notification, setNotification] = useState(null);
   const [showPrintAlert, setShowPrintAlert] = useState(false);
+  const [showEmptyClinicalAlert, setShowEmptyClinicalAlert] = useState(false);
   const [showExitAlert, setShowExitAlert] = useState(false);
   const [exitChangeList, setExitChangeList] = useState([]);
   const [discardingExit, setDiscardingExit] = useState(false);
@@ -1947,8 +1948,14 @@ const ExpedienteClinico = () => {
             if (!nuevosDatos.antecedentes.alergias) nuevosDatos.antecedentes.alergias = { lista: [], otros: '' };
 
             if (as.preguntados_y_negados) {
-              // Si en triage fue "preguntados y negados", marcarlo igual en expediente
-              nuevosDatos.antecedentes.alergias.preguntados_y_negados = true;
+              // Si en triage fue "preguntados y negados", solo marcarlo si el doctor
+              // no ha registrado ya alergias específicas (para no pisar datos clínicos).
+              const listaActual = nuevosDatos.antecedentes.alergias.lista || [];
+              const otrosActual = nuevosDatos.antecedentes.alergias.otros || nuevosDatos.antecedentes.alergias.otras || '';
+              const yaTieneAlergias = listaActual.length > 0 || otrosActual.trim().length > 0;
+              if (!yaTieneAlergias) {
+                nuevosDatos.antecedentes.alergias.preguntados_y_negados = true;
+              }
             } else {
               // Insertar cada alergia de la lista del triage en la lista del expediente
               const listaExistente = nuevosDatos.antecedentes.alergias.lista || [];
@@ -2147,6 +2154,22 @@ const ExpedienteClinico = () => {
         tempAlergia,
         tempCirugia
       };
+
+      // FIX (pérdida de datos): NO autoguardar un borrador completamente vacío.
+      // Si la pantalla se reinicia (recarga/crash) y el state queda en blanco antes
+      // de que se restaure el borrador previo, este efecto podría sobrescribir un
+      // borrador BUENO con uno vacío. Solo escribimos cuando hay algo capturado.
+      const draftTieneContenido =
+        hasMeaningfulClinicalData(draftPayload.consulta) ||
+        hasMeaningfulClinicalData(draftPayload.antecedentes) ||
+        hasMeaningfulClinicalData(draftPayload.resumen) ||
+        hasMeaningfulClinicalData(draftPayload.control_embarazo) ||
+        String(draftPayload.tempMed?.nombre || '').trim() !== '' ||
+        String(draftPayload.tempAlergia?.nombre || '').trim() !== '' ||
+        String(draftPayload.tempCirugia?.procedimiento || '').trim() !== '' ||
+        String(draftPayload.meta?.costo || '').trim() !== '';
+
+      if (!draftTieneContenido) return;
 
       // FIX: Respaldo PROACTIVO en localStorage SIEMPRE (no solo si falla Firebase).
       // Garantiza que ante refresh, cierre accidental, crash o token expirado,
@@ -2421,6 +2444,21 @@ const ExpedienteClinico = () => {
 
     setExitChangeList(changes);
 
+    // FIX (pérdida de datos): si la consulta NO tiene contenido médico capturado
+    // (sin padecimiento, diagnóstico, tratamiento, indicaciones, estudios,
+    // procedimientos ni referencias) —típico cuando la pantalla se reinició y solo
+    // sobreviven los signos vitales del triage— advertir antes de finalizar en blanco.
+    if (!isEnfermeriaDocumentMode && !consultaTieneContenidoMedico()) {
+      setShowEmptyClinicalAlert(true);
+      return;
+    }
+
+    continuarGuardar();
+  };
+
+  const continuarGuardar = () => {
+    setShowEmptyClinicalAlert(false);
+
     const tieneReceta = (expediente.consulta.diagnostico.tratamiento_lista?.length > 0) || (tempMed.nombre?.trim() !== '');
     const tieneEstudios = (expediente.consulta.estudios.paquetes_seleccionados?.length > 0) || (expediente.consulta.estudios.estudios_seleccionados?.length > 0);
     const tieneProcedimientos = (expediente.consulta.procedimientos?.seleccionados?.length || 0) > 0;
@@ -2470,6 +2508,24 @@ const ExpedienteClinico = () => {
       const costoSanitizado = Number.isFinite(costoConsulta) ? costoConsulta : 0;
       const finConsulta = new Date();
       const duracionRealMin = Math.max(1, Math.round((finConsulta - consultaInicioRef.current) / 60000));
+
+      const rawDiagnostico = String(expedienteFinal.consulta?.diagnostico?.enfermedad_actual || '').trim();
+      if (rawDiagnostico) {
+        const matches = rawDiagnostico.match(/([A-Z]\d{2,3}(?:\.\d{1,2})?)\s*[-–—]?\s*([^,;\n]*)/gi);
+        if (matches && matches.length > 0) {
+          expedienteFinal.consulta.diagnostico.cie10 = matches.map((m) => {
+            const parts = m.match(/^([A-Z]\d{2,3}(?:\.\d{1,2})?)\s*[-–—]?\s*(.*)/i);
+            if (!parts) return null;
+            const codigo = parts[1].toUpperCase();
+            let desc = (parts[2] || '').trim();
+            desc = desc.replace(/^\.?\d{1,2}\s*[-–—]\s*/, '').trim();
+            if (desc.toUpperCase().startsWith(codigo.toUpperCase())) {
+              desc = desc.slice(codigo.length).replace(/^\s*[-–—]\s*/, '').trim();
+            }
+            return { codigo, descripcion: desc || 'Sin descripción' };
+          }).filter(Boolean);
+        }
+      }
 
       if (tempMed.nombre.trim() !== '') {
         const listaActual = expedienteFinal.consulta.diagnostico.tratamiento_lista || [];
@@ -2732,6 +2788,9 @@ const ExpedienteClinico = () => {
       // --- Fase de lectura: consultar historial previo y datos de cita ---
       let historialRef = null;
       let esActualizacion = false;
+      // Datos del registro original (para fusión segura: un campo vacío del state
+      // local NUNCA debe pisar un valor lleno ya guardado en la nube).
+      let historialOriginalData = null;
 
       if (citaId) {
         try {
@@ -2751,6 +2810,7 @@ const ExpedienteClinico = () => {
             });
             if (docConsulta) {
               historialRef = docConsulta.ref;
+              historialOriginalData = docConsulta.data() || {};
               esActualizacion = true;
             }
           }
@@ -2808,10 +2868,17 @@ const ExpedienteClinico = () => {
           documentosGenerados
         });
       } else {
-        batch.update(historialRef, {
+        // FIX (pérdida de datos): fusión segura contra el registro original.
+        // Si el state local perdió texto (recarga, reapertura, otra pestaña/equipo),
+        // un campo vacío NO debe borrar el diagnóstico/receta/padecimiento ya guardado.
+        const updatePayloadRaw = {
           ...expedienteFinal,
           recetasGeneradas,
-          documentosGenerados,
+          documentosGenerados
+        };
+        const expedienteSeguro = safeMergeForUpdate(historialOriginalData || {}, updatePayloadRaw);
+        batch.update(historialRef, {
+          ...expedienteSeguro,
           actualizadoEnConsultaAt: serverTimestamp()
         });
       }
@@ -3448,6 +3515,12 @@ const ExpedienteClinico = () => {
             secciones.push('');
             secciones.push(referenciasTexto);
           }
+          const indicacionesRaw = exp?.consulta?.diagnostico?.indicaciones || '';
+          if (indicacionesRaw.trim()) {
+            secciones.push('');
+            secciones.push('Indicaciones:');
+            secciones.push(indicacionesRaw);
+          }
           return secciones.join('\n');
         })()
       },
@@ -3553,6 +3626,21 @@ const ExpedienteClinico = () => {
     const tieneProcedimientos = (c?.procedimientos?.seleccionados?.length || 0) > 0;
     const tieneReferencias = (c?.referencias_medicas?.seleccionadas?.length || 0) > 0;
     return tieneSignos || tieneAntropometria || tienePadecimiento || tieneDiagnostico || tieneTratamiento || tieneIndicaciones || tieneEstudios || tieneProcedimientos || tieneReferencias;
+  };
+
+  // Igual que el anterior pero EXCLUYE los signos vitales/antropometría, porque
+  // esos los rellena solo el triage de enfermería. Sirve para detectar consultas
+  // que se finalizarían "en blanco" (solo signos, sin nada que el médico capturó).
+  const consultaTieneContenidoMedico = () => {
+    const c = expediente.consulta;
+    const tienePadecimiento = String(c?.padecimiento || '').trim() !== '';
+    const tieneDiagnostico = String(c?.diagnostico?.enfermedad_actual || '').trim() !== '';
+    const tieneTratamiento = (c?.diagnostico?.tratamiento_lista?.length || 0) > 0 || String(tempMed?.nombre || '').trim() !== '';
+    const tieneIndicaciones = String(c?.diagnostico?.indicaciones || '').trim() !== '';
+    const tieneEstudios = (c?.estudios?.paquetes_seleccionados?.length || 0) > 0 || (c?.estudios?.estudios_seleccionados?.length || 0) > 0;
+    const tieneProcedimientos = (c?.procedimientos?.seleccionados?.length || 0) > 0;
+    const tieneReferencias = (c?.referencias_medicas?.seleccionadas?.length || 0) > 0;
+    return tienePadecimiento || tieneDiagnostico || tieneTratamiento || tieneIndicaciones || tieneEstudios || tieneProcedimientos || tieneReferencias;
   };
 
   const handleSalir = () => {
@@ -4363,6 +4451,45 @@ const ExpedienteClinico = () => {
                 className="px-5 py-2 bg-rose-600 text-white font-bold text-sm rounded-lg hover:bg-rose-700 shadow-lg transition-all disabled:opacity-50"
               >
                 {discardingExit ? 'Saliendo...' : 'Salir sin guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEmptyClinicalAlert && (
+        <div className="fixed inset-0 z-[210] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-start gap-4">
+              <div className="bg-red-100 text-red-600 p-3 rounded-full">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Consulta sin datos clínicos</h3>
+                <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+                  Esta consulta <strong>no tiene padecimiento, diagnóstico, receta ni estudios</strong> capturados (solo signos vitales).
+                </p>
+                <p className="text-sm font-bold text-slate-800 mt-2">
+                  Si finalizas ahora, la consulta quedará guardada en blanco. ¿Estás seguro?
+                </p>
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  Si tú escribiste un diagnóstico o receta y no aparece, NO finalices: cierra y vuelve a abrir la consulta para recuperar la información.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowEmptyClinicalAlert(false)}
+                className="px-4 py-2 text-slate-600 font-bold text-sm hover:bg-slate-50 rounded-lg transition-colors"
+              >
+                Volver a la consulta
+              </button>
+              <button
+                onClick={continuarGuardar}
+                className="px-6 py-2 bg-red-600 text-white font-bold text-sm rounded-lg hover:bg-red-700 shadow-lg transition-all"
+              >
+                Finalizar en blanco
               </button>
             </div>
           </div>

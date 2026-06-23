@@ -479,6 +479,78 @@ SERVIDORES_FALLIDOS=0
 TOTAL_SERVIDORES=${#SERVIDORES[@]}
 INDICE_SERVIDOR=0
 
+# ==============================================================================
+# ETAPA 0: PREPARACIÓN DE VERSIÓN Y NOTAS DE RELEASE (INTERACTIVA)
+# ==============================================================================
+VERSION_ACTUAL=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "desconocida")
+
+echo
+echo -e "   ${CYAN}${BOLD}PREPARACIÓN DE RELEASE${RESET}"
+echo -e "   ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo
+echo -e "   ${WHITE}Versión actual${RESET}  ${DIM}${VERSION_ACTUAL}${RESET}"
+echo
+
+# Preguntar nueva versión
+read -p "$(echo -e "   ${WHITE}Nueva versión${RESET}: ")" NUEVA_VERSION
+
+if [ -z "$NUEVA_VERSION" ]; then
+    echo
+    echo -e "   ${RED}${SYM_FAIL}  Versión vacía — Deploy abortado${RESET}"
+    echo
+    exit 1
+fi
+
+# Actualizar package.json con la nueva versión
+node -e "
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('./package.json','utf-8'));
+pkg.version = '${NUEVA_VERSION}';
+fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+console.log('package.json actualizado a ${NUEVA_VERSION}');
+"
+
+echo
+echo -e "   ${GREEN}${SYM_OK}${RESET}  ${WHITE}Versión${RESET}  ${GREEN}${BOLD}${VERSION_ACTUAL} → ${NUEVA_VERSION}${RESET}"
+echo
+
+# Preguntar notas de release
+echo -e "   ${WHITE}Notas de release${RESET}  ${DIM}(una por línea, Enter vacío para terminar)${RESET}"
+echo
+
+NOTAS=()
+while true; do
+    read -p "$(echo -e "   ${DIM}>${RESET} ")" LINEA
+    if [ -z "$LINEA" ]; then
+        break
+    fi
+    NOTAS+=("$LINEA")
+done
+
+# Escribir release-notes.json
+if [ ${#NOTAS[@]} -gt 0 ]; then
+    # Escribir notas a archivo temporal y luego procesar con node
+    printf '%s\n' "${NOTAS[@]}" > /tmp/srs-release-notes.txt
+    node -e "
+const fs = require('fs');
+const lines = fs.readFileSync('/tmp/srs-release-notes.txt', 'utf-8').trim().split('\n').filter(Boolean);
+fs.writeFileSync('./release-notes.json', JSON.stringify({ notes: lines }, null, 2) + '\n');
+console.log('release-notes.json escrito con ' + lines.length + ' notas');
+"
+    rm -f /tmp/srs-release-notes.txt
+    echo
+    echo -e "   ${GREEN}${SYM_OK}${RESET}  ${WHITE}${#NOTAS[@]} nota(s) registrada(s)${RESET}"
+else
+    node -e "
+const fs = require('fs');
+fs.writeFileSync('./release-notes.json', JSON.stringify({ notes: [] }, null, 2) + '\n');
+"
+    echo
+    echo -e "   ${DIM}Sin notas de release${RESET}"
+fi
+
+echo
+echo -e "   ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 
 echo
 echo -e "   ${WHITE}${BOLD}Etapa 1${RESET}  ${DIM}Build local de artefactos con Vite${RESET}"
@@ -520,7 +592,7 @@ for IP in "${SERVIDORES[@]}"; do
 
     # PASO 1: Sincronización de Archivos (incluyendo dist/ pre-construido)
     MENSAJE_SYNC="Sincronizando codigo fuente + dist (rsync)"
-    COMANDO_SYNC="rsync -avz --exclude 'node_modules' --exclude '.git' --exclude '.env' ./ '$USUARIO@$IP:$RUTA_DESTINO'"
+    COMANDO_SYNC="rsync -avz --delete --exclude 'node_modules' --exclude '.git' --exclude '.env' ./ '$USUARIO@$IP:$RUTA_DESTINO'"
 
     if ! ejecutar_paso "$IP" "$MENSAJE_SYNC" "$COMANDO_SYNC"; then
         ERROR_EN_NODO=1
@@ -538,7 +610,7 @@ for IP in "${SERVIDORES[@]}"; do
             PERFIL_EXTRA="--profile meili"
             MENSAJE_DOCKER="Reconstruyendo e iniciando contenedores (+ Meilisearch)"
         fi
-        COMANDO_DOCKER="ssh '$USUARIO@$IP' 'cd $RUTA_DESTINO || exit 1; docker compose down || true; intento=1; while [ \$intento -le $DOCKER_MAX_RETRIES ]; do docker pull nginx:1.27-alpine >/dev/null 2>&1 || true; if docker compose $PERFIL_EXTRA up -d --build; then exit 0; fi; if [ \$intento -lt $DOCKER_MAX_RETRIES ]; then echo \"[deploy] Reintento \$intento/$DOCKER_MAX_RETRIES en ${DOCKER_RETRY_DELAY}s...\"; sleep $DOCKER_RETRY_DELAY; fi; intento=\$((intento + 1)); done; exit 1'"
+        COMANDO_DOCKER="ssh '$USUARIO@$IP' 'cd $RUTA_DESTINO || exit 1; docker compose down || true; docker builder prune -f 2>/dev/null || true; intento=1; while [ \$intento -le $DOCKER_MAX_RETRIES ]; do docker pull nginx:1.27-alpine >/dev/null 2>&1 || true; if docker compose $PERFIL_EXTRA build --no-cache --pull && docker compose $PERFIL_EXTRA up -d --force-recreate --remove-orphans; then exit 0; fi; if [ \$intento -lt $DOCKER_MAX_RETRIES ]; then echo \"[deploy] Reintento \$intento/$DOCKER_MAX_RETRIES en ${DOCKER_RETRY_DELAY}s...\"; sleep $DOCKER_RETRY_DELAY; fi; intento=\$((intento + 1)); done; exit 1'"
 
         if ! ejecutar_paso "$IP" "$MENSAJE_DOCKER" "$COMANDO_DOCKER"; then
             ERROR_EN_NODO=1

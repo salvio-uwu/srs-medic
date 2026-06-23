@@ -5,6 +5,7 @@ import { db, auth } from '../../config/firebase';
 import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth, deleteUser } from 'firebase/auth';
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import useIsMobile from '../../hooks/useIsMobile';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCIPnSQkdWm6YgdYlIZ8G5V4wu-oTFFTfg',
@@ -36,14 +37,14 @@ const ROLE_OPTIONS = [
 ];
 
 const ROLE_COLORS = {
-  medico:          { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200',    dot: 'bg-blue-500',    avatar: 'bg-blue-100'   },
-  enfermeria:      { bg: 'bg-teal-50',    text: 'text-teal-700',    border: 'border-teal-200',    dot: 'bg-teal-500',    avatar: 'bg-teal-100'   },
-  jefa_enfermeria: { bg: 'bg-indigo-50',  text: 'text-indigo-700',  border: 'border-indigo-200',  dot: 'bg-indigo-500',  avatar: 'bg-indigo-100' },
-  admin:           { bg: 'bg-purple-50',  text: 'text-purple-700',  border: 'border-purple-200',  dot: 'bg-purple-500',  avatar: 'bg-purple-100' },
-  rh:              { bg: 'bg-orange-50',  text: 'text-orange-700',  border: 'border-orange-200',  dot: 'bg-orange-400',  avatar: 'bg-orange-100' },
-  intendencia:     { bg: 'bg-slate-100',  text: 'text-slate-600',   border: 'border-slate-200',   dot: 'bg-slate-400',   avatar: 'bg-slate-200'  },
-  recepcion:       { bg: 'bg-cyan-50',    text: 'text-cyan-700',    border: 'border-cyan-200',    dot: 'bg-cyan-500',    avatar: 'bg-cyan-100'   },
-  operativo:       { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200',   dot: 'bg-amber-400',   avatar: 'bg-amber-100'  },
+  medico:          { dot: '#111',   avatar: '#f3f4f6' },
+  enfermeria:      { dot: '#4b5563', avatar: '#f3f4f6' },
+  jefa_enfermeria: { dot: '#374151', avatar: '#f3f4f6' },
+  admin:           { dot: '#111',   avatar: '#f3f4f6' },
+  rh:              { dot: '#6b7280', avatar: '#f3f4f6' },
+  intendencia:     { dot: '#9ca3af', avatar: '#f3f4f6' },
+  recepcion:       { dot: '#4b5563', avatar: '#f3f4f6' },
+  operativo:       { dot: '#6b7280', avatar: '#f3f4f6' },
 };
 
 const PERMISSION_GROUPS = [
@@ -170,6 +171,7 @@ const buildInitialForm = () => ({
 
 const Usuarios = () => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('tabla');
@@ -731,247 +733,206 @@ const Usuarios = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto font-sans pb-20 space-y-6">
-
-      {/* ── Header ── */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-200 flex-shrink-0">
-            <Users size={22} className="text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-slate-800 leading-tight">Gestión de Usuarios</h1>
-            <p className="text-slate-500 text-sm">Control de personal, permisos y actividad del sistema</p>
-          </div>
+    <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '20px 16px 40px' : '32px 28px 48px' }}>
+      {/* ── CABECERA ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32, flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif', margin: 0 }}>
+            Gestion de Usuarios
+          </h1>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
+            Control de personal, permisos y actividad del sistema
+          </p>
         </div>
-        <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+        <div style={{ display: 'inline-flex', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', padding: 3 }}>
           <button
             onClick={() => setViewMode('tabla')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-1.5 transition-all ${viewMode === 'tabla' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            style={{
+              padding: '7px 16px', borderRadius: 4, border: 'none', fontSize: 12, fontWeight: 700,
+              cursor: 'pointer',
+              color: viewMode === 'tabla' ? '#fff' : '#4b5563',
+              background: viewMode === 'tabla' ? '#111' : 'transparent',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
           >
-            <Table2 size={16} /> Vista Tabla
+            <Table2 size={15} /> Vista Tabla
           </button>
           <button
             onClick={() => setViewMode('alta')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-1.5 transition-all ${viewMode === 'alta' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+            style={{
+              padding: '7px 16px', borderRadius: 4, border: 'none', fontSize: 12, fontWeight: 700,
+              cursor: 'pointer',
+              color: viewMode === 'alta' ? '#fff' : '#4b5563',
+              background: viewMode === 'alta' ? '#111' : 'transparent',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
           >
-            <UserPlus size={16} /> Alta de Usuario
+            <UserPlus size={15} /> Alta de Usuario
           </button>
         </div>
       </div>
 
       {viewMode === 'alta' && (
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-4">
-
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center flex-shrink-0">
-                <UserPlus size={15} className="text-white" />
-              </div>
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <UserPlus size={15} style={{ color: '#6b7280' }} />
               <div>
-                <h2 className="text-sm font-bold text-slate-800">{editingUserId ? 'Editar usuario' : 'Alta de usuario'}</h2>
-                <p className="text-[11px] text-slate-400">Los campos con <span className="text-red-400 font-semibold">*</span> son obligatorios</p>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#111' }}>{editingUserId ? 'Editar usuario' : 'Alta de usuario'}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>Los campos con * son obligatorios</div>
               </div>
             </div>
-            <div className="text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
-              {auth.currentUser?.email || 'sin sesión'}
+            <div style={{ fontSize: 11, color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 10px', background: '#fff' }}>
+              {auth.currentUser?.email || 'sin sesion'}
             </div>
           </div>
 
           <form onSubmit={handleRegister}>
-
             {/* ── Selector de rol ── */}
-            <div className="px-6 pt-5 pb-4 border-b border-slate-100">
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #e5e7eb' }}>
               <SectionLabel>Rol del usuario *</SectionLabel>
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                 {ROLE_OPTIONS.map((role) => {
                   const active = formData.rol === role.value;
-                  const c = ROLE_COLORS[role.value];
                   return (
                     <button
                       key={role.value}
                       type="button"
                       onClick={() => applyRoleDefaults(role.value)}
-                      className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-                        active
-                          ? `${c?.bg ?? 'bg-blue-50'} ${c?.text ?? 'text-blue-700'} ${c?.border ?? 'border-blue-300'} shadow-sm`
-                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300'
-                      }`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '5px 12px',
+                        borderRadius: 6,
+                        border: active ? '1px solid #111' : '1px solid #d1d5db',
+                        background: active ? '#111' : '#fff',
+                        color: active ? '#fff' : '#4b5563',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
                     >
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${active ? (c?.dot ?? 'bg-blue-500') : 'bg-slate-300'}`} />
                       {role.label}
                     </button>
                   );
                 })}
               </div>
               {formData.rol && (
-                <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg inline-flex items-center gap-2 text-xs text-blue-600">
-                  <ShieldCheck size={12} className="flex-shrink-0" />
+                <div style={{ marginTop: 10, padding: '8px 12px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12, color: '#4b5563', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <ShieldCheck size={13} style={{ color: '#6b7280' }} />
                   {ROLE_OPTIONS.find(r => r.value === formData.rol)?.helper}
                 </div>
               )}
             </div>
 
             {/* ── Cuerpo en 2 columnas ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-
-              {/* Columna izquierda — Identidad + Perfil laboral */}
-              <div className="px-6 py-5 space-y-5">
-                <SectionLabel>Datos personales</SectionLabel>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Nombre *">
-                    <input value={formData.nombre} onChange={(e) => updateForm('nombre', e.target.value)} required className={inputCls} placeholder="Ej. María" />
-                  </Field>
-                  <Field label="Apellidos *">
-                    <input value={formData.apellidos} onChange={(e) => updateForm('apellidos', e.target.value)} required className={inputCls} placeholder="Ej. García López" />
-                  </Field>
-                  <Field label="Sexo *">
-                    <select value={formData.sexo} onChange={(e) => updateForm('sexo', e.target.value)} className={inputCls}>
-                      <option value="Femenino">Femenino</option>
-                      <option value="Masculino">Masculino</option>
-                    </select>
-                  </Field>
-                  <Field label="Fecha de nacimiento *">
-                    <input type="date" value={formData.fechaNacimiento} onChange={(e) => updateForm('fechaNacimiento', e.target.value)} required className={inputCls} />
-                  </Field>
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 space-y-3">
-                  <SectionLabel>Perfil laboral</SectionLabel>
-
-                  {/* Especialidad — médico (requerida con select) */}
-                  {isMedicoRole && (
-                    <Field label="Especialidad *">
-                      <select value={formData.especialidad} onChange={(e) => updateForm('especialidad', e.target.value)} className={inputCls}>
-                        <option value="">Selecciona una especialidad…</option>
-                        {especialidadesCatalogo.map((esp) => <option key={esp} value={esp}>{esp}</option>)}
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', borderBottom: '1px solid #e5e7eb' }}>
+              {/* Columna izquierda */}
+              <div style={{ padding: '18px 20px', borderRight: isMobile ? 'none' : '1px solid #e5e7eb' }}>
+                <div style={{ marginBottom: 18 }}>
+                  <SectionLabel>Datos personales</SectionLabel>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginTop: 10 }}>
+                    <Field label="Nombre *">
+                      <input value={formData.nombre} onChange={(e) => updateForm('nombre', e.target.value)} required style={inputCls} placeholder="Ej. Maria" />
+                    </Field>
+                    <Field label="Apellidos *">
+                      <input value={formData.apellidos} onChange={(e) => updateForm('apellidos', e.target.value)} required style={inputCls} placeholder="Ej. Garcia Lopez" />
+                    </Field>
+                    <Field label="Sexo *">
+                      <select value={formData.sexo} onChange={(e) => updateForm('sexo', e.target.value)} style={inputCls}>
+                        <option value="Femenino">Femenino</option>
+                        <option value="Masculino">Masculino</option>
                       </select>
-                      {especialidadesCatalogo.length === 0 && (
-                        <p className="mt-1 text-[11px] text-amber-600">⚠ Sin especialidades en catálogo. Agrégalas en <strong>Catálogos Globales</strong>.</p>
-                      )}
                     </Field>
-                  )}
-
-                  {/* Área de especialidad — enfermería (opcional, texto libre) */}
-                  {isClinicalNonMedico && (
-                    <Field label="Área de especialidad" optional>
-                      <input value={formData.especialidad} onChange={(e) => updateForm('especialidad', e.target.value)} className={inputCls} placeholder="Ej. Urgencias, Triage, UCI…" />
+                    <Field label="Fecha de nacimiento *">
+                      <input type="date" value={formData.fechaNacimiento} onChange={(e) => updateForm('fechaNacimiento', e.target.value)} required style={inputCls} />
                     </Field>
-                  )}
-
-                  {/* Universidad — roles clínicos (siempre opcional) */}
-                  {isClinicalRole && (
-                    <Field label="Universidad / Institución de egreso" optional>
-                      <input value={formData.universidadEgreso} onChange={(e) => updateForm('universidadEgreso', e.target.value)} className={inputCls} placeholder="Ej. UNAM, IPN, UANL…" />
-                    </Field>
-                  )}
-
-                  {/* Cargo / Puesto — roles no clínicos (opcional) */}
-                  {!isClinicalRole && (
-                    <Field label="Cargo / Puesto" optional>
-                      <input value={formData.cargo} onChange={(e) => updateForm('cargo', e.target.value)} className={inputCls} placeholder="Ej. Administrador, Recepcionista…" />
-                    </Field>
-                  )}
-
-                  {/* Asignación recurrente */}
-                  <Field label={isMedicoRole ? 'Consultorio recurrente *' : 'Sucursal / Área de trabajo *'}>
-                    <select value={formData.asignacionRecurrente} onChange={(e) => updateForm('asignacionRecurrente', e.target.value)} className={inputCls}>
-                      <option value="">Selecciona una opción…</option>
-                      {assignmentOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-                    </select>
-                    {assignmentOptions.length === 0 && (
-                      <p className="mt-1 text-[11px] text-amber-600">⚠ No hay {isMedicoRole ? 'consultorios' : 'sucursales'} activos. Agrégalos en <strong>Catálogos Globales</strong>.</p>
-                    )}
-                  </Field>
-
-                  {/* Cédula profesional — médico (requerida), enfermería (opcional) */}
-                  {isClinicalRole && (
-                    <Field label={isMedicoRole ? 'Cédula profesional *' : 'Cédula profesional'} optional={!isMedicoRole}>
-                      <input value={formData.cedula} onChange={(e) => updateForm('cedula', e.target.value)} className={inputCls} placeholder="Ej. 12345678" />
-                    </Field>
-                  )}
+                  </div>
+                </div>
+                <div style={{ paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+                  <SectionLabel>Perfil laboral</SectionLabel>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
+                    {isMedicoRole && (<Field label="Especialidad *"><select value={formData.especialidad} onChange={(e) => updateForm('especialidad', e.target.value)} style={inputCls}><option value="">Selecciona una especialidad...</option>{especialidadesCatalogo.map((esp) => <option key={esp} value={esp}>{esp}</option>)}</select>{especialidadesCatalogo.length === 0 && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>Sin especialidades en catalogo. Agregalas en Catalogos Globales.</p>}</Field>)}
+                    {isClinicalNonMedico && (<Field label="Area de especialidad" optional><input value={formData.especialidad} onChange={(e) => updateForm('especialidad', e.target.value)} style={inputCls} placeholder="Ej. Urgencias, Triage, UCI..." /></Field>)}
+                    {isClinicalRole && (<Field label="Universidad / Institucion de egreso" optional><input value={formData.universidadEgreso} onChange={(e) => updateForm('universidadEgreso', e.target.value)} style={inputCls} placeholder="Ej. UNAM, IPN, UANL..." /></Field>)}
+                    {!isClinicalRole && (<Field label="Cargo / Puesto" optional><input value={formData.cargo} onChange={(e) => updateForm('cargo', e.target.value)} style={inputCls} placeholder="Ej. Administrador, Recepcionista..." /></Field>)}
+                    <Field label={isMedicoRole ? 'Consultorio recurrente *' : 'Sucursal / Area de trabajo *'}><select value={formData.asignacionRecurrente} onChange={(e) => updateForm('asignacionRecurrente', e.target.value)} style={inputCls}><option value="">Selecciona una opcion...</option>{assignmentOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>{assignmentOptions.length === 0 && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#6b7280' }}>No hay {isMedicoRole ? 'consultorios' : 'sucursales'} activos. Agregalos en Catalogos Globales.</p>}</Field>
+                    {isClinicalRole && (<Field label={isMedicoRole ? 'Cedula profesional *' : 'Cedula profesional'} optional={!isMedicoRole}><input value={formData.cedula} onChange={(e) => updateForm('cedula', e.target.value)} style={inputCls} placeholder="Ej. 12345678" /></Field>)}
+                  </div>
                 </div>
               </div>
-
-              {/* Columna derecha — Contacto + Credenciales */}
-              <div className="px-6 py-5 space-y-5">
-                <SectionLabel>Información de contacto</SectionLabel>
-                <div className="grid grid-cols-1 gap-3">
-                  <Field label="Correo electrónico *">
-                    <div className="relative">
-                      <Mail size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input type="email" value={formData.email} onChange={(e) => updateForm('email', e.target.value)} required readOnly={!!editingUserId} className={`${inputCls} pl-8 ${editingUserId ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`} placeholder="correo@clinica.mx" />
-                      {editingUserId && (
-                        <p className="mt-1 text-[11px] text-slate-400">El correo no se puede editar para evitar desincronización con Auth.</p>
-                      )}
+              {/* Columna derecha */}
+              <div style={{ padding: '18px 20px' }}>
+                <div style={{ marginBottom: 18 }}>
+                  <SectionLabel>Informacion de contacto</SectionLabel>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
+                    <Field label="Correo electronico *">
+                      <div style={{ position: 'relative' }}>
+                        <Mail size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                        <input type="email" value={formData.email} onChange={(e) => updateForm('email', e.target.value)} required readOnly={!!editingUserId} style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: editingUserId ? '#9ca3af' : '#111', outline: 'none', background: editingUserId ? '#fafafa' : '#fff', width: '100%', boxSizing: 'border-box', cursor: editingUserId ? 'not-allowed' : undefined }} placeholder="correo@clinica.mx" />
+                        {editingUserId && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>El correo no se puede editar para evitar desincronizacion con Auth.</p>}
+                      </div>
+                    </Field>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+                      <Field label="Telefono movil *"><input type="tel" value={formData.telefonoMovil} onChange={(e) => updateForm('telefonoMovil', e.target.value)} required style={inputCls} placeholder="5512345678" /></Field>
+                      <Field label="Telefono fijo" optional><input type="tel" value={formData.telefonoFijo} onChange={(e) => updateForm('telefonoFijo', e.target.value)} style={inputCls} placeholder="Ej. 5512345678" /></Field>
                     </div>
-                  </Field>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Teléfono móvil *">
-                      <input type="tel" value={formData.telefonoMovil} onChange={(e) => updateForm('telefonoMovil', e.target.value)} required className={inputCls} placeholder="5512345678" />
-                    </Field>
-                    <Field label="Teléfono fijo" optional>
-                      <input type="tel" value={formData.telefonoFijo} onChange={(e) => updateForm('telefonoFijo', e.target.value)} className={inputCls} placeholder="Ej. 5512345678" />
-                    </Field>
+                    <Field label="Direccion" optional><input value={formData.direccion} onChange={(e) => updateForm('direccion', e.target.value)} style={inputCls} placeholder="Calle, numero, colonia" /></Field>
                   </div>
-
-                  <Field label="Dirección" optional>
-                    <input value={formData.direccion} onChange={(e) => updateForm('direccion', e.target.value)} className={inputCls} placeholder="Calle, número, colonia" />
-                  </Field>
                 </div>
-
-                <div className="pt-3 border-t border-slate-100 space-y-3">
-                  <div>
-                    <SectionLabel>{editingUserId ? 'Cambiar contraseña' : 'Contraseña de acceso'}</SectionLabel>
-                    {editingUserId && <p className="text-[11px] text-slate-400 mt-1">Deja en blanco para no modificar la contraseña actual.</p>}
+                <div style={{ paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <SectionLabel>{editingUserId ? 'Cambiar contrasena' : 'Contrasena de acceso'}</SectionLabel>
+                    {editingUserId && <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Deja en blanco para no modificar la contrasena actual.</p>}
                   </div>
-                  <Field label={editingUserId ? 'Nueva contraseña' : 'Contraseña *'} optional={!!editingUserId}>
-                    <div className="relative">
-                      <Lock size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input type="password" minLength={6} value={formData.password} onChange={(e) => updateForm('password', e.target.value)} required={!editingUserId} className={`${inputCls} pl-8`} placeholder={editingUserId ? 'Deja vacío para no cambiar' : 'Mínimo 6 caracteres'} />
-                    </div>
-                  </Field>
-                  <Field label={editingUserId ? 'Confirmar nueva contraseña' : 'Confirmar contraseña *'} optional={!!editingUserId}>
-                    <div className="relative">
-                      <Lock size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input type="password" minLength={6} value={formData.confirmPassword} onChange={(e) => updateForm('confirmPassword', e.target.value)} required={!editingUserId} className={`${inputCls} pl-8`} placeholder={editingUserId ? 'Solo si cambias contraseña' : 'Repite la contraseña'} />
-                    </div>
-                  </Field>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <Field label={editingUserId ? 'Nueva contrasena' : 'Contrasena *'} optional={!!editingUserId}>
+                      <div style={{ position: 'relative' }}>
+                        <Lock size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                        <input type="password" minLength={6} value={formData.password} onChange={(e) => updateForm('password', e.target.value)} required={!editingUserId} style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder={editingUserId ? 'Deja vacio para no cambiar' : 'Minimo 6 caracteres'} />
+                      </div>
+                    </Field>
+                    <Field label={editingUserId ? 'Confirmar nueva contrasena' : 'Confirmar contrasena *'} optional={!!editingUserId}>
+                      <div style={{ position: 'relative' }}>
+                        <Lock size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                        <input type="password" minLength={6} value={formData.confirmPassword} onChange={(e) => updateForm('confirmPassword', e.target.value)} required={!editingUserId} style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder={editingUserId ? 'Solo si cambias contrasena' : 'Repite la contrasena'} />
+                      </div>
+                    </Field>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* ── Permisos ── */}
-            <div className="border-t border-slate-100 px-6 py-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <SectionLabel>Permisos del sistema</SectionLabel>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">
-                    <Key size={8} /> {enabledPermissionIds.length} activos
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#4b5563', border: '1px solid #e5e7eb', borderRadius: 99, padding: '2px 8px' }}>
+                    {enabledPermissionIds.length} activos
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setFormData((prev) => ({ ...prev, permissions: buildPermissionMap(defaultPermissionIdsByRole(prev.rol)) }))}
-                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                  style={{ background: 'none', border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600, color: '#4b5563', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
                   <RefreshCw size={11} /> Restaurar por rol
                 </button>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(6, 1fr)', gap: 16 }}>
                 {PERMISSION_GROUPS.map((group) => (
                   <div key={group.key}>
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2 pb-1 border-b border-slate-100">{group.label}</p>
-                    <div className="space-y-1.5">
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6, paddingBottom: 6, borderBottom: '1px solid #e5e7eb' }}>{group.label}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {group.items.map((perm) => (
-                        <label key={perm.id} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer hover:text-slate-900 select-none">
+                        <label key={perm.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#4b5563', cursor: 'pointer' }}>
                           <input
                             type="checkbox"
                             checked={!!formData.permissions?.[perm.id]}
                             onChange={() => togglePermission(perm.id)}
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-400 w-3.5 h-3.5"
+                            style={{ width: 14, height: 14, accentColor: '#111' }}
                           />
                           {perm.label}
                         </label>
@@ -983,120 +944,107 @@ const Usuarios = () => {
             </div>
 
             {/* ── Footer ── */}
-            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-3">
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', background: '#fafafa', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button
                 type="button"
                 onClick={() => { setViewMode('tabla'); resetUserForm(); }}
-                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-sm font-semibold transition-all"
+                style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '7px 16px', fontSize: 12, fontWeight: 600, color: '#4b5563', background: '#fff', cursor: 'pointer' }}
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-semibold text-sm shadow-sm transition-all inline-flex items-center gap-2"
+                style={{
+                  border: '1px solid #111',
+                  borderRadius: 6,
+                  padding: '7px 20px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: '#fff',
+                  background: '#111',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                  opacity: saving ? 0.5 : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
               >
-                {saving ? <><RefreshCw size={13} className="animate-spin" /> Guardando…</> : editingUserId ? 'Guardar cambios' : `Crear ${roleLabel(formData.rol)}`}
+                {saving ? <><RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Guardando...</> : editingUserId ? 'Guardar cambios' : `Crear ${roleLabel(formData.rol)}`}
               </button>
             </div>
-
           </form>
-        </section>
+        </div>
       )}
 
       {viewMode === 'tabla' && (
-      <div className="space-y-4">
-
+      <div>
         {/* ── Filtros ── */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-md">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none"
-              placeholder="Buscar por nombre, correo, rol o asignación..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: 200, maxWidth: 400 }}>
+            <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+            <input style={{ ...inputCls, paddingLeft: 32, width: '100%' }} placeholder="Buscar por nombre, correo, rol o asignacion..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           </div>
-          <select
-            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
+          <select style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#111', background: '#fff', outline: 'none' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="all">Todos los estados</option>
             <option value="online">Online</option>
             <option value="offline">Offline</option>
           </select>
-          <select
-            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-          >
+          <select style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#111', background: '#fff', outline: 'none' }} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
             <option value="all">Todos los roles</option>
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>{r.label} ({roleCounts[r.value] || 0})</option>
-            ))}
+            {ROLE_OPTIONS.map((r) => (<option key={r.value} value={r.value}>{r.label} ({roleCounts[r.value] || 0})</option>))}
           </select>
-          <select
-            className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-          >
+          <select style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#111', background: '#fff', outline: 'none' }} value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
             <option value="online">Online primero</option>
             <option value="recent">Actividad reciente</option>
             <option value="role">Por rol</option>
           </select>
-          <div className="inline-flex items-center gap-2 text-xs text-slate-500">
-            <span className="font-bold text-slate-700">{filteredUsers.length}</span> usuario(s)
-          </div>
+          <span style={{ fontSize: 12, color: '#6b7280' }}><strong style={{ color: '#111' }}>{filteredUsers.length}</strong> usuario(s)</span>
           {(roleFilter !== 'all' || statusFilter !== 'all' || searchTerm.trim()) && (
-            <button
-              onClick={() => { setSearchTerm(''); setRoleFilter('all'); setStatusFilter('all'); setSortBy('online'); }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-medium transition"
-            >
+            <button onClick={() => { setSearchTerm(''); setRoleFilter('all'); setStatusFilter('all'); setSortBy('online'); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', color: '#4b5563', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
               <FilterX size={14} /> Limpiar
             </button>
           )}
         </div>
 
-        {/* ── Tabla ── */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+        {/* Desktop: table */}
+        {!isMobile && (
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-8">#</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Estado</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Usuario</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rol</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Asignación</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Actividad</th>
-                  <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Permisos</th>
-                  <th className="px-3 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider w-0">Acciones</th>
+                <tr style={{ background: '#fafafa' }}>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', width: 10 }} />
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>Usuario</th>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>Rol</th>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>Asignacion</th>
+                  <th style={{ textAlign: 'left', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>Actividad</th>
+                  <th style={{ textAlign: 'right', padding: '10px 20px', fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }} />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {loading && Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
-                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-4" /></td>
-                    <td className="px-3 py-2.5"><div className="h-5 bg-slate-100 rounded-full w-16" /></td>
-                    <td className="px-3 py-2.5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-slate-100 flex-shrink-0" /><div className="space-y-1.5"><div className="h-3 bg-slate-100 rounded w-28" /><div className="h-2.5 bg-slate-100 rounded w-40" /></div></div></td>
-                    <td className="px-3 py-2.5"><div className="h-5 bg-slate-100 rounded-full w-20" /></td>
-                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-24" /></td>
-                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-20" /></td>
-                    <td className="px-3 py-2.5"><div className="h-3 bg-slate-100 rounded w-16" /></td>
-                    <td className="px-3 py-2.5"><div className="h-7 bg-slate-100 rounded w-16 ml-auto" /></td>
+                  <tr key={i}>
+                    <td style={{ padding: '12px 20px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f3f4f6' }} /></td>
+                    <td style={{ padding: '12px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f3f4f6' }} />
+                        <div style={{ height: 12, background: '#f3f4f6', borderRadius: 4, width: 140 }} />
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 20px' }}><div style={{ height: 12, background: '#f3f4f6', borderRadius: 4, width: 80 }} /></td>
+                    <td style={{ padding: '12px 20px' }}><div style={{ height: 12, background: '#f3f4f6', borderRadius: 4, width: 120 }} /></td>
+                    <td style={{ padding: '12px 20px' }}><div style={{ height: 12, background: '#f3f4f6', borderRadius: 4, width: 70 }} /></td>
+                    <td style={{ padding: '12px 20px' }}><div style={{ height: 26, background: '#f3f4f6', borderRadius: 6, width: 60, marginLeft: 'auto' }} /></td>
                   </tr>
                 ))}
                 {!loading && filteredUsers.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center py-16 text-slate-400">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center">
-                          <Users size={22} className="text-slate-300" />
-                        </div>
-                        <p className="text-sm font-semibold">No se encontraron usuarios</p>
-                        <p className="text-xs">Ajusta los filtros o crea un nuevo usuario</p>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: '48px 16px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                        <Users size={28} style={{ color: '#d1d5db' }} />
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}>No se encontraron usuarios</div>
+                        <div style={{ fontSize: 12, color: '#9ca3af' }}>Ajusta los filtros o crea un nuevo usuario</div>
                       </div>
                     </td>
                   </tr>
@@ -1108,65 +1056,62 @@ const Usuarios = () => {
                     ? user.permissionList.length
                     : Object.values(user.permissions || {}).filter(Boolean).length;
                   return (
-                    <tr
-                      key={user.id}
-                      className="border-b border-slate-50 hover:bg-slate-50/70 cursor-pointer"
-                      onClick={() => navigate(`/admin/usuarios/${user.id}`)}
-                    >
-                      <td className="px-3 py-2.5 text-xs text-slate-300">{idx + 1}</td>
-                      <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${online ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                          {online ? 'Online' : 'Offline'}
-                        </span>
+                    <tr key={user.id} style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }} onClick={() => navigate(`/admin/usuarios/${user.id}`)}>
+                      {/* Online dot */}
+                      <td style={{ padding: '14px 20px' }}>
+                        <div style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          background: online ? '#111' : '#d1d5db',
+                        }} />
                       </td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-3">
+                      {/* Usuario — avatar y nombre */}
+                      <td style={{ padding: '14px 20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                           <UserAvatar name={user.nombre} role={user.rol} />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-800 truncate">{user.nombre}</p>
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <span className="text-xs text-slate-400 truncate">{user.email}</span>
-                              {user.especialidad && <span className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">{user.especialidad}</span>}
-                              {user.cedulaProfesional && <span className="text-[10px] text-blue-600 font-semibold">Céd. {user.cedulaProfesional}</span>}
-                            </div>
+                          <div>
+                            <div style={{ fontWeight: 600, color: '#111', fontSize: 13 }}>{user.nombre}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
-                        <RoleBadge role={user.rol} />
+                      {/* Rol */}
+                      <td style={{ padding: '14px 20px' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#111' }}>{roleLabel(user.rol)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-xs text-slate-500">
-                        <div className="flex items-center gap-1.5">
-                          <MapPin size={12} className="text-slate-300 flex-shrink-0" /> {asignacion}
+                      {/* Asignacion */}
+                      <td style={{ padding: '14px 20px', fontSize: 12, color: '#4b5563' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <MapPin size={12} style={{ color: '#d1d5db', flexShrink: 0 }} />
+                          <span style={{ whiteSpace: 'nowrap' }}>{asignacion}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-xs text-slate-500">
-                        <div className="flex items-center gap-1.5">
-                          <Clock3 size={12} className="text-slate-300 flex-shrink-0" /> {formatLastSeen(user.lastSeen)}
+                      {/* Actividad */}
+                      <td style={{ padding: '14px 20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: online ? '#111' : '#9ca3af' }}>
+                            {online ? 'Online' : 'Offline'}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+                            {online ? '' : formatLastSeen(user.lastSeen)}
+                          </span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${permissionCount > 0 ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                          <Key size={9} /> {permissionCount}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <div className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      {/* Acciones */}
+                      <td style={{ padding: '14px 20px', textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: 6 }} onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => startEditUser(user)}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                            style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '5px', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', background: '#fff', cursor: 'pointer' }}
                             title="Editar usuario"
                           >
-                            <Edit size={15} />
+                            <Edit size={14} />
                           </button>
                           {(user.rol !== 'admin_maestro' && user.rol !== 'admin') && (
                             <button
                               onClick={() => handleDelete(user)}
-                              className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                              style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', background: '#fff', cursor: 'pointer' }}
                               title="Eliminar usuario"
                             >
-                              <Trash2 size={15} />
+                              <Trash2 size={14} />
                             </button>
                           )}
                         </div>
@@ -1178,6 +1123,79 @@ const Usuarios = () => {
             </table>
           </div>
         </div>
+        )}
+
+        {/* Mobile: user cards */}
+        {isMobile && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {loading && Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14 }}>
+                <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f3f4f6' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ height: 12, background: '#f3f4f6', borderRadius: 4, width: '60%', marginBottom: 6 }} />
+                    <div style={{ height: 10, background: '#f3f4f6', borderRadius: 4, width: '40%' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, paddingTop: 8, borderTop: '1px solid #f3f4f6' }}>
+                  <div style={{ height: 28, flex: 1, background: '#f3f4f6', borderRadius: 6 }} />
+                  <div style={{ height: 28, width: 40, background: '#f3f4f6', borderRadius: 6 }} />
+                  <div style={{ height: 28, width: 40, background: '#f3f4f6', borderRadius: 6 }} />
+                </div>
+              </div>
+            ))}
+            {!loading && filteredUsers.length === 0 && (
+              <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '40px 20px', textAlign: 'center' }}>
+                <Users size={28} style={{ color: '#d1d5db', marginBottom: 10 }} />
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}>No se encontraron usuarios</div>
+                <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Ajusta los filtros o crea un nuevo usuario</div>
+              </div>
+            )}
+            {!loading && filteredUsers.map((user) => {
+              const online = isUserOnline(user);
+              const asignacion = user.consultorioRecurrente || user.areaRecurrente || user.sucursal || '—';
+              return (
+                <div key={user.id} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14, cursor: 'pointer' }} onClick={() => navigate(`/admin/usuarios/${user.id}`)}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <UserAvatar name={user.nombre} role={user.rol} />
+                      <div style={{
+                        position: 'absolute', bottom: -1, right: -1,
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: online ? '#111' : '#d1d5db',
+                        border: '2px solid #fff',
+                      }} />
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 700, color: '#111', fontSize: 13 }}>{user.nombre}</div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>{roleLabel(user.rol)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#4b5563' }}>
+                      <MapPin size={11} style={{ color: '#9ca3af', flexShrink: 0 }} />
+                      <span>{asignacion}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <span style={{ fontWeight: 600, color: online ? '#111' : '#9ca3af' }}>{online ? 'Online' : 'Offline'}</span>
+                      {!online && <span style={{ color: '#9ca3af', fontSize: 11 }}>{formatLastSeen(user.lastSeen)}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, paddingTop: 8, borderTop: '1px solid #f3f4f6' }} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => startEditUser(user)} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '6px 10px', borderRadius: 6, border: '1px solid #111', background: '#111', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                      <Edit size={12} /> Editar
+                    </button>
+                    {(user.rol !== 'admin_maestro' && user.rol !== 'admin') && (
+                      <button onClick={() => handleDelete(user)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '6px 10px', borderRadius: 6, border: '1px solid #e5e7eb', color: '#ef4444', background: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
       </div>
       )}
@@ -1185,40 +1203,54 @@ const Usuarios = () => {
   );
 };
 
-const inputCls = 'w-full p-2.5 border border-slate-200 rounded-xl bg-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 text-sm transition-all';
+const inputCls = {
+  border: '1px solid #d1d5db',
+  borderRadius: 6,
+  padding: '8px 12px',
+  fontSize: 13,
+  color: '#111',
+  outline: 'none',
+  background: '#fff',
+  width: '100%',
+  boxSizing: 'border-box',
+};
 
 const SectionLabel = ({ children }) => (
-  <p className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-    <span className="w-0.5 h-3.5 rounded-full bg-blue-500 inline-block flex-shrink-0" />
+  <p style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em', margin: 0 }}>
     {children}
   </p>
 );
 
 const Field = ({ label, children, optional = false }) => (
-  <label className="block">
-    <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600 mb-1.5">
+  <label style={{ display: 'block' }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#4b5563', marginBottom: 6 }}>
       {label}
-      {optional && <span className="text-[10px] font-normal text-slate-400 bg-slate-100 rounded px-1.5 py-0.5">(opcional)</span>}
+      {optional && <span style={{ fontSize: 10, fontWeight: 400, color: '#9ca3af' }}>(opcional)</span>}
     </span>
     {children}
   </label>
 );
 
 const UserAvatar = ({ name, role }) => {
-  const c = ROLE_COLORS[role];
   const initials = (name || '??').split(' ').slice(0, 2).map((n) => n[0] || '').join('').toUpperCase();
   return (
-    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-sm flex-shrink-0 ${c?.avatar ?? 'bg-slate-100'} ${c?.text ?? 'text-slate-600'}`}>
+    <div style={{
+      width: 32, height: 32, borderRadius: '50%',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontWeight: 700, fontSize: 12, flexShrink: 0,
+      background: '#f3f4f6', color: '#4b5563',
+    }}>
       {initials || <User size={14} />}
     </div>
   );
 };
 
 const RoleBadge = ({ role }) => {
-  const c = ROLE_COLORS[role];
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wide ${c?.bg ?? 'bg-slate-50'} ${c?.text ?? 'text-slate-600'} ${c?.border ?? 'border-slate-200'}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${c?.dot ?? 'bg-slate-400'}`} />
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      fontSize: 11, fontWeight: 600, color: '#111',
+    }}>
       {roleLabel(role)}
     </span>
   );

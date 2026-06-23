@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
+import {
   X, Save, Loader2, Thermometer, Droplet, 
   Sparkles, Package, AlertCircle, ShieldAlert,
   ScanText, Search, CheckCircle2, Activity, MapPin, ChevronDown, ChevronUp, Check, ClipboardList,
-  Menu
+  Menu, Printer, Calendar, CalendarX
 } from 'lucide-react';
 import { db, functions } from '../config/firebase'; 
 import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import BitacoraCarroRojo from '../pages/enfermeria/BitacoraCarroRojo';
+import { useSessionLocation } from '../context/SessionLocationContext';
+import BitacoraCarroRojoEnfermeria from '../pages/enfermeria/BitacoraCarroRojoEnfermeria';
 import BitacoraPacientesEnfermeria from './BitacoraPacientesEnfermeria';
 import RegistroKrit from './RegistroKrit';
 import RegistroAutoclave from './RegistroAutoclave';
 import RegistroCaducidades from './RegistroCaducidades';
+import logoImg from '../assets/logo_azul.png';
 
 let cacheMedicamentosIndex = null;
 let cachePedidoMedicamentos = null;
@@ -96,7 +98,7 @@ const REGISTRO_TABS = [
   { id: 'carro_rojo', label: 'Carro Rojo', mobileLabel: 'C. Rojo', icon: ShieldAlert, color: 'rose' },
   { id: 'krit', label: 'Solución KRIT', mobileLabel: 'KRIT', icon: Droplet, color: 'teal' },
   { id: 'autoclave', label: 'Autoclave', mobileLabel: 'Autoclave', icon: Package, color: 'violet' },
-  { id: 'caducidades', label: 'Caducidades', mobileLabel: 'Caduc.', icon: ShieldAlert, color: 'rose' }
+  { id: 'caducidades', label: 'Caducidades', mobileLabel: 'Caduc.', icon: CalendarX, color: 'rose' }
 ];
 
 const toMedicationSearchRow = (m) => {
@@ -120,6 +122,7 @@ const toMedicationSearchRow = (m) => {
    COMPONENTE PRINCIPAL
    ═══════════════════════════════════════════════════════════════ */
 const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', standalone = false }) => {
+  const { sessionSucursal } = useSessionLocation();
   const [loading, setLoading] = useState(false);
   const [tipoRegistro, setTipoRegistro] = useState('farmacia');
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
@@ -127,6 +130,17 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const [pedidoCompacto, setPedidoCompacto] = useState(true);
   const [sucursalActiva, setSucursalActiva] = useState(sucursal);
   const [catalogoSucursales, setCatalogoSucursales] = useState([]);
+  const sucursalAutoSetRef = useRef(false);
+  const [printTempMonth, setPrintTempMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [printTempLoading, setPrintTempLoading] = useState(false);
+  const [printCloroMonth, setPrintCloroMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [printCloroLoading, setPrintCloroLoading] = useState(false);
 
   const [progresoHoy, setProgresoHoy] = useState({
     temp_8: false, temp_16: false, temp_22: false, cloro_1: false, limpieza: 0, pedido_medicamento: false
@@ -177,13 +191,33 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         const snap = await getDocs(collection(db, 'catalogo_sucursales'));
         const items = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.activo !== false);
         setCatalogoSucursales(items);
-        if (!sucursalActiva && items.length > 0) {
-          setSucursalActiva(items[0].nombre || items[0].id);
-        }
       } catch {}
     };
     loadSucursales();
   }, []);
+
+  // ─── Auto-seleccionar sucursal desde la sesión ───
+  useEffect(() => {
+    if (sucursalAutoSetRef.current) return;
+    if (!catalogoSucursales.length || !sessionSucursal) return;
+    // Si ya se pasó una sucursal vía prop (y no está vacía), respetarla
+    if (sucursal && sucursal.trim()) return;
+    // Si el usuario ya seleccionó manualmente, no sobreescribir
+    if (sucursalActiva) return;
+
+    // Buscar en el catálogo la sucursal que coincida con la sesión del usuario
+    const matched = catalogoSucursales.find(s => {
+      if (String(s.id).trim() === String(sessionSucursal.id).trim()) return true;
+      const normName = (sessionSucursal.nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      const normCatName = ((s.nombre || s.id || '')).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      return normCatName === normName;
+    });
+
+    if (matched) {
+      setSucursalActiva(matched.nombre || matched.id);
+    }
+    sucursalAutoSetRef.current = true;
+  }, [catalogoSucursales, sessionSucursal, sucursal, sucursalActiva]);
 
   // ─── Carga medicamentos ───
   useEffect(() => {
@@ -375,14 +409,22 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
   // ─── GUARDAR ───
   const handleGuardar = async () => {
+    if (!sucursalActiva) { showToast("Seleccione una sucursal antes de guardar.", "error"); return; }
     setLoading(true);
     try {
       let datosGuardar = { fecha: serverTimestamp(), fechaString: new Date().toLocaleDateString('en-CA'), responsableNombre: enfermeraNombre, sucursal: sucursalActiva || sucursal || 'Sin asignar', estado: 'completado' };
       if (tipoRegistro === 'temperatura') {
         if (!formTemp.t_ext || !formTemp.t_ref || !formTemp.humedad) { setLoading(false); return showToast("Faltan datos de temperatura o humedad.", "error"); }
+        const turnosBloqueados = {
+          '8:00 a.m.': progresoHoy.temp_8,
+          '4:00 p.m.': progresoHoy.temp_16,
+          '10:00 p.m.': progresoHoy.temp_22
+        };
+        if (turnosBloqueados[formTemp.turno]) { setLoading(false); return showToast(`El turno ${formTemp.turno} ya fue registrado hoy en esta sucursal.`, "error"); }
         datosGuardar = { ...datosGuardar, tipo: 'Temperatura', area: 'Red de Frío', turno: formTemp.turno, detalles: formTemp };
       } else if (tipoRegistro === 'cloro') {
-        if (!formCloro.ph_1 || !formCloro.cloro_1) { setLoading(false); return showToast("Faltan datos en Lavado de Manos 1.", "error"); }
+        if (progresoHoy.cloro_1) { setLoading(false); return showToast("El registro de Cloro y PH ya fue realizado hoy en esta sucursal.", "error"); }
+        if (!formCloro.ph_1 || !formCloro.cloro_1 || !formCloro.ph_2 || !formCloro.cloro_2) { setLoading(false); return showToast("Complete todos los campos de ambas estaciones de lavado.", "error"); }
         datosGuardar = { ...datosGuardar, tipo: 'Cloro y PH', area: 'Estaciones de Lavado', detalles: formCloro };
       } else if (tipoRegistro === 'limpieza') {
         if (!Object.values(formLimpieza.tareas).some(v => v === true)) { setLoading(false); return showToast("Marque al menos una tarea realizada.", "error"); }
@@ -428,6 +470,186 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     setLoading(false);
   };
 
+  // ─── Imprimir temperaturas del mes ───
+  const handlePrintTemperaturas = async () => {
+    setPrintTempLoading(true);
+    try {
+      const [year, month] = printTempMonth.split('-');
+      const firstDay = `${year}-${month}-01`;
+      const lastDayDate = new Date(Number(year), Number(month), 0);
+      const lastDay = lastDayDate.toLocaleDateString('en-CA');
+      const totalDias = lastDayDate.getDate();
+
+      const q = query(
+        collection(db, 'bitacoras_operativas'),
+        where('fechaString', '>=', firstDay),
+        where('fechaString', '<=', lastDay),
+        where('tipo', '==', 'Temperatura'),
+        where('sucursal', '==', sucursalActiva || sucursal || '')
+      );
+      const snap = await getDocs(q);
+      const registros = snap.docs.map(d => d.data());
+
+      const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+      const mesLabel = `${MESES[Number(month) - 1]} ${year}`;
+      const sucLabel = sucursalActiva || sucursal || '';
+
+      const rows = [];
+      for (let dia = 1; dia <= totalDias; dia++) {
+        const fStr = `${year}-${String(month).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+        const reg8 = registros.find(r => r.fechaString === fStr && r.turno?.includes('8:00'));
+        const reg4 = registros.find(r => r.fechaString === fStr && r.turno?.includes('4:00'));
+        const reg10 = registros.find(r => r.fechaString === fStr && r.turno?.includes('10:00'));
+        const t8 = reg8?.detalles || {};
+        const t4 = reg4?.detalles || {};
+        const t10 = reg10?.detalles || {};
+        const val = (v) => (v !== undefined && v !== null && String(v) !== '0' && String(v) !== '' ? v : '');
+        rows.push(`
+          <tr style="background:#f2f2f2">
+            <td class="fecha">${dia} ${mesLabel}</td>
+            <td>${val(t8.t_ext)}</td><td>${val(t8.humedad)}</td><td>${val(t8.t_ref)}</td>
+            <td>${val(t4.t_ext)}</td><td>${val(t4.humedad)}</td><td>${val(t4.t_ref)}</td>
+            <td>${val(t10.t_ext)}</td><td>${val(t10.humedad)}</td><td>${val(t10.t_ref)}</td>
+          </tr>
+        `);
+      }
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Temperaturas ${mesLabel}</title>
+        <style>
+          body{font-family:system-ui,sans-serif;padding:4px;color:#1e293b}
+          @media print{body{margin:3mm}@page{size:landscape;margin:5mm}}
+          table{width:100%;border-collapse:collapse;border:2px solid #666}
+          th{border:1px solid #888;background:#d9d9d9;font-weight:bold;font-size:8px;text-transform:uppercase;text-align:center;padding:2px}
+          td{border:1px solid #888;font-size:8px;text-align:center;padding:2px;height:16px}
+          td.fecha{text-align:left;font-weight:500;padding-left:4px}
+          @media print{button{display:none!important}}
+        </style></head><body>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+           <img src="${logoImg}" style="height:40px" alt="Logo"/>
+           <h1 style="font-size:20px;font-weight:700;color:#1e293b;text-align:center;flex:1;padding-right:40px;margin:0">Centro Medico Santa Cruz</h1>
+        </div>
+        <div style="background:#ffff00;padding:2px 0;border-top:2px solid #475569;border-bottom:2px solid #475569;text-align:center;margin-bottom:2px">
+           <h2 style="font-size:12px;font-weight:700;color:#000;margin:0">Bitacora de Temperaturas</h2>
+        </div>
+        <div style="text-align:center;font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:4px">
+           <span>MES: ${mesLabel.toUpperCase()}</span> &nbsp;&nbsp;&nbsp; <span>SUC. ${sucLabel.toUpperCase()}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="width:130px">Fecha</th>
+              <th colspan="3">8:00 a.m.</th>
+              <th colspan="3">4:00 p.m.</th>
+              <th colspan="3">10:00 p.m.</th>
+            </tr>
+            <tr>
+              <th>T° Ext.</th><th>Hum %</th><th>T° Ref.</th>
+              <th>T° Ext.</th><th>Hum %</th><th>T° Ref.</th>
+              <th>T° Ext.</th><th>Hum %</th><th>T° Ref.</th>
+            </tr>
+          </thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>
+        <p style="margin-top:8px;font-size:8px;color:#94a3b8;text-align:right">Impreso: ${new Date().toLocaleString('es-MX')} — Suc. ${sucLabel}</p>
+        <div style="text-align:center;margin-top:8px"><button onclick="window.print()" style="background:#1e293b;color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:11px;cursor:pointer">Imprimir</button></div>
+        </body></html>`;
+
+      const w = window.open('', '_blank', 'width=1100,height=800');
+      if (w) { w.document.write(html); w.document.close(); }
+    } catch (e) {
+      console.error('Error imprimiendo temperaturas:', e);
+      showToast('Error al cargar datos para impresion.', 'error');
+    }
+    setPrintTempLoading(false);
+  };
+
+  const handlePrintCloro = async () => {
+    setPrintCloroLoading(true);
+    try {
+      const [year, month] = printCloroMonth.split('-');
+      const firstDay = `${year}-${month}-01`;
+      const lastDayDate = new Date(Number(year), Number(month), 0);
+      const lastDay = lastDayDate.toLocaleDateString('en-CA');
+      const totalDias = lastDayDate.getDate();
+
+      const q = query(
+        collection(db, 'bitacoras_operativas'),
+        where('fechaString', '>=', firstDay),
+        where('fechaString', '<=', lastDay),
+        where('tipo', '==', 'Cloro y PH'),
+        where('sucursal', '==', sucursalActiva || sucursal || '')
+      );
+      const snap = await getDocs(q);
+      const registros = snap.docs.map(d => d.data());
+
+      const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+      const mesLabel = `${MESES[Number(month) - 1]} ${year}`;
+      const sucLabel = sucursalActiva || sucursal || '';
+
+      const rows = [];
+      for (let dia = 1; dia <= totalDias; dia++) {
+        const fStr = `${year}-${String(month).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+        const reg = registros.find(r => r.fechaString === fStr);
+        const det = reg?.detalles || {};
+        const val = (v) => (v !== undefined && v !== null && v !== '' ? v : '');
+        rows.push(`
+          <tr style="background:#f2f2f2">
+            <td class="fecha">${dia} ${mesLabel}</td>
+            <td>${val(det.ph_1)}</td><td>${val(det.cloro_1)}</td>
+            <td>${val(det.ph_2)}</td><td>${val(det.cloro_2)}</td>
+            <td>${reg?.responsableNombre || ''}</td>
+          </tr>
+        `);
+      }
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Cloro y PH ${mesLabel}</title>
+        <style>
+          body{font-family:system-ui,sans-serif;padding:4px;color:#1e293b}
+          @media print{body{margin:3mm}@page{size:landscape;margin:5mm}}
+          table{width:100%;border-collapse:collapse;border:2px solid #666}
+          th{border:1px solid #888;background:#d9d9d9;font-weight:bold;font-size:8px;text-transform:uppercase;text-align:center;padding:2px}
+          td{border:1px solid #888;font-size:8px;text-align:center;padding:2px;height:16px}
+          td.fecha{text-align:left;font-weight:500;padding-left:4px}
+          @media print{button{display:none!important}}
+        </style></head><body>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+           <img src="${logoImg}" style="height:40px" alt="Logo"/>
+           <h1 style="font-size:20px;font-weight:700;color:#1e293b;text-align:center;flex:1;padding-right:40px;margin:0">Centro Medico Santa Cruz</h1>
+        </div>
+        <div style="background:#ffff00;padding:2px 0;border-top:2px solid #475569;border-bottom:2px solid #475569;text-align:center;margin-bottom:2px">
+           <h2 style="font-size:12px;font-weight:700;color:#000;margin:0">Bitacora de Cloro y PH — Estaciones de Lavado de Manos</h2>
+        </div>
+        <div style="text-align:center;font-size:9px;font-weight:700;text-transform:uppercase;margin-bottom:4px">
+           <span>MES: ${mesLabel.toUpperCase()}</span> &nbsp;&nbsp;&nbsp; <span>SUC. ${sucLabel.toUpperCase()}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="width:130px">Fecha</th>
+              <th colspan="2">Lavado de Manos 1</th>
+              <th colspan="2">Lavado de Manos 2</th>
+              <th rowspan="2" style="width:130px">Realizo</th>
+            </tr>
+            <tr>
+              <th>PH</th><th>Cloro</th>
+              <th>PH</th><th>Cloro</th>
+            </tr>
+          </thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>
+        <p style="margin-top:8px;font-size:8px;color:#94a3b8;text-align:right">Impreso: ${new Date().toLocaleString('es-MX')} — Suc. ${sucLabel}</p>
+        <div style="text-align:center;margin-top:8px"><button onclick="window.print()" style="background:#1e293b;color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:11px;cursor:pointer">Imprimir</button></div>
+        </body></html>`;
+
+      const w = window.open('', '_blank', 'width=1100,height=800');
+      if (w) { w.document.write(html); w.document.close(); }
+    } catch (e) {
+      console.error('Error imprimiendo cloro:', e);
+      showToast('Error al cargar datos para impresion.', 'error');
+    }
+    setPrintCloroLoading(false);
+  };
+
   // ─── Progreso count ───
   const progresoItems = [
     { label: 'Temp. 8 AM', done: progresoHoy.temp_8 },
@@ -440,6 +662,12 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const progresoTotal = progresoItems.filter(i => i.done).length;
 
   const activeTab = REGISTRO_TABS.find(t => t.id === tipoRegistro);
+
+  const turnoTempBloqueado = tipoRegistro === 'temperatura' && (
+    (formTemp.turno === '8:00 a.m.' && progresoHoy.temp_8) ||
+    (formTemp.turno === '4:00 p.m.' && progresoHoy.temp_16) ||
+    (formTemp.turno === '10:00 p.m.' && progresoHoy.temp_22)
+  );
   const rootClass = standalone
     ? "min-h-screen bg-slate-50 flex flex-col text-slate-700"
     : "fixed inset-0 z-[500] flex items-stretch text-slate-700";
@@ -582,13 +810,17 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
               <div className="flex items-center gap-1">
-                <MapPin size={12} className="sm:w-3.5 sm:h-3.5 text-blue-500 hidden sm:block"/>
+                <MapPin size={12} className={`sm:w-3.5 sm:h-3.5 ${sucursalActiva ? 'text-blue-500' : 'text-amber-500 animate-pulse'} hidden sm:block`}/>
                 <select
                   value={sucursalActiva}
                   onChange={(e) => setSucursalActiva(e.target.value)}
-                  className="px-2 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-[10px] sm:text-[11px] font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all max-w-[110px] sm:max-w-[160px]"
+                  className={`px-2 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold outline-none focus:ring-2 transition-all max-w-[110px] sm:max-w-[160px] ${
+                    sucursalActiva
+                      ? 'bg-blue-50 border border-blue-200 text-blue-700 focus:ring-blue-100'
+                      : 'bg-amber-50 border-2 border-amber-400 text-amber-700 focus:ring-amber-100'
+                  }`}
                 >
-                  {catalogoSucursales.length === 0 && <option value={sucursalActiva}>{sucursalActiva || 'Sin sucursal'}</option>}
+                  <option value="">Seleccione...</option>
                   {catalogoSucursales.map(s => (
                     <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
                   ))}
@@ -605,6 +837,13 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
               </button>
             </div>
           </header>
+
+          {!sucursalActiva && catalogoSucursales.length > 0 && (
+            <div className="shrink-0 bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2 flex items-center gap-2">
+              <AlertCircle size={14} className="text-amber-500 shrink-0"/>
+              <p className="text-[11px] sm:text-[12px] font-semibold text-amber-700">Seleccione la sucursal donde se registrara la bitacora.</p>
+            </div>
+          )}
 
           {/* ─── SCROLLABLE CONTENT ─── */}
           <div className={contentWrapClass}>
@@ -863,25 +1102,93 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
             {/* ════ TEMPERATURA ════ */}
             {tipoRegistro === 'temperatura' && (
               <div className="flex flex-col gap-5 flex-1 max-w-3xl w-full mx-auto">
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                  <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Turno de Medición</p>
-                  <div className="flex gap-3 mb-6">
-                    {['8:00 a.m.', '4:00 p.m.', '10:00 p.m.'].map(t => (
-                      <button key={t} onClick={() => setFormTemp({ ...formTemp, turno: t })}
-                        className={`flex-1 py-3 rounded-xl text-[14px] font-bold transition-all ${
-                          formTemp.turno === t ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-white'
-                        }`}>{t}</button>
-                    ))}
+                {/* ─── Bloqueo de turnos ya registrados ─── */}
+                {(() => {
+                  const turnosBloqueados = {
+                    '8:00 a.m.': progresoHoy.temp_8,
+                    '4:00 p.m.': progresoHoy.temp_16,
+                    '10:00 p.m.': progresoHoy.temp_22
+                  };
+                  const turnoActualBloqueado = turnosBloqueados[formTemp.turno];
+
+                  return (
+                    <>
+                      <div className="bg-white rounded-xl border border-slate-200 p-6">
+                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Turno de Medición</p>
+                        <div className="flex gap-3 mb-6">
+                          {['8:00 a.m.', '4:00 p.m.', '10:00 p.m.'].map(t => {
+                            const bloqueado = turnosBloqueados[t];
+                            const activo = formTemp.turno === t;
+                            return (
+                              <button key={t}
+                                onClick={() => { if (!bloqueado) setFormTemp({ ...formTemp, turno: t }); }}
+                                disabled={bloqueado}
+                                className={`flex-1 py-3 rounded-xl text-[14px] font-bold transition-all ${
+                                  bloqueado
+                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 cursor-not-allowed opacity-80'
+                                    : activo
+                                      ? 'bg-blue-600 text-white shadow-sm'
+                                      : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-white'
+                                }`}
+                              >
+                                {bloqueado ? `${t} ✓` : t}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {turnoActualBloqueado ? (
+                          <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
+                            <CheckCircle2 size={20} className="text-emerald-500 shrink-0"/>
+                            <div>
+                              <p className="text-[14px] font-bold text-emerald-700">Turno {formTemp.turno} ya registrado</p>
+                              <p className="text-[11px] text-emerald-600 mt-0.5">El registro de este turno ya fue capturado para la sucursal {sucursalActiva || sucursal}. Seleccione otro turno pendiente.</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                              <div><label className={labelBase}>T° Exterior</label><input type="number" step="0.1" placeholder="°C exterior" className={inputBase} value={formTemp.t_ext} onChange={e => setFormTemp({ ...formTemp, t_ext: e.target.value })}/></div>
+                              <div><label className={labelBase}>Humedad %</label><input type="number" placeholder="% humedad" className={inputBase} value={formTemp.humedad} onChange={e => setFormTemp({ ...formTemp, humedad: e.target.value })}/></div>
+                              <div><label className={labelBase}>T° Refrigerador</label><input type="number" step="0.1" placeholder="°C refrigerador" className={`${inputBase} border-blue-300 bg-blue-50/40 focus:border-blue-400`} value={formTemp.t_ref} onChange={e => setFormTemp({ ...formTemp, t_ref: e.target.value })}/></div>
+                            </div>
+                            <div className="flex gap-3 items-center bg-amber-50 border border-amber-200/80 rounded-xl px-5 py-3.5 mt-5">
+                              <AlertCircle size={16} className="text-amber-500 shrink-0"/>
+                              <p className="text-[14px] text-amber-800 font-medium">Refrigerador normativo: <strong>2°C – 8°C</strong>. Reporte desviaciones a jefatura.</p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {/* ─── Impresion de temperaturas ─── */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                    <Printer size={16} className="text-slate-500"/>
+                    <h4 className="text-[13px] font-bold text-slate-700">Imprimir Bitacora del Mes</h4>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-                    <div><label className={labelBase}>T° Exterior</label><input type="number" step="0.1" placeholder="°C exterior" className={inputBase} value={formTemp.t_ext} onChange={e => setFormTemp({ ...formTemp, t_ext: e.target.value })}/></div>
-                    <div><label className={labelBase}>Humedad %</label><input type="number" placeholder="% humedad" className={inputBase} value={formTemp.humedad} onChange={e => setFormTemp({ ...formTemp, humedad: e.target.value })}/></div>
-                    <div><label className={labelBase}>T° Refrigerador</label><input type="number" step="0.1" placeholder="°C refrigerador" className={`${inputBase} border-blue-300 bg-blue-50/40 focus:border-blue-400`} value={formTemp.t_ref} onChange={e => setFormTemp({ ...formTemp, t_ref: e.target.value })}/></div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative">
+                      <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                      <input
+                        type="month"
+                        value={printTempMonth}
+                        onChange={e => setPrintTempMonth(e.target.value)}
+                        className="pl-8 pr-2 py-2 bg-white border border-slate-200 rounded-lg text-[12px] font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50 transition-all"
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium">Sucursal: <strong className="text-slate-600">{sucursalActiva || sucursal || 'N/A'}</strong></span>
+                    <button
+                      onClick={handlePrintTemperaturas}
+                      disabled={printTempLoading}
+                      className="ml-auto flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-[12px] font-bold hover:bg-black disabled:opacity-50 transition-all active:scale-[0.97]"
+                    >
+                      {printTempLoading ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>}
+                      {printTempLoading ? 'Cargando...' : 'Imprimir'}
+                    </button>
                   </div>
-                </div>
-                <div className="flex gap-3 items-center bg-amber-50 border border-amber-200/80 rounded-xl px-5 py-3.5">
-                  <AlertCircle size={16} className="text-amber-500 shrink-0"/>
-                  <p className="text-[14px] text-amber-800 font-medium">Refrigerador normativo: <strong>2°C – 8°C</strong>. Reporte desviaciones a jefatura.</p>
                 </div>
               </div>
             )}
@@ -904,6 +1211,34 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     </div>
                   </div>
                 ))}
+                
+                {/* ─── Impresión de Cloro y PH ─── */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                    <Printer size={16} className="text-slate-500"/>
+                    <h4 className="text-[13px] font-bold text-slate-700">Imprimir Bitácora del Mes</h4>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative">
+                      <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                      <input
+                        type="month"
+                        value={printCloroMonth}
+                        onChange={e => setPrintCloroMonth(e.target.value)}
+                        className="pl-8 pr-2 py-2 bg-white border border-slate-200 rounded-lg text-[12px] font-bold text-slate-700 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-50 transition-all"
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium">Sucursal: <strong className="text-slate-600">{sucursalActiva || sucursal || 'N/A'}</strong></span>
+                    <button
+                      onClick={handlePrintCloro}
+                      disabled={printCloroLoading}
+                      className="ml-auto flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-[12px] font-bold hover:bg-black disabled:opacity-50 transition-all active:scale-[0.97]"
+                    >
+                      {printCloroLoading ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>}
+                      {printCloroLoading ? 'Cargando...' : 'Imprimir'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -949,7 +1284,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
             {/* ════ CARRO ROJO ════ */}
             {tipoRegistro === 'carro_rojo' && (
-              <BitacoraCarroRojo embedded />
+              <BitacoraCarroRojoEnfermeria embedded sucursal={sucursalActiva} />
             )}
 
             {/* ════ BITÁCORA DE PACIENTES ════ */}
@@ -1023,6 +1358,11 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                 </div>
               </div>
               <div className="flex items-center gap-1.5 sm:gap-2">
+                {sucursalActiva && (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-[10px] font-bold text-blue-700">
+                    <MapPin size={11}/> {sucursalActiva}
+                  </span>
+                )}
                 {tipoRegistro === 'pedido_medicamento' && (
                   <button
                     type="button"
@@ -1032,7 +1372,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     Limpiar
                   </button>
                 )}
-                <button onClick={handleGuardar} disabled={loading}
+                <button onClick={handleGuardar} disabled={loading || turnoTempBloqueado || !sucursalActiva}
                   className="bg-slate-900 hover:bg-black text-white px-4 sm:px-7 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm disabled:opacity-50 transition-all active:scale-[0.97]">
                   {loading ? <Loader2 size={14} className="animate-spin"/> : <Save size={14} className="sm:w-4 sm:h-4"/>}
                   {loading ? 'Guardando...' : 'Guardar'}

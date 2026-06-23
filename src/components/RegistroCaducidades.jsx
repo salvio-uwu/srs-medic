@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Save, Loader2, Plus, Trash2, AlertCircle, ShieldAlert,
-  CheckCircle2, Calendar, Printer, Search, X, Package
+  Save, Loader2, Plus, Trash2, AlertCircle,
+  CheckCircle2, Calendar, Printer, X, Package, Pencil, CalendarX
 } from 'lucide-react';
 import { db } from '../config/firebase';
 import {
   collection, addDoc, serverTimestamp, query, where,
-  onSnapshot, deleteDoc, doc
+  onSnapshot, updateDoc, doc
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,6 +32,9 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ codigo: '', medicamento: '', cantidad: '', lote: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const sucursalActiva = sucursal || user?.sucursal || '';
 
@@ -63,7 +66,7 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
       where('mesCaducidad', '==', mesActivo)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.eliminado);
       docs.sort((a, b) => (a.medicamento || '').localeCompare(b.medicamento || ''));
       setRegistros(docs);
     }, (err) => {
@@ -103,15 +106,63 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     setLoading(false);
   };
 
-  // ─── Eliminar ───
+  // ─── Eliminar (soft delete para auditoría) ───
   const handleEliminar = async (id) => {
     try {
-      await deleteDoc(doc(db, 'caducidades_almacen', id));
+      await updateDoc(doc(db, 'caducidades_almacen', id), {
+        eliminado: true,
+        eliminadoPor: user?.nombre || 'Sin nombre',
+        eliminadoPorId: user?.uid || '',
+        eliminadoPorRol: user?.rol || '',
+        eliminadoEn: serverTimestamp()
+      });
       showToast('Registro eliminado.');
       setConfirmDelete(null);
     } catch {
       showToast('Error al eliminar.', 'error');
     }
+  };
+
+  // ─── Editar ───
+  const startEdit = (reg) => {
+    setEditId(reg.id);
+    setEditForm({
+      codigo: reg.codigo || '',
+      medicamento: reg.medicamento || '',
+      cantidad: String(reg.cantidad || ''),
+      lote: reg.lote || ''
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditForm({ codigo: '', medicamento: '', cantidad: '', lote: '' });
+  };
+
+  const handleUpdate = async () => {
+    if (!editForm.codigo.trim()) return showToast('Ingrese el código del medicamento.', 'error');
+    if (!editForm.medicamento.trim()) return showToast('Ingrese el nombre del medicamento.', 'error');
+    if (!editForm.cantidad || Number(editForm.cantidad) <= 0) return showToast('Ingrese una cantidad válida.', 'error');
+    if (!editForm.lote.trim()) return showToast('Ingrese el número de lote.', 'error');
+
+    setSavingEdit(true);
+    try {
+      await updateDoc(doc(db, 'caducidades_almacen', editId), {
+        codigo: editForm.codigo.trim(),
+        medicamento: editForm.medicamento.trim().toUpperCase(),
+        cantidad: Number(editForm.cantidad),
+        lote: editForm.lote.trim().toUpperCase(),
+        actualizadoEn: serverTimestamp(),
+        actualizadoPor: user?.nombre || 'Sin nombre',
+        actualizadoPorId: user?.uid || '',
+        actualizadoPorRol: user?.rol || ''
+      });
+      showToast('Registro actualizado correctamente.');
+      cancelEdit();
+    } catch {
+      showToast('Error al actualizar el registro.', 'error');
+    }
+    setSavingEdit(false);
   };
 
   // ─── Imprimir ───
@@ -164,7 +215,7 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-500 rounded-xl flex items-center justify-center shadow-sm">
-            <ShieldAlert size={18} className="text-white"/>
+            <CalendarX size={18} className="text-white"/>
           </div>
           <div>
             <h3 className="text-[15px] font-bold text-slate-800">Caducidades de Almacén</h3>
@@ -290,35 +341,111 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {registros.map((reg, idx) => (
-                    <tr key={reg.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-blue-50/30 transition-colors`}>
-                      <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-800 text-[12px]">{reg.codigo}</td>
-                      <td className="px-4 py-2.5 border-b border-slate-50 text-[12px] text-slate-700">{reg.medicamento}</td>
-                      <td className="px-4 py-2.5 border-b border-slate-50 text-center">
-                        <span className="inline-flex items-center px-2.5 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-md text-[11px] font-bold">
-                          {reg.cantidad}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-600 text-[12px]">{reg.lote}</td>
-                      <td className="px-3 py-2.5 border-b border-slate-50 text-center">
-                        {confirmDelete === reg.id ? (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => handleEliminar(reg.id)} className="p-1 rounded bg-red-100 text-red-600 hover:bg-red-200 transition-colors"><CheckCircle2 size={12}/></button>
-                            <button onClick={() => setConfirmDelete(null)} className="p-1 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"><X size={12}/></button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setConfirmDelete(reg.id)} className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={12}/></button>
-                        )}
-                      </td>
+                  {registros.map((reg, idx) => {
+                    const isEditing = editId === reg.id;
+                    const inputClass = "w-full px-2 py-1 text-[11px] border border-slate-200 rounded-md font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-50 bg-white transition-all";
+
+                    return (
+                    <tr key={reg.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} ${isEditing ? 'bg-blue-50/30' : 'hover:bg-blue-50/30'} transition-colors`}>
+                      {isEditing ? (
+                        <>
+                          <td className="px-2 py-1.5 border-b border-slate-50">
+                            <input className={inputClass} value={editForm.codigo} onChange={e => setEditForm(prev => ({ ...prev, codigo: e.target.value }))} />
+                          </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50">
+                            <input className={inputClass} value={editForm.medicamento} onChange={e => setEditForm(prev => ({ ...prev, medicamento: e.target.value }))} />
+                          </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50 text-center">
+                            <input type="number" min="1" className={`${inputClass} text-center w-20`} value={editForm.cantidad} onChange={e => setEditForm(prev => ({ ...prev, cantidad: e.target.value }))} />
+                          </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50">
+                            <input className={inputClass} value={editForm.lote} onChange={e => setEditForm(prev => ({ ...prev, lote: e.target.value }))} />
+                          </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50 text-center">
+                            <div className="flex items-center gap-1">
+                              <button onClick={handleUpdate} disabled={savingEdit} className="p-1 rounded bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors" title="Guardar">
+                                {savingEdit ? <Loader2 size={12} className="animate-spin"/> : <CheckCircle2 size={12}/>}
+                              </button>
+                              <button onClick={cancelEdit} className="p-1 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" title="Cancelar">
+                                <X size={12}/>
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-800 text-[12px]">{reg.codigo}</td>
+                          <td className="px-4 py-2.5 border-b border-slate-50 text-[12px] text-slate-700">{reg.medicamento}</td>
+                          <td className="px-4 py-2.5 border-b border-slate-50 text-center">
+                            <span className="inline-flex items-center px-2.5 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-md text-[11px] font-bold">
+                              {reg.cantidad}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-600 text-[12px]">{reg.lote}</td>
+                          <td className="px-3 py-2.5 border-b border-slate-50 text-center">
+                            <div className="flex items-center gap-0.5">
+                              <button onClick={() => startEdit(reg)} className="p-1 rounded text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors" title="Editar">
+                                <Pencil size={12}/>
+                              </button>
+                              {confirmDelete === reg.id ? (
+                                <>
+                                  <button onClick={() => handleEliminar(reg.id)} className="p-1 rounded bg-red-100 text-red-600 hover:bg-red-200 transition-colors"><CheckCircle2 size={12}/></button>
+                                  <button onClick={() => setConfirmDelete(null)} className="p-1 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"><X size={12}/></button>
+                                </>
+                              ) : (
+                                <button onClick={() => setConfirmDelete(reg.id)} className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={12}/></button>
+                              )}
+                            </div>
+                          </td>
+                        </>
+                      )}
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
 
             {/* Mobile Cards */}
             <div className="md:hidden flex flex-col gap-1.5 p-2.5">
-              {registros.map((reg) => (
+              {registros.map((reg) => {
+                const isEditing = editId === reg.id;
+                const mobileInputClass = "w-full px-2 py-1.5 text-[11px] border border-slate-200 rounded-md font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-50 bg-white transition-all";
+
+                if (isEditing) {
+                  return (
+                    <div key={reg.id} className="bg-blue-50/50 rounded-lg border border-blue-200 p-3">
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Código</label>
+                          <input className={mobileInputClass} value={editForm.codigo} onChange={e => setEditForm(prev => ({ ...prev, codigo: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Lote</label>
+                          <input className={mobileInputClass} value={editForm.lote} onChange={e => setEditForm(prev => ({ ...prev, lote: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div className="mb-2">
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Medicamento</label>
+                        <input className={mobileInputClass} value={editForm.medicamento} onChange={e => setEditForm(prev => ({ ...prev, medicamento: e.target.value }))} />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Cantidad</label>
+                          <input type="number" min="1" className={`${mobileInputClass} text-center`} value={editForm.cantidad} onChange={e => setEditForm(prev => ({ ...prev, cantidad: e.target.value }))} />
+                        </div>
+                        <button onClick={handleUpdate} disabled={savingEdit} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                          {savingEdit ? <Loader2 size={12} className="animate-spin"/> : <Save size={12}/>}
+                          Guardar
+                        </button>
+                        <button onClick={cancelEdit} className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-[11px] font-bold hover:bg-slate-50 transition-colors">
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
                 <div key={reg.id} className="bg-white rounded-lg border border-slate-100 p-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-bold text-slate-800 truncate">{reg.medicamento}</p>
@@ -328,6 +455,9 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                     </div>
                   </div>
                   <span className="px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded text-[11px] font-bold">{reg.cantidad}</span>
+                  <button onClick={() => startEdit(reg)} className="p-1 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors" title="Editar">
+                    <Pencil size={12}/>
+                  </button>
                   {confirmDelete === reg.id ? (
                     <div className="flex items-center gap-1">
                       <button onClick={() => handleEliminar(reg.id)} className="p-1 rounded bg-red-100 text-red-600"><CheckCircle2 size={12}/></button>
@@ -337,7 +467,7 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                     <button onClick={() => setConfirmDelete(reg.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 size={12}/></button>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
           </>
         )}

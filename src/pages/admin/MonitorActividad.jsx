@@ -17,6 +17,7 @@ import {
 import { pdf } from '@react-pdf/renderer';
 import { useMonitorData, fmtMinutes, timeAgo } from '../../hooks/useMonitorData';
 import InformeMonitorPDF from '../../components/pdf/InformeMonitorPDF';
+import useIsMobile from '../../hooks/useIsMobile';
 
 // ─── Constantes de color ──────────────────────────────────────────────────────
 
@@ -137,11 +138,11 @@ const sortData = (arr, key, dir) => {
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 const STATUS_MAP = {
-  en_consulta: { label: 'En consulta', dot: 'bg-blue-500',    txt: 'text-blue-700'   },
-  ocupado:     { label: 'Ocupado',     dot: 'bg-amber-500',   txt: 'text-amber-700'  },
-  comida:      { label: 'Comida',      dot: 'bg-orange-400',  txt: 'text-orange-700' },
-  activo:      { label: 'Activo',      dot: 'bg-emerald-500', txt: 'text-emerald-700'},
-  offline:     { label: 'Offline',     dot: 'bg-slate-300',   txt: 'text-slate-400'  },
+  en_consulta: { label: 'En consulta', dot: '#3b82f6',    dotColor: 'bg-blue-500',    txtHex: '#1d4ed8'   },
+  ocupado:     { label: 'Ocupado',     dot: '#f59e0b',   dotColor: 'bg-amber-500',   txtHex: '#b45309'  },
+  comida:      { label: 'Comida',      dot: '#fb923c',  dotColor: 'bg-orange-400',  txtHex: '#c2410c' },
+  activo:      { label: 'Activo',      dot: '#10b981', dotColor: 'bg-emerald-500', txtHex: '#047857'},
+  offline:     { label: 'Offline',     dot: '#cbd5e1',   dotColor: 'bg-slate-300',   txtHex: '#9ca3af'  },
 };
 const getStatus = (s, online) => !online ? STATUS_MAP.offline : (STATUS_MAP[s] || STATUS_MAP.activo);
 
@@ -152,11 +153,15 @@ function SortTH({ label, sortKey, sort, onSort, className = '' }) {
   return (
     <th
       onClick={() => onSort(sortKey)}
-      className={`px-3 py-2 text-[10px] font-bold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap border-b border-slate-100 transition-colors ${className} ${
-        active ? 'text-blue-600 bg-blue-50/50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50/70'
-      }`}
+      style={{
+        padding: '8px 12px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em',
+        cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+        borderBottom: '1px solid #f3f4f6',
+        color: active ? '#2563eb' : '#9ca3af',
+        background: active ? '#eff6ff' : 'transparent',
+      }}
     >
-      <span className="inline-flex items-center gap-0.5">
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
         {label}
         {active ? sort.dir === 'asc' ? <ChevronUp size={9}/> : <ChevronDown size={9}/> : null}
       </span>
@@ -165,84 +170,92 @@ function SortTH({ label, sortKey, sort, onSort, className = '' }) {
 }
 
 function MiniBar({ value }) {
-  if (value == null) return <span className="text-slate-300 text-xs tabular-nums">—</span>;
+  if (value == null) return <span style={{ color: '#d1d5db', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>—</span>;
   const pct = Math.min(100, value);
-  const bar = pct >= 75 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-400' : 'bg-rose-500';
-  const txt = pct >= 75 ? 'text-emerald-700' : pct >= 50 ? 'text-amber-700' : 'text-rose-600';
+  const barColor = pct >= 75 ? '#10b981' : pct >= 50 ? '#fbbf24' : '#f43f5e';
+  const txtColor = pct >= 75 ? '#047857' : pct >= 50 ? '#b45309' : '#e11d48';
   return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-12 h-1 bg-slate-100 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ width: 48, height: 4, background: '#f3f4f6', borderRadius: 9999, overflow: 'hidden' }}>
+        <div style={{ height: '100%', borderRadius: 9999, background: barColor, width: `${pct}%` }} />
       </div>
-      <span className={`text-[11px] font-bold tabular-nums ${txt}`}>{value}%</span>
+      <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: txtColor }}>{value}%</span>
     </div>
   );
 }
 
 function ScoreCell({ score }) {
-  const cls = score >= 80
-    ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
-    : score >= 40 ? 'text-blue-700 bg-blue-50 border-blue-200'
-    : score >= 15 ? 'text-amber-700 bg-amber-50 border-amber-200'
-    : 'text-rose-700 bg-rose-50 border-rose-200';
-  return <span className={`inline-flex px-1.5 py-0.5 rounded border text-xs font-bold tabular-nums ${cls}`}>{score}</span>;
+  const style = score >= 80
+    ? { color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0' }
+    : score >= 40 ? { color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe' }
+    : score >= 15 ? { color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a' }
+    : { color: '#be123c', background: '#fff1f2', border: '1px solid #fecdd3' };
+  return <span style={{ display: 'inline-flex', padding: '2px 6px', borderRadius: 4, fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums', ...style }}>{score}</span>;
 }
 
 function EmptyRow({ cols, msg = 'Sin datos.' }) {
   return (
-    <tr><td colSpan={cols} className="py-12 text-center">
-      <AlertCircle size={18} className="mx-auto mb-1.5 text-slate-200" />
-      <p className="text-xs text-slate-400">{msg}</p>
+    <tr><td colSpan={cols} style={{ padding: '48px 0', textAlign: 'center' }}>
+      <AlertCircle size={18} style={{ margin: '0 auto 6px', color: '#e5e7eb', display: 'block' }} />
+      <p style={{ fontSize: 12, color: '#9ca3af', margin: 0 }}>{msg}</p>
     </td></tr>
   );
 }
 
 function StatusCell({ statusOperativo, online }) {
-  const { label, dot, txt } = getStatus(statusOperativo, online);
+  const { label, dot, txtHex } = getStatus(statusOperativo, online);
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${txt}`}>
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot} ${online ? 'animate-pulse' : ''}`} />
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 500, color: txtHex }}>
+      <span style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0, background: dot, animation: online ? 'pulse 2s infinite' : 'none' }} />
       {label}
     </span>
   );
 }
 
 function AvatarCell({ name, sub, color = 'bg-blue-50 text-blue-700' }) {
+  const bgColor = color.includes('blue') ? '#dbeafe' : color.includes('rose') ? '#ffe4e6' : '#f3f4f6';
+  const txtColor = color.includes('blue') ? '#1d4ed8' : color.includes('rose') ? '#be123c' : '#4b5563';
   return (
-    <div className="flex items-center gap-2.5">
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${color}`}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0, background: bgColor, color: txtColor }}>
         {INITIALS(name)}
       </div>
       <div>
-        <p className="text-[13px] font-semibold text-slate-800 leading-tight">{name}</p>
-        {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
+        <p style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', lineHeight: 1.3, margin: 0 }}>{name}</p>
+        {sub && <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{sub}</p>}
       </div>
     </div>
   );
 }
 
 function N({ v, color = 'text-slate-700' }) {
-  if (v == null || v === '') return <span className="text-slate-200 text-xs">—</span>;
-  return <span className={`text-sm font-bold tabular-nums ${color}`}>{v}</span>;
+  const hexMap = {
+    'text-slate-700': '#334155', 'text-slate-600': '#475569', 'text-slate-400': '#9ca3af',
+    'text-emerald-700': '#047857', 'text-rose-600': '#e11d48', 'text-blue-700': '#1d4ed8',
+    'text-amber-700': '#b45309',
+  };
+  const hex = hexMap[color] || '#334155';
+  if (v == null || v === '') return <span style={{ color: '#e5e7eb', fontSize: 12 }}>—</span>;
+  return <span style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: hex }}>{v}</span>;
 }
 
 function FilterBar({ search, onSearch, placeholder, sucursal, onSucursal, sucursales, extra, count, label, onExport }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 mb-3">
-      <div className="relative">
-        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div style={{ position: 'relative' }}>
+        <Search size={12} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
         <input value={search} onChange={e => onSearch(e.target.value)} placeholder={placeholder}
-          className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white w-48 focus:outline-none focus:ring-1 focus:ring-blue-300" />
+          style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 6, paddingBottom: 6, fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', width: 192, outline: 'none', color: '#111' }} />
       </div>
       <select value={sucursal} onChange={e => onSucursal(e.target.value)}
-        className="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none">
+        style={{ padding: '6px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', outline: 'none', color: '#111' }}>
         <option value="todas">Todas las sucursales</option>
         {sucursales.map(s => <option key={s} value={s}>{s}</option>)}
       </select>
       {extra}
-      <span className="text-[11px] text-slate-400">{count} {label}</span>
+      <span style={{ fontSize: 11, color: '#9ca3af' }}>{count} {label}</span>
       <button onClick={onExport}
-        className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition-colors">
+        style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, color: '#4b5563', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>
         <Download size={11} /> Exportar CSV
       </button>
     </div>
@@ -253,11 +266,15 @@ function FilterBar({ search, onSearch, placeholder, sucursal, onSucursal, sucurs
 
 function ChartCard({ title, sub, children, className = '' }) {
   return (
-    <div className={`bg-white border border-slate-200 rounded-xl p-4 ${className}`}>
-      <p className="text-[13px] font-semibold text-slate-800 leading-tight">{title}</p>
-      {sub && <p className="text-[11px] text-slate-400 mt-0.5 mb-3">{sub}</p>}
-      {!sub && <div className="mb-3" />}
-      {children}
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 13, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {title}
+      </div>
+      <div style={{ padding: '16px 20px' }}>
+        {sub && <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 12px 0' }}>{sub}</p>}
+        {!sub && <div style={{ marginBottom: 8 }} />}
+        {children}
+      </div>
     </div>
   );
 }
@@ -369,99 +386,99 @@ function DoctorDetailPanel({ doctor, citas, onClose }) {
   [citas]);
 
   const metricItems = [
-    { label: 'Asignadas',    v: doctor.asignadas,    color: 'text-slate-700'   },
-    { label: 'Realizadas',   v: doctor.realizadas,   color: 'text-emerald-700' },
-    { label: 'En consulta',  v: doctor.enConsulta,   color: 'text-blue-700'    },
-    { label: 'Canceladas',   v: doctor.canceladas,   color: 'text-rose-600'    },
+    { label: 'Asignadas',    v: doctor.asignadas,    color: '#334155'   },
+    { label: 'Realizadas',   v: doctor.realizadas,   color: '#047857' },
+    { label: 'En consulta',  v: doctor.enConsulta,   color: '#1d4ed8'    },
+    { label: 'Canceladas',   v: doctor.canceladas,   color: '#e11d48'    },
     {
       label: 'Cumplimiento',
       v: doctor.tasaCumplimiento != null ? `${doctor.tasaCumplimiento}%` : '—',
-      color: doctor.tasaCumplimiento >= 75 ? 'text-emerald-700'
-           : doctor.tasaCumplimiento >= 50 ? 'text-amber-600'
-           : 'text-rose-600',
+      color: doctor.tasaCumplimiento >= 75 ? '#047857'
+           : doctor.tasaCumplimiento >= 50 ? '#d97706'
+           : '#e11d48',
     },
-    { label: 'Ingresos',  v: fmt$(doctor.ingresos),          color: 'text-violet-700' },
-    { label: 'At./hora',  v: doctor.atencionesPorHora ?? '—', color: 'text-slate-600'  },
-    { label: 'Score',     v: doctor.score,                    color: 'text-blue-700'   },
+    { label: 'Ingresos',  v: fmt$(doctor.ingresos),          color: '#6d28d9' },
+    { label: 'At./hora',  v: doctor.atencionesPorHora ?? '—', color: '#475569'  },
+    { label: 'Score',     v: doctor.score,                    color: '#1d4ed8'   },
   ];
 
   return (
-    <div className="bg-white border-2 border-blue-100 rounded-xl overflow-hidden shadow-sm">
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-blue-50/40 border-b border-blue-100">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[11px] font-bold shrink-0">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#dbeafe', color: '#1d4ed8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
             {INITIALS(doctor.nombre)}
           </div>
           <div>
-            <p className="font-bold text-slate-900 text-[15px] leading-tight">{doctor.nombre}</p>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p style={{ fontWeight: 700, color: '#111', fontSize: 14, margin: 0, lineHeight: 1.3 }}>{doctor.nombre}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
               <StatusCell statusOperativo={doctor.statusOperativo} online={doctor.online} />
-              {doctor.consultorio !== '—' && <span className="text-[11px] text-slate-400">· {doctor.consultorio}</span>}
-              {doctor.sucursal    !== '—' && <span className="text-[11px] text-slate-400">· {doctor.sucursal}</span>}
+              {doctor.consultorio !== '—' && <span style={{ fontSize: 11, color: '#9ca3af' }}>· {doctor.consultorio}</span>}
+              {doctor.sucursal    !== '—' && <span style={{ fontSize: 11, color: '#9ca3af' }}>· {doctor.sucursal}</span>}
               {doctor.tiempoConectado !== '—' && (
-                <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                  <Clock size={9} className="text-slate-300" />{doctor.tiempoConectado}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9ca3af' }}>
+                  <Clock size={9} style={{ color: '#d1d5db' }} />{doctor.tiempoConectado}
                 </span>
               )}
             </div>
           </div>
         </div>
         <button onClick={onClose}
-          className="p-2 hover:bg-blue-100 rounded-lg transition-colors text-slate-400 hover:text-slate-700">
+          style={{ padding: 8, border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', color: '#6b7280', cursor: 'pointer', display: 'flex' }}>
           <X size={14} />
         </button>
       </div>
 
       {/* Metric strip */}
-      <div className="flex overflow-x-auto divide-x divide-slate-100 border-b border-slate-100">
+      <div style={{ display: 'flex', overflowX: 'auto', borderBottom: '1px solid #e5e7eb' }}>
         {metricItems.map((m, i) => (
-          <div key={i} className="px-3 py-2.5 flex flex-col gap-0.5 shrink-0">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">{m.label}</span>
-            <span className={`text-[14px] font-bold tabular-nums leading-tight ${m.color}`}>{m.v ?? '—'}</span>
+          <div key={i} style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0, borderRight: i < metricItems.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap' }}>{m.label}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2, color: m.color }}>{m.v ?? '—'}</span>
           </div>
         ))}
       </div>
 
       {/* Citas table */}
-      <div className="overflow-x-auto max-h-72 overflow-y-auto">
-        <table className="w-full min-w-[800px] text-left">
-          <thead className="bg-slate-50 sticky top-0 z-10">
-            <tr>
-              {['Hora','Paciente','Tipo','Estado','Consultorio','Ingreso','Pago','Motivo cancelación'].map((h, i) => (
-                <th key={i} className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 whitespace-nowrap">
+      <div style={{ overflowX: 'auto', maxHeight: 288, overflowY: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 800, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#fafafa', position: 'sticky', top: 0, zIndex: 10 }}>
+              {['Hora','Paciente','Tipo','Estado','Consultorio','Ingreso','Pago','Motivo cancelacion'].map((h, i) => (
+                <th key={i} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-50">
-            {sorted.length === 0 && <EmptyRow cols={8} msg="Sin citas para este médico en este día." />}
+          <tbody>
+            {sorted.length === 0 && <EmptyRow cols={8} msg="Sin citas para este medico en este dia." />}
             {sorted.map(c => (
-              <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
-                <td className="px-3 py-2 text-[12px] text-slate-600 tabular-nums font-medium whitespace-nowrap">
+              <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                <td style={{ padding: '8px 12px', fontSize: 12, color: '#4b5563', fontWeight: 600, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                   {c.hora || c.horaInicio || (c.fechaHora ? String(c.fechaHora).slice(11, 16) : '—')}
                 </td>
-                <td className="px-3 py-2 text-[12px] text-slate-800 font-medium max-w-[160px] truncate">
+                <td style={{ padding: '8px 12px', fontSize: 12, color: '#111', fontWeight: 600, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {c.pacienteNombre || c.nombrePaciente || c.paciente || c.nombre || '—'}
                 </td>
-                <td className="px-3 py-2">
+                <td style={{ padding: '8px 12px' }}>
                   <TypeBadge tipo={c.tipoConsulta} esTeleconsulta={c.esTeleconsulta} />
                 </td>
-                <td className="px-3 py-2">
+                <td style={{ padding: '8px 12px' }}>
                   <EstadoBadge estado={c.estado} />
                 </td>
-                <td className="px-3 py-2 text-[11px] text-slate-500 whitespace-nowrap">
+                <td style={{ padding: '8px 12px', fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>
                   {c.consultorioNombre || c.consultorio || '—'}
                 </td>
-                <td className="px-3 py-2 text-[12px] font-semibold text-violet-700 tabular-nums whitespace-nowrap">
-                  {c.ingreso > 0 ? fmt$(c.ingreso) : <span className="text-slate-200 font-normal text-xs">—</span>}
+                <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 700, color: '#6d28d9', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                  {c.ingreso > 0 ? fmt$(c.ingreso) : <span style={{ color: '#e5e7eb', fontWeight: 400, fontSize: 12 }}>—</span>}
                 </td>
-                <td className="px-3 py-2">
+                <td style={{ padding: '8px 12px' }}>
                   <FormaPagoBadge pago={c.formaPago} />
                 </td>
-                <td className="px-3 py-2 text-[11px] text-slate-400 max-w-[180px] truncate">
-                  {c.canceladaMotivo || <span className="text-slate-200">—</span>}
+                <td style={{ padding: '8px 12px', fontSize: 11, color: '#9ca3af', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {c.canceladaMotivo || <span style={{ color: '#e5e7eb' }}>—</span>}
                 </td>
               </tr>
             ))}
@@ -806,44 +823,49 @@ function TabDashboard({ medicos, enfermeria, adminStaff, citas, movimientos, tri
   }, [selectedDate, fSucursal, fMedico, fConsultorio, medicos, kpisExport, medicosFiltMetrics, enfFilt, citasPorSucursal, flujoPorHora]);
 
   return (
-    <div className="space-y-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
       {/* Filtro compacto */}
-      <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
-        <Search size={12} className="text-slate-400 shrink-0" />
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 16px' }}>
+        <Search size={14} style={{ color: '#9ca3af', flexShrink: 0 }} />
         <select value={fMedico} onChange={e => setFMedico(e.target.value)}
-          className="text-xs border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300">
-          <option value="all">Todos los médicos</option>
+          style={{ fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', background: '#fff', color: '#111', outline: 'none' }}>
+          <option value="all">Todos los medicos</option>
           {medicos.map(m => <option key={m.uid} value={m.uid}>{m.nombre}</option>)}
         </select>
         <select value={fSucursal} onChange={e => onFSucursal(e.target.value)}
-          className="text-xs border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300">
+          style={{ fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', background: '#fff', color: '#111', outline: 'none' }}>
           <option value="all">Todas las sucursales</option>
           {sucursalesOpts.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <select value={fConsultorio} onChange={e => setFConsultorio(e.target.value)}
-          className="text-xs border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300">
+          style={{ fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', background: '#fff', color: '#111', outline: 'none' }}>
           <option value="all">Todos los consultorios</option>
           {consultoriosOpts.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         {hasFilter && (
           <button onClick={() => { setFMedico('all'); onFSucursal('all'); setFConsultorio('all'); setDetailUid(null); }}
-            className="flex items-center gap-1 text-[11px] font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition-colors">
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#2563eb', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '6px 12px', cursor: 'pointer' }}>
             <X size={10} /> Limpiar filtros
           </button>
         )}
         {hasFilter && (
-          <span className="text-[10px] text-blue-500 font-medium">
+          <span style={{ fontSize: 11, color: '#2563eb', fontWeight: 600 }}>
             Vista filtrada · {citasFilt.length} citas
           </span>
         )}
         <button
           onClick={handleExportarInforme}
           disabled={exportando}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-colors shadow-sm"
+          style={{
+            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', fontSize: 12, fontWeight: 700, color: '#fff', background: '#111',
+            border: '1px solid #111', borderRadius: 6, cursor: exportando ? 'not-allowed' : 'pointer',
+            opacity: exportando ? 0.5 : 1,
+          }}
         >
           {exportando
-            ? <><div className="w-3 h-3 rounded-full border-2 border-white/40 border-t-white animate-spin" /> Generando...</>
+            ? <><div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', animation: 'spin 1s linear infinite' }} /> Generando...</>
             : <><FileDown size={12} /> Exportar informe</>}
         </button>
       </div>
@@ -1221,7 +1243,7 @@ function TabMedicos({ medicos, citas, sucursales, selectedDate }) {
         sucursal={suc} onSucursal={setSuc} sucursales={sucursales}
         extra={
           <select value={est} onChange={e => setEst(e.target.value)}
-            className="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none">
+            style={{ padding: '6px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', outline: 'none', color: '#111' }}>
             <option value="todos">Todos</option>
             <option value="activos">En turno</option>
             <option value="offline">Offline</option>
@@ -1230,15 +1252,15 @@ function TabMedicos({ medicos, citas, sucursales, selectedDate }) {
         count={filtered.length} label={`médico${filtered.length !== 1 ? 's' : ''}`}
         onExport={() => downloadCSV(filtered, COLS_MEDICOS, `medicos_${selectedDate}.csv`)}
       />
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1380px] text-left">
-            <thead className="bg-slate-50/80">
-              <tr>
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-300 uppercase border-b border-slate-100 w-7">#</th>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 1380, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#d1d5db', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', width: 28 }}>#</th>
                 <SortTH label="Médico"      sortKey="nombre"             sort={sort} onSort={onSort} className="min-w-[180px]" />
                 <SortTH label="Estado"      sortKey="statusOperativo"    sort={sort} onSort={onSort} className="min-w-[110px]" />
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 min-w-[140px]">Ubicación</th>
+                <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', minWidth: 140 }}>Ubicacion</th>
                 <SortTH label="Turno"       sortKey="minutos"            sort={sort} onSort={onSort} className="min-w-[75px]" />
                 <SortTH label="Asig."       sortKey="asignadas"          sort={sort} onSort={onSort} />
                 <SortTH label="Real."       sortKey="realizadas"         sort={sort} onSort={onSort} />
@@ -1349,7 +1371,7 @@ function TabEnfermeria({ enfermeria, sucursales, selectedDate }) {
         sucursal={suc} onSucursal={setSuc} sucursales={sucursales}
         extra={
           <select value={est} onChange={e => setEst(e.target.value)}
-            className="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none">
+            style={{ padding: '6px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', outline: 'none', color: '#111' }}>
             <option value="todos">Todos</option>
             <option value="activos">En turno</option>
             <option value="offline">Offline</option>
@@ -1358,12 +1380,12 @@ function TabEnfermeria({ enfermeria, sucursales, selectedDate }) {
         count={filtered.length} label={`persona${filtered.length !== 1 ? 's' : ''}`}
         onExport={() => downloadCSV(filtered, COLS_ENFERMERIA, `enfermeria_${selectedDate}.csv`)}
       />
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left">
-            <thead className="bg-slate-50/80">
-              <tr>
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-300 uppercase border-b border-slate-100 w-7">#</th>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 960, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#d1d5db', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', width: 28 }}>#</th>
                 <SortTH label="Enfermera/o"  sortKey="nombre"           sort={sort} onSort={onSort} className="min-w-[180px]" />
                 <SortTH label="Estado"       sortKey="statusOperativo"  sort={sort} onSort={onSort} className="min-w-[110px]" />
                 <th className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 min-w-[130px]">Ubicación</th>
@@ -1446,19 +1468,19 @@ function TabAdmin({ adminStaff, sucursales, selectedDate }) {
         count={filtered.length} label={`persona${filtered.length !== 1 ? 's' : ''}`}
         onExport={() => downloadCSV(filtered, COLS_ADMIN, `operaciones_${selectedDate}.csv`)}
       />
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left">
-            <thead className="bg-slate-50/80">
-              <tr>
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-300 uppercase border-b border-slate-100 w-7">#</th>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 700, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                <th style={{ padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#d1d5db', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', width: 28 }}>#</th>
                 <SortTH label="Personal"      sortKey="nombre"          sort={sort} onSort={onSort} className="min-w-[180px]" />
                 <SortTH label="Rol"           sortKey="rol"             sort={sort} onSort={onSort} />
                 <SortTH label="Estado"        sortKey="statusOperativo" sort={sort} onSort={onSort} className="min-w-[110px]" />
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100">Sucursal</th>
+                <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb' }}>Sucursal</th>
                 <SortTH label="Turno"         sortKey="minutos"         sort={sort} onSort={onSort} className="min-w-[75px]" />
                 <SortTH label="Citas creadas" sortKey="citasCreadas"    sort={sort} onSort={onSort} />
-                <th className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 min-w-[130px]">Última actividad</th>
+                <th style={{ textAlign: 'left', padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', minWidth: 130 }}>Ultima actividad</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -1515,26 +1537,26 @@ function TabRotaciones({ movimientos, selectedDate }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-3">
-        <div className="relative">
-          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ position: 'relative' }}>
+          <Search size={12} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar médico o consultorio..."
-            className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white w-56 focus:outline-none focus:ring-1 focus:ring-blue-300" />
+            placeholder="Buscar medico o consultorio..."
+            style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 6, paddingBottom: 6, fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', width: 224, outline: 'none', color: '#111' }} />
         </div>
-        <span className="text-[11px] text-slate-400">{filtered.length} movimiento{filtered.length !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: 11, color: '#9ca3af' }}>{filtered.length} movimiento{filtered.length !== 1 ? 's' : ''}</span>
         <button onClick={() => downloadCSV(filtered, COLS_ROTACIONES, `rotaciones_${selectedDate}.csv`)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition-colors">
+          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, color: '#4b5563', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>
           <Download size={11} /> Exportar CSV
         </button>
       </div>
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1020px] text-left">
-            <thead className="bg-slate-50/80">
-              <tr>
-                {['Hora','Médico','Sucursal anterior','Consultorio antes','','Sucursal nueva','Consultorio nuevo','Realizado por',''].map((h, i) => (
-                  <th key={i} className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 whitespace-nowrap">{h}</th>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 1020, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa' }}>
+                {['Hora','Medico','Sucursal anterior','Consultorio antes','','Sucursal nueva','Consultorio nuevo','Realizado por',''].map((h, i) => (
+                  <th key={i} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1591,6 +1613,7 @@ const MonitorActividad = () => {
     isLive, loading, refreshing,
   } = useMonitorData(selectedDate);
 
+  const isMobile = useIsMobile();
   const isToday = selectedDate === TODAY();
 
   // KPIs filtrados por sucursal para que el strip superior respete el filtro del Dashboard
@@ -1647,121 +1670,141 @@ const MonitorActividad = () => {
   ];
 
   return (
-    <div className="p-4 md:p-6 pb-16 max-w-[1800px] mx-auto space-y-3">
+    <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '20px 16px 40px' : '32px 28px 48px' }}>
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+      {/* ── CABECERA ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, flexWrap: 'wrap', gap: 16 }}>
         <div>
-          <h1 className="text-[21px] font-bold text-slate-900 leading-tight tracking-tight" style={{ fontFamily: 'Sora, sans-serif' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif', margin: 0 }}>
             Monitor de Actividad
           </h1>
-          <p className="text-[11px] text-slate-400 mt-0.5 capitalize">{fmtDateLabel(selectedDate)}</p>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4, textTransform: 'capitalize' }}>
+            {fmtDateLabel(selectedDate)}
+          </p>
         </div>
-
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <div className="flex items-center border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
             <button onClick={() => setSelectedDate(d => addDays(d, -1))}
-              className="px-2.5 py-2 hover:bg-slate-50 text-slate-400 hover:text-slate-700 transition-colors border-r border-slate-100">
+              style={{ padding: '6px 10px', border: 'none', borderRight: '1px solid #e5e7eb', background: 'transparent', color: '#6b7280', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <ChevronLeft size={14} />
             </button>
             <input type="date" value={selectedDate}
               onChange={e => e.target.value && setSelectedDate(e.target.value)}
-              className="px-2 py-2 text-sm bg-transparent focus:outline-none text-slate-700 font-medium w-36 cursor-pointer" />
+              style={{ border: 'none', outline: 'none', fontSize: 13, color: '#111', background: 'transparent', padding: '6px 10px', width: 130, cursor: 'pointer' }} />
             <button onClick={() => setSelectedDate(d => addDays(d, 1))} disabled={isToday}
-              className="px-2.5 py-2 hover:bg-slate-50 text-slate-400 hover:text-slate-700 transition-colors border-l border-slate-100 disabled:opacity-30 disabled:cursor-not-allowed">
+              style={{ padding: '6px 10px', border: 'none', borderLeft: '1px solid #e5e7eb', background: 'transparent', color: isToday ? '#d1d5db' : '#6b7280', cursor: isToday ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center' }}>
               <ChevronRight size={14} />
             </button>
           </div>
 
           {!isToday && (
             <button onClick={() => setSelectedDate(TODAY())}
-              className="px-3 py-2 text-xs font-semibold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 shadow-sm transition-colors">
+              style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, color: '#4b5563', background: '#fff', cursor: 'pointer' }}>
               Hoy
             </button>
           )}
 
-          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold shadow-sm ${
-            isToday
-              ? isLive ? 'bg-white text-emerald-600 border-emerald-200' : 'bg-white text-slate-400 border-slate-200'
-              : 'bg-slate-50 text-slate-500 border-slate-200'
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isLive && isToday ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-            {isToday ? (isLive ? 'En vivo' : 'Conectando...') : 'Histórico'}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 14px', border: `1px solid ${isToday && isLive ? '#a7f3d0' : '#e5e7eb'}`,
+            borderRadius: 6, background: '#fff', fontSize: 12, fontWeight: 700,
+            color: isToday && isLive ? '#059669' : '#6b7280',
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: 3, background: isLive && isToday ? '#10b981' : '#d1d5db', animation: isLive && isToday ? 'pulse 2s infinite' : 'none' }} />
+            {isToday ? (isLive ? 'En vivo' : 'Conectando...') : 'Historico'}
           </div>
         </div>
       </div>
 
-      {/* Stat strip */}
-      <div className="flex flex-wrap border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden divide-x divide-slate-100">
+      {/* ── RESUMEN (STAT STRIP) ── */}
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: isMobile ? '6px 14px' : '6px 20px',
+        padding: '8px 16px',
+        background: '#fff',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        marginBottom: 24,
+        overflowX: 'auto',
+      }}>
         {stats.map((s, i) => (
-          <div key={i} className="px-4 py-3 flex flex-col gap-0.5 min-w-0">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">{s.label}</span>
-            <span className={`text-[15px] font-bold tabular-nums leading-tight ${s.color}`}>{s.value}</span>
-            {s.sub && <span className="text-[10px] text-slate-400 whitespace-nowrap">{s.sub}</span>}
-          </div>
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>{s.label}</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#111', fontVariantNumeric: 'tabular-nums' }}>{s.value}</span>
+            {s.sub && <span style={{ fontSize: 10, color: '#9ca3af' }}>{s.sub}</span>}
+          </span>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="flex items-center border-b border-slate-100 overflow-x-auto">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.key;
-            return (
-              <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-2 px-4 py-3 text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors shrink-0 ${
-                  active
-                    ? 'border-slate-800 text-slate-900'
-                    : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50/60'
-                }`}
-              >
-                <Icon size={13} />
-                {tab.label}
-                {tab.count != null && (
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${
-                    active ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'
-                  }`}>
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="p-4">
-          {loading ? (
-            <div className="py-16 flex flex-col items-center gap-2.5 text-slate-400">
-              <div className="w-5 h-5 rounded-full border-2 border-slate-200 border-t-slate-500 animate-spin" />
-              <p className="text-xs">Cargando datos...</p>
-            </div>
-          ) : (
-            <>
-              {refreshing && (
-                <div className="flex items-center gap-2 mb-3 px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-lg text-[11px] text-amber-700 font-medium">
-                  <div className="w-3 h-3 rounded-full border-2 border-amber-300 border-t-amber-600 animate-spin" />
-                  Actualizando datos...
-                </div>
+      {/* ── TABS ── */}
+      <div style={{ display: 'inline-flex', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', padding: 3, marginBottom: 24 }}>
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: '7px 16px', borderRadius: 4, border: 'none', fontSize: 12, fontWeight: 700,
+                cursor: 'pointer',
+                color: active ? '#fff' : '#4b5563',
+                background: active ? '#111' : 'transparent',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Icon size={14} />
+              {tab.label}
+              {tab.count != null && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: active ? 'rgba(255,255,255,0.6)' : '#9ca3af' }}>
+                  {tab.count}
+                </span>
               )}
-              {activeTab === 'dashboard'  && (
-                <TabDashboard
-                  medicos={medicos} enfermeria={enfermeria} adminStaff={adminStaff}
-                  citas={citas} movimientos={movimientos} triajes={triajes} notas={notas} ordenes={ordenes}
-                  consultorios={catalogoConsultorios}
-                  kpis={kpis} isToday={isToday}
-                  fSucursal={fSucursal} onFSucursal={setFSucursal}
-                  selectedDate={selectedDate}
-                />
-              )}
-              {activeTab === 'medicos'    && <TabMedicos    medicos={medicos} citas={citas}  sucursales={sucursales} selectedDate={selectedDate} />}
-              {activeTab === 'enfermeria' && <TabEnfermeria enfermeria={enfermeria} sucursales={sucursales} selectedDate={selectedDate} />}
-              {activeTab === 'admin'      && <TabAdmin      adminStaff={adminStaff} sucursales={sucursales} selectedDate={selectedDate} />}
-              {activeTab === 'rotaciones' && <TabRotaciones movimientos={movimientos}               selectedDate={selectedDate} />}
-            </>
-          )}
-        </div>
+            </button>
+          );
+        })}
       </div>
+
+      {/* ── CONTENT ── */}
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '64px 0', color: '#9ca3af' }}>
+          <div style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid #e5e7eb', borderTopColor: '#6b7280', animation: 'spin 1s linear infinite' }} />
+          <p style={{ fontSize: 12, margin: 0 }}>Cargando datos...</p>
+        </div>
+      ) : (
+        <>
+          {refreshing && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 11, fontWeight: 600, color: '#92400e' }}>
+              <div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fde68a', borderTopColor: '#d97706', animation: 'spin 1s linear infinite' }} />
+              Actualizando datos...
+            </div>
+          )}
+          {activeTab === 'dashboard'  && (
+            <TabDashboard
+              medicos={medicos} enfermeria={enfermeria} adminStaff={adminStaff}
+              citas={citas} movimientos={movimientos} triajes={triajes} notas={notas} ordenes={ordenes}
+              consultorios={catalogoConsultorios}
+              kpis={kpis} isToday={isToday}
+              fSucursal={fSucursal} onFSucursal={setFSucursal}
+              selectedDate={selectedDate}
+            />
+          )}
+          {activeTab === 'medicos'    && <TabMedicos    medicos={medicos} citas={citas}  sucursales={sucursales} selectedDate={selectedDate} />}
+          {activeTab === 'enfermeria' && <TabEnfermeria enfermeria={enfermeria} sucursales={sucursales} selectedDate={selectedDate} />}
+          {activeTab === 'admin'      && <TabAdmin      adminStaff={adminStaff} sucursales={sucursales} selectedDate={selectedDate} />}
+          {activeTab === 'rotaciones' && <TabRotaciones movimientos={movimientos}               selectedDate={selectedDate} />}
+        </>
+      )}
+
+      {/* Add keyframes for spin animation */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };

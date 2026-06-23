@@ -8,6 +8,7 @@ import {
   serverTimestamp, setDoc, updateDoc
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import useIsMobile from '../../hooks/useIsMobile';
 
 /* ─── constants ─── */
 const PAGE_SIZE = 30;
@@ -414,75 +415,74 @@ const Inventario = () => {
   /* ═══════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════ */
+  const isMobile = useIsMobile();
+
   return (
-    <div className="p-4 sm:p-6 max-w-[1600px] mx-auto pb-16 space-y-5">
+    <div style={{ padding: isMobile ? '16px 12px 48px' : '20px 24px 40px', maxWidth: 1600, margin: '0 auto' }}>
       {/* ── HEADER ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
         <div>
-          <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-800"
-              style={{ fontFamily: 'Sora, sans-serif' }}>
-            Catálogo de Medicamentos
+          <h1 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, color: '#111', fontFamily: 'Sora, sans-serif', margin: 0, letterSpacing: '-0.02em' }}>
+            Catalogo de Medicamentos
           </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Gestión, altas, bajas y control del catálogo de medicamentos.
+          <p style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>
+            Gestion, altas, bajas y control del catalogo de medicamentos.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold shadow-sm hover:bg-sky-700 transition"
-            onClick={openNew}>
-            <Plus size={15} />
-            Nuevo medicamento
-          </button>
-        </div>
+        <button type="button"
+          style={{ border: '1px solid #111', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 700, color: '#fff', background: '#111', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          onClick={openNew}>
+          <Plus size={14} />
+          Nuevo medicamento
+        </button>
       </div>
 
       {/* ── ERROR ── */}
       {error && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
-          <AlertTriangle size={16} /> {error}
-          <button className="ml-auto text-red-400 hover:text-red-600" onClick={() => setError('')}><X size={14} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 6, border: '1px solid #e5e7eb', color: '#111', fontSize: 12, background: '#fafafa', marginBottom: 16 }}>
+          <AlertTriangle size={14} /> {error}
+          <button style={{ marginLeft: 'auto', color: '#9ca3af', border: 'none', background: 'none', cursor: 'pointer' }} onClick={() => setError('')}><X size={12} /></button>
         </div>
       )}
 
       {/* ── SUMMARY BAR ── */}
-      <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold bg-slate-100 text-slate-700 border-slate-200">
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '10px 16px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#f3f4f6', fontSize: 11, fontWeight: 700, color: '#111' }}>
             Total: {stats.total}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold bg-emerald-50 text-emerald-700 border-emerald-200">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 11, fontWeight: 700, color: '#111' }}>
             Activos: {stats.activos}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold bg-slate-50 text-slate-700 border-slate-200">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 11, fontWeight: 700, color: '#6b7280' }}>
             Inactivos: {stats.inactivos}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold bg-blue-50 text-blue-700 border-blue-200">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 11, fontWeight: 700, color: '#111' }}>
             Con reglas: {stats.conRestricciones}
           </span>
         </div>
       </div>
 
       {/* ── SEARCH + FILTERS ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 200, maxWidth: isMobile ? '100%' : 400 }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
           <input
-            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none"
+            style={{ width: '100%', padding: '8px 12px 8px 34px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
             placeholder="Buscar medicamento, grupo, sustancia..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </div>
         <select
-          className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
+          style={{ padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', color: '#111', outline: 'none' }}
           value={nivelFilter}
           onChange={e => setNivelFilter(+e.target.value)}>
           <option value={0}>Todos los niveles</option>
           {[1,2,3,4,5].map(n => <option key={n} value={n}>Nivel {n}</option>)}
         </select>
         <select
-          className="px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white"
+          style={{ padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', color: '#111', outline: 'none' }}
           value={estadoFilter}
           onChange={e => setEstadoFilter(e.target.value)}>
           <option value="todos">Todos</option>
@@ -490,31 +490,31 @@ const Inventario = () => {
           <option value="inactivos">Inactivos</option>
         </select>
         <button type="button"
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-medium transition"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 12, borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#4b5563', fontWeight: 600, cursor: 'pointer' }}
           onClick={() => fetchPage(true)}>
-          <RefreshCcw size={14} /> Recargar
+          <RefreshCcw size={13} /> Recargar
         </button>
       </div>
 
       {/* ── MAIN TABLE ── */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-8"></th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Medicamento</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Grupo</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Sust. Activa</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">N° Acomodo</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Presentación</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Dosis</th>
-                <th className="px-3 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Indicación</th>
-                <th className="px-3 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-16">
-                  <div className="flex flex-col items-center gap-0.5">
+              <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', width: 32 }}></th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Medicamento</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Grupo</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Sust. Activa</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>N° Acomodo</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Presentacion</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Dosis</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>Indicacion</th>
+                <th style={{ padding: '10px 12px', textAlign: 'center', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', width: 64 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                     Nivel
                     <select value={nivelFilter} onChange={e => setNivelFilter(+e.target.value)}
-                      className={`text-[10px] font-semibold border rounded px-1 py-0.5 outline-none cursor-pointer ${nivelFilter ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}>
+                      style={{ fontSize: 9, fontWeight: 600, border: '1px solid #d1d5db', borderRadius: 4, padding: '1px 4px', outline: 'none', cursor: 'pointer', color: nivelFilter ? '#111' : '#6b7280', background: '#fff' }}>
                       <option value={0}>Todos</option>
                       {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
@@ -522,11 +522,11 @@ const Inventario = () => {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody>
               {loading ? (
-                <tr><td colSpan={10} className="text-center py-12 text-slate-400">Cargando...</td></tr>
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '40px 0', color: '#9ca3af' }}>Cargando...</td></tr>
               ) : paginatedMeds.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-12 text-slate-400">Sin resultados.</td></tr>
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '40px 0', color: '#9ca3af' }}>Sin resultados.</td></tr>
               ) : paginatedMeds.map((m, mIdx) => {
                 const isOpen = selectedMed?.id === m.id;
                 return (
@@ -534,51 +534,46 @@ const Inventario = () => {
                     {/* main row */}
                     <tr
                       onClick={() => setSelectedMed(prev => prev?.id === m.id ? null : m)}
-                      className={`cursor-pointer transition-colors select-none ${
-                        isOpen
-                          ? 'bg-sky-50/70'
-                          : 'hover:bg-slate-50'
-                      } ${!m.activo ? 'opacity-50' : ''}`}>
-                      <td className="px-3 py-2.5 text-center">
-                        <ChevronDown size={14} className={`inline text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                      style={{ cursor: 'pointer', borderBottom: '1px solid #f3f4f6', background: isOpen ? '#fafafa' : '#fff', opacity: !m.activo ? 0.5 : 1 }}>
+                      <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                        <ChevronDown size={12} style={{ color: '#9ca3af', display: 'inline', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
                       </td>
-                      <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[220px]">
-                        <div className="flex items-center gap-2">
-                          <span className="shrink-0 inline-block w-3 h-3 rounded-full" style={{ backgroundColor: m.color }} />
-                          <span title={m.medicamento} className="truncate">{m.medicamento}</span>
+                      <td style={{ padding: '8px 12px', maxWidth: 220 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ flexShrink: 0, display: 'inline-block', width: 10, height: 10, borderRadius: '50%', backgroundColor: m.color }} />
+                          <span title={m.medicamento} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#111', fontWeight: 600 }}>{m.medicamento}</span>
                           {!m.activo && (
-                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-500">OFF</span>
+                            <span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 600, background: '#e5e7eb', color: '#6b7280' }}>OFF</span>
                           )}
                           {(m.consultoriosIds.length > 0 || m.medicosBloqueadosIds.length > 0) && (
-                            <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400" title="Tiene reglas de acceso" />
+                            <span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: '50%', background: '#4b5563' }} title="Tiene reglas de acceso" />
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
-                        <span title={m.grupo} className="truncate block">{trunc(m.grupo, 20)}</span>
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 140 }}>
+                        <span title={m.grupo} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trunc(m.grupo, 20)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
-                        <span title={m.sustanciaActiva} className="truncate block">{trunc(m.sustanciaActiva, 22)}</span>
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 160 }}>
+                        <span title={m.sustanciaActiva} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trunc(m.sustanciaActiva, 22)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[100px]">
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 100 }}>
                         {m.numeroAcomodo ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-700">#{m.numeroAcomodo}</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 4, background: '#f3f4f6', border: '1px solid #e5e7eb', fontSize: 10, fontWeight: 700, color: '#111' }}>#{m.numeroAcomodo}</span>
                         ) : (
-                          <span className="text-slate-300">—</span>
+                          <span style={{ color: '#d1d5db' }}>—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
-                        <span title={m.presentacion} className="truncate block">{trunc(m.presentacion, 18)}</span>
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 140 }}>
+                        <span title={m.presentacion} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trunc(m.presentacion, 18)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
-                        <span title={m.dosis} className="truncate block">{trunc(m.dosis, 18)}</span>
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 140 }}>
+                        <span title={m.dosis} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trunc(m.dosis, 18)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
-                        <span title={m.indicacion} className="truncate block">{trunc(m.indicacion, 18)}</span>
+                      <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 140 }}>
+                        <span title={m.indicacion} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trunc(m.indicacion, 18)}</span>
                       </td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-xs font-bold"
-                          style={{ backgroundColor: NIVEL_COLORS[m.nivel] || '#94a3b8' }}>
+                      <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: '50%', color: '#fff', fontSize: 11, fontWeight: 700, backgroundColor: NIVEL_COLORS[m.nivel] || '#94a3b8' }}>
                           {m.nivel}
                         </span>
                       </td>
@@ -586,89 +581,83 @@ const Inventario = () => {
 
                     {/* expanded detail row */}
                     {isOpen && (
-                      <tr className="bg-sky-50">
-                        <td colSpan={10} className="px-0 py-0">
-                          <div className="px-5 py-4 border-t-2 border-sky-300 border-b-2 bg-gradient-to-b from-sky-50 to-sky-50/30 border-l-4"
-                            style={{ borderLeftColor: m.color }}>
+                      <tr>
+                        <td colSpan={10} style={{ padding: 0 }}>
+                          <div style={{ padding: '14px 20px', borderTop: '2px solid #e5e7eb', borderBottom: '2px solid #e5e7eb', borderLeft: `4px solid ${m.color}`, background: '#fafafa' }}>
                             {/* top: actions + status */}
-                            <div className="flex items-center justify-between mb-4">
-                              <div className="flex items-center gap-2">
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <button onClick={(e) => { e.stopPropagation(); toggleActivo(m); setSelectedMed(prev => prev ? { ...prev, activo: !prev.activo } : null); }}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                                    m.activo
-                                      ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                      : 'bg-slate-200 text-slate-500 hover:bg-slate-300'
-                                  }`}>
+                                  style={{ padding: '4px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600, border: '1px solid #e5e7eb', color: m.activo ? '#111' : '#6b7280', background: m.activo ? '#fff' : '#e5e7eb', cursor: 'pointer' }}>
                                   {m.activo ? '● Activo' : '○ Inactivo'}
                                 </button>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white"
-                                  style={{ backgroundColor: NIVEL_COLORS[m.nivel] || '#94a3b8' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600, color: '#fff', backgroundColor: NIVEL_COLORS[m.nivel] || '#94a3b8' }}>
                                   Nivel {m.nivel} — {NIVEL_LABELS[m.nivel]}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-1.5">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <button onClick={(e) => { e.stopPropagation(); openEdit(m); }}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 hover:bg-slate-100 border border-slate-200 transition shadow-sm">
-                                  <Edit3 size={13} /> Editar
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600, border: '1px solid #d1d5db', background: '#fff', color: '#4b5563', cursor: 'pointer' }}>
+                                  <Edit3 size={12} /> Editar
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(m.id); }}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-red-600 hover:bg-red-50 border border-slate-200 transition shadow-sm">
-                                  <Trash2 size={13} /> Eliminar
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600, border: '1px solid #d1d5db', background: '#fff', color: '#111', cursor: 'pointer' }}>
+                                  <Trash2 size={12} /> Eliminar
                                 </button>
                               </div>
                             </div>
 
                             {/* detail grid */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-6 gap-y-3">
+                            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: '12px 20px' }}>
                               {[
                                 ['N° Acomodo', m.numeroAcomodo],
-                                ['Presentación', m.presentacion],
+                                ['Presentacion', m.presentacion],
                                 ['Dosis', m.dosis],
-                                ['Indicación', m.indicacion],
-                                ['Opción 2', m.opcion2],
+                                ['Indicacion', m.indicacion],
+                                ['Opcion 2', m.opcion2],
                                 ['Advertencia', m.advertencia],
                                 ['Embarazo', m.embarazo],
                                 ['Sustancia activa', m.sustanciaActiva],
                               ].map(([label, val]) => (
                                 <div key={label}>
-                                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
-                                  <p className="text-xs text-slate-700 mt-0.5 leading-relaxed">{val || '—'}</p>
+                                  <p style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', margin: 0 }}>{label}</p>
+                                  <p style={{ fontSize: 11, color: '#111', margin: '2px 0 0', lineHeight: 1.4 }}>{val || '—'}</p>
                                 </div>
                               ))}
                             </div>
 
                             {/* access control */}
-                            <div className="flex flex-wrap gap-6 mt-4 pt-3 border-t border-slate-200/60">
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, marginTop: 10, paddingTop: 10, borderTop: '1px solid #e5e7eb' }}>
                               <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-1">
+                                <p style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', display: 'flex', alignItems: 'center', gap: 4, margin: '0 0 4px' }}>
                                   <Building2 size={10} /> Consultorios
                                 </p>
                                 {m.consultoriosIds?.length ? (
-                                  <div className="flex flex-wrap gap-1">
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                     {m.consultoriosIds.map(id => (
-                                      <span key={id} className="px-2 py-0.5 rounded text-[11px] bg-blue-50 text-blue-700 border border-blue-100 font-medium">
+                                      <span key={id} style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, background: '#f3f4f6', color: '#111', border: '1px solid #e5e7eb', fontWeight: 600 }}>
                                         {consultorioMap[id]?.nombre || id}
                                       </span>
                                     ))}
                                   </div>
                                 ) : (
-                                  <p className="text-xs text-slate-400">Todos</p>
+                                  <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>Todos</p>
                                 )}
                               </div>
                               <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-1">
-                                  <ShieldAlert size={10} /> Médicos bloqueados
+                                <p style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', display: 'flex', alignItems: 'center', gap: 4, margin: '0 0 4px' }}>
+                                  <ShieldAlert size={10} /> Medicos bloqueados
                                 </p>
                                 {m.medicosBloqueadosIds?.length ? (
-                                  <div className="flex flex-wrap gap-1">
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                     {m.medicosBloqueadosIds.map(id => (
-                                      <span key={id} className="px-2 py-0.5 rounded text-[11px] bg-red-50 text-red-700 border border-red-100 font-medium">
+                                      <span key={id} style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, background: '#f3f4f6', color: '#111', border: '1px solid #e5e7eb', fontWeight: 600 }}>
                                         {doctorMap[id]?.nombre || id}
                                       </span>
                                     ))}
                                   </div>
                                 ) : (
-                                  <p className="text-xs text-slate-400">Ninguno</p>
+                                  <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>Ninguno</p>
                                 )}
                               </div>
                             </div>
@@ -684,19 +673,19 @@ const Inventario = () => {
         </div>
 
         {/* pagination footer */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/60">
-          <span className="text-xs text-slate-500">
-            Página {page} de {totalPages} · {totalFiltered} resultado{totalFiltered !== 1 ? 's' : ''} de {totalCount} registros
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid #f3f4f6', background: '#fafafa' }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>
+            Pagina {page} de {totalPages} · {totalFiltered} resultado{totalFiltered !== 1 ? 's' : ''} de {totalCount} registros
           </span>
-          <div className="flex items-center gap-1">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <button onClick={goPrev} disabled={page <= 1}
-              className="p-1.5 rounded-lg border border-slate-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition">
-              <ChevronLeft size={16} />
+              style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff', cursor: page <= 1 ? 'not-allowed' : 'pointer', opacity: page <= 1 ? 0.3 : 1 }}>
+              <ChevronLeft size={14} />
             </button>
-            <span className="text-sm font-medium text-slate-700 px-2">{page}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#111', padding: '0 6px' }}>{page}</span>
             <button onClick={goNext} disabled={page >= totalPages}
-              className="p-1.5 rounded-lg border border-slate-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition">
-              <ChevronRight size={16} />
+              style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #e5e7eb', background: '#fff', cursor: page >= totalPages ? 'not-allowed' : 'pointer', opacity: page >= totalPages ? 0.3 : 1 }}>
+              <ChevronRight size={14} />
             </button>
           </div>
         </div>
@@ -704,199 +693,176 @@ const Inventario = () => {
 
       {/* ═══ MODAL NEW / EDIT ═══ */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <h2 className="text-lg font-bold text-slate-800">
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb', width: '100%', maxWidth: 1024, maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #f3f4f6' }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111' }}>
                 {editingId ? 'Editar medicamento' : 'Nuevo medicamento'}
               </h2>
               <button onClick={() => { setShowModal(false); setEditingId(null); }}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition">
-                <X size={18} />
+                style={{ padding: 6, borderRadius: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+                <X size={16} />
               </button>
             </div>
-            <div className="px-6 pt-4">
-              <div className="inline-flex rounded-xl border border-slate-200 p-1 bg-slate-50">
-                <button
-                  type="button"
-                  onClick={() => setModalTab('general')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    modalTab === 'general' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
+            <div style={{ padding: '14px 20px 0' }}>
+              <div style={{ display: 'inline-flex', borderRadius: 6, border: '1px solid #e5e7eb', padding: 2, background: '#f3f4f6' }}>
+                <button type="button" onClick={() => setModalTab('general')}
+                  style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: 'none', cursor: 'pointer', color: modalTab === 'general' ? '#111' : '#6b7280', background: modalTab === 'general' ? '#fff' : 'transparent' }}>
                   Datos generales
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setModalTab('acceso')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    modalTab === 'acceso' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
+                <button type="button" onClick={() => setModalTab('acceso')}
+                  style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: 'none', cursor: 'pointer', color: modalTab === 'acceso' ? '#111' : '#6b7280', background: modalTab === 'acceso' ? '#fff' : 'transparent' }}>
                   Control de acceso
                 </button>
               </div>
             </div>
 
-            <form onSubmit={handleSave} className="px-6 py-5 space-y-4">
+            <form onSubmit={handleSave} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {modalTab === 'general' ? (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                    <div className="md:col-span-1">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Color</label>
-                      <div className="flex items-center gap-1.5 h-10">
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 3fr 2fr', gap: 10 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Color</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: 40 }}>
                         {ALLOWED_COLORS.map(c => (
                           <button key={c.hex} type="button" title={c.name}
-                            className={`w-7 h-7 rounded-full border-2 transition ${
-                              form.color === c.hex ? 'border-slate-800 scale-110 ring-2 ring-offset-1 ring-slate-300' : 'border-slate-200 hover:border-slate-400'
-                            }`}
-                            style={{ backgroundColor: c.hex }}
+                            style={{ width: 28, height: 28, borderRadius: '50%', border: form.color === c.hex ? '2px solid #111' : '1px solid #d1d5db', cursor: 'pointer', backgroundColor: c.hex, transform: form.color === c.hex ? 'scale(1.15)' : 'none' }}
                             onClick={() => setForm(p => ({ ...p, color: c.hex }))} />
                         ))}
                       </div>
                     </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Medicamento *</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Medicamento *</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.medicamento} onChange={e => setForm(p => ({ ...p, medicamento: e.target.value }))} />
                     </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Grupo</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Grupo</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.grupo} onChange={e => setForm(p => ({ ...p, grupo: e.target.value }))} />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 10 }}>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Sustancia activa</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Sustancia activa</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.sustanciaActiva} onChange={e => setForm(p => ({ ...p, sustanciaActiva: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">N° de acomodo</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>N° de acomodo</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.numeroAcomodo} onChange={e => setForm(p => ({ ...p, numeroAcomodo: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Presentación</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Presentacion</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.presentacion} onChange={e => setForm(p => ({ ...p, presentacion: e.target.value }))} />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 10 }}>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Dosis</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Dosis</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.dosis} onChange={e => setForm(p => ({ ...p, dosis: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Indicación</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Indicacion</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.indicacion} onChange={e => setForm(p => ({ ...p, indicacion: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Opción 2</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Opcion 2</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.opcion2} onChange={e => setForm(p => ({ ...p, opcion2: e.target.value }))} />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 10 }}>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Advertencia</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Advertencia</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.advertencia} onChange={e => setForm(p => ({ ...p, advertencia: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Embarazo</label>
-                      <input className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Embarazo</label>
+                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                         value={form.embarazo} onChange={e => setForm(p => ({ ...p, embarazo: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">Nivel (1-5)</label>
-                      <select className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none bg-white"
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Nivel (1-5)</label>
+                      <select style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', background: '#fff', boxSizing: 'border-box' }}
                         value={form.nivel} onChange={e => { const n = +e.target.value; setForm(p => ({ ...p, nivel: n, color: colorByNivel(n) })); }}>
                         {[1,2,3,4,5].map(n => <option key={n} value={n}>Nivel {n} - {NIVEL_LABELS[n]}</option>)}
                       </select>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-1">
-                    <label className="text-xs font-semibold text-slate-500">Activo:</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280' }}>Activo:</label>
                     <button type="button"
-                      className={`px-3 py-1 rounded-full text-xs font-semibold transition ${form.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}
+                      style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: '1px solid #e5e7eb', color: form.activo ? '#111' : '#6b7280', background: form.activo ? '#fff' : '#e5e7eb', cursor: 'pointer' }}
                       onClick={() => setForm(p => ({ ...p, activo: !p.activo }))}>
-                      {form.activo ? 'Sí' : 'No'}
+                      {form.activo ? 'Si' : 'No'}
                     </button>
                   </div>
                 </>
               ) : (
-                <div className="space-y-4">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   {!editingId && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                      Guarda primero el medicamento para configurar consultorios y bloqueos por médico.
+                    <div style={{ borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', padding: '8px 12px', fontSize: 11, color: '#111' }}>
+                      Guarda primero el medicamento para configurar consultorios y bloqueos por medico.
                     </div>
                   )}
 
-                  <div className="relative">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <div style={{ position: 'relative' }}>
+                    <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input
-                      className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-200 outline-none"
-                      placeholder="Buscar consultorio o médico"
+                      style={{ width: '100%', padding: '8px 12px 8px 32px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
+                      placeholder="Buscar consultorio o medico"
                       value={accessSearch}
                       onChange={(e) => setAccessSearch(e.target.value)}
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
-                        <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Consultorios habilitados</p>
-                        <p className="text-[11px] text-slate-500">Si no marcas ninguno, queda disponible en todos.</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
+                    <div style={{ borderRadius: 6, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 12px', borderBottom: '1px solid #f3f4f6', background: '#fafafa' }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, color: '#111', textTransform: 'uppercase', letterSpacing: '.05em', margin: 0 }}>Consultorios habilitados</p>
+                        <p style={{ fontSize: 10, color: '#6b7280', margin: '2px 0 0' }}>Si no marcas ninguno, queda disponible en todos.</p>
                       </div>
-                      <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                      <div style={{ maxHeight: 256, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {filteredConsultorios.length === 0 ? (
-                          <p className="text-xs text-slate-400 px-2 py-1">Sin consultorios coincidentes.</p>
+                          <p style={{ fontSize: 11, color: '#9ca3af', padding: '4px 8px' }}>Sin consultorios coincidentes.</p>
                         ) : filteredConsultorios.map(c => (
-                          <label key={c.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={form.consultoriosIds.includes(c.id)}
-                              onChange={() => toggleArrayItem('consultoriosIds', c.id)}
-                              className="mt-0.5"
-                              disabled={!editingId}
-                            />
+                          <label key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
+                            <input type="checkbox" checked={form.consultoriosIds.includes(c.id)}
+                              onChange={() => toggleArrayItem('consultoriosIds', c.id)} disabled={!editingId} />
                             <span>
-                              <span className="text-sm text-slate-700 font-medium">{c.nombre}</span>
-                              {c.ubicacion && <span className="block text-xs text-slate-500">{c.ubicacion}</span>}
+                              <span style={{ color: '#111', fontWeight: 600 }}>{c.nombre}</span>
+                              {c.ubicacion && <span style={{ display: 'block', fontSize: 10, color: '#6b7280' }}>{c.ubicacion}</span>}
                             </span>
                           </label>
                         ))}
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
-                        <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Médicos bloqueados</p>
-                        <p className="text-[11px] text-slate-500">Los marcados no podrán usar este medicamento.</p>
+                    <div style={{ borderRadius: 6, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 12px', borderBottom: '1px solid #f3f4f6', background: '#fafafa' }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, color: '#111', textTransform: 'uppercase', letterSpacing: '.05em', margin: 0 }}>Medicos bloqueados</p>
+                        <p style={{ fontSize: 10, color: '#6b7280', margin: '2px 0 0' }}>Los marcados no podran usar este medicamento.</p>
                       </div>
-                      <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                      <div style={{ maxHeight: 256, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {filteredDoctors.length === 0 ? (
-                          <p className="text-xs text-slate-400 px-2 py-1">Sin médicos coincidentes.</p>
+                          <p style={{ fontSize: 11, color: '#9ca3af', padding: '4px 8px' }}>Sin medicos coincidentes.</p>
                         ) : filteredDoctors.map(d => (
-                          <label key={d.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={form.medicosBloqueadosIds.includes(d.id)}
-                              onChange={() => toggleArrayItem('medicosBloqueadosIds', d.id)}
-                              className="mt-0.5"
-                              disabled={!editingId}
-                            />
+                          <label key={d.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
+                            <input type="checkbox" checked={form.medicosBloqueadosIds.includes(d.id)}
+                              onChange={() => toggleArrayItem('medicosBloqueadosIds', d.id)} disabled={!editingId} />
                             <span>
-                              <span className="text-sm text-slate-700 font-medium">{d.nombre}</span>
-                              {d.especialidad && <span className="block text-xs text-slate-500">{d.especialidad}</span>}
+                              <span style={{ color: '#111', fontWeight: 600 }}>{d.nombre}</span>
+                              {d.especialidad && <span style={{ display: 'block', fontSize: 10, color: '#6b7280' }}>{d.especialidad}</span>}
                             </span>
                           </label>
                         ))}
@@ -906,14 +872,14 @@ const Inventario = () => {
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 12, borderTop: '1px solid #f3f4f6' }}>
                 <button type="button" onClick={() => { setShowModal(false); setEditingId(null); }}
-                  className="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                  style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #d1d5db', color: '#6b7280', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>
                   Cancelar
                 </button>
                 <button type="submit" disabled={saving}
-                  className="inline-flex items-center gap-2 px-5 py-2 text-sm rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-50 transition">
-                  <Save size={14} />
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: 12, borderRadius: 6, border: '1px solid #111', color: '#fff', background: '#111', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.5 : 1, fontWeight: 700 }}>
+                  <Save size={13} />
                   {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Guardar'}
                 </button>
               </div>
@@ -924,24 +890,24 @@ const Inventario = () => {
 
       {/* ═══ DELETE CONFIRM ═══ */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertTriangle size={20} className="text-red-600" />
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 8, border: '1px solid #e5e7eb', width: '100%', maxWidth: 380, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AlertTriangle size={18} style={{ color: '#111' }} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-800">Eliminar medicamento</h3>
-                <p className="text-xs text-slate-500">Esta acción no se puede deshacer.</p>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: '#111', margin: 0 }}>Eliminar medicamento</h3>
+                <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>Esta accion no se puede deshacer.</p>
               </div>
             </div>
-            <div className="flex justify-end gap-2">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button onClick={() => setConfirmDelete(null)}
-                className="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #d1d5db', color: '#6b7280', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>
                 Cancelar
               </button>
               <button onClick={() => handleDelete(confirmDelete)}
-                className="px-4 py-2 text-sm rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition">
+                style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #111', color: '#fff', background: '#111', cursor: 'pointer', fontWeight: 700 }}>
                 Eliminar
               </button>
             </div>

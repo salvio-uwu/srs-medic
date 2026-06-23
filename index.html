@@ -5,6 +5,47 @@
     <link rel="icon" type="image/png" href="/logo_azul.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Centro Medico Santa Cruz</title>
+    <script>
+      // ── Recuperación automática tras deploys en caliente ──
+      // Si un chunk (JS o CSS) falla porque el deploy borró los archivos
+      // con hashes viejos, forzamos una hard-reload para obtener el nuevo
+      // index.html con los hashes correctos.
+      // Cooldown de 10s para evitar loops infinitos.
+      (function () {
+        var KEY = '_srs_reload_ts';
+        var COOLDOWN = 10000;
+        var reloading = false;
+
+        function forceReload() {
+          if (reloading) return;
+          var now = Date.now();
+          var last = parseInt(sessionStorage.getItem(KEY) || '0', 10);
+          if (now - last < COOLDOWN) return;
+          sessionStorage.setItem(KEY, String(now));
+          reloading = true;
+          // Hard reload: ignora caché de subrecursos (CSS/JS)
+          try { window.location.reload(true); } catch (_) {
+            window.location.replace(
+              window.location.href.split('?')[0].split('#')[0]
+            );
+          }
+        }
+
+        // 1) LINK (CSS) o SCRIPT (JS) que fallan con 404 tras un deploy
+        window.addEventListener('error', function (event) {
+          var tag = (event.target && event.target.tagName) || '';
+          if (tag === 'LINK' || tag === 'SCRIPT') forceReload();
+        }, true);
+
+        // 2) Dynamic import() falla porque Vite borró el chunk en un deploy
+        window.addEventListener('unhandledrejection', function (event) {
+          var msg = (event.reason && event.reason.message) || '';
+          if (/Failed to fetch/i.test(msg) || /dynamically imported/i.test(msg) || /import.*module/i.test(msg)) {
+            forceReload();
+          }
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

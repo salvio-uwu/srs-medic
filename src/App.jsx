@@ -1,11 +1,12 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { decodeRoute, encodeRoute } from './utils/routeObfuscator';
 import { Building2, Compass, HeartPulse, MessageCircle, Shield, Stethoscope, Users, X,
   LayoutDashboard, Package, UserCog, Eye, Tag, FileText, BarChart3, ClipboardList, Activity,
   CalendarDays, Syringe, Clipboard, Crown, DollarSign, SprayCan, ChevronRight, BookOpen,
-  AlertTriangle
+  AlertTriangle, RefreshCw, Clock, Info
 } from 'lucide-react';
+import { useAppVersion } from './hooks/useAppVersion';
 import { db } from './config/firebase';
 import { collection, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import Login from './pages/auth/Login';
@@ -14,8 +15,7 @@ import ChatNotificationToast from './components/ChatNotificationToast';
 import { PanicLauncherButton, PanicAlertOverlay, usePanicSystem } from './components/PanicButton';
 import { useAuth } from './context/AuthContext';
 import { hasPermission } from './services/permissionService';
-import { useAppVersion } from './hooks/useAppVersion';
-import { buildLastMessageSignature, isNewSignature } from './shared/chatSignatureCache';
+import { buildLastMessageSignature, isNewSignature, getMillis } from './shared/chatSignatureCache';
 
 // Layout Admin
 import AdminLayout from './shared/AdminLayout';
@@ -33,7 +33,11 @@ import CatalogosGlobales from './pages/admin/CatalogosGlobales';
 import PlantillasDocumentos from './pages/admin/PlantillasDocumentos';
 import PerfilUsuario from './pages/admin/PerfilUsuario';
 import DepuracionConsultas from './pages/admin/DepuracionConsultas';
-const AuditoriaMigracion = lazy(() => import('./pages/admin/AuditoriaMigracion'));
+import AutoevaluacionSSA from './pages/ssa/AutoevaluacionSSA';
+import SsaCanvas from './pages/ssa/SsaCanvas';
+import SsaEvaluacion from './pages/ssa/SsaEvaluacion';
+import SsaHistorial from './pages/ssa/SsaHistorial';
+import SharedExpedienteView from './components/SharedExpedienteView';
 
 // Módulos Doctor
 import Consultorio from './pages/doctor/Consultorio'; 
@@ -52,6 +56,7 @@ import DashboardJefaEnfermeria from './pages/enfermeria/DashboardJefaEnfermeria'
 import RegistrosEnfermeriaView from './pages/enfermeria/RegistrosEnfermeriaView';
 import CapacitacionEnfermeria from './pages/enfermeria/CapacitacionEnfermeria';
 import BitacoraCarroRojo from './pages/enfermeria/BitacoraCarroRojo';
+import BitacoraCarroRojoEnfermeria from './pages/enfermeria/BitacoraCarroRojoEnfermeria';
 import CaducidadesEnfermeria from './pages/enfermeria/CaducidadesEnfermeria';
 import OrdenServicioEnfermeria from './pages/enfermeria/OrdenServicioEnfermeria';
 
@@ -77,10 +82,12 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
     const [unreadCount, setUnreadCount] = useState(0);
     const initCanalesRef = useRef(false);
     const initPrivadosRef = useRef(false);
+    const listenerStartedAt = useRef(0);
     const launcherRef = useRef(null);
     const audioCtxRef = useRef(null);
     const usersMapRef = useRef({});
     const toastRef = useRef(null);
+    const ultimoTsRef = useRef({});
 
     // Desbloquear AudioContext al primer gesto del usuario
     useEffect(() => {
@@ -370,6 +377,7 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
 
     initCanalesRef.current = false;
     initPrivadosRef.current = false;
+    listenerStartedAt.current = Date.now();
 
     const qCanales = query(collection(db, 'canales'), orderBy('ultimoMensajeAt', 'desc'), limit(20));
     const unsubCanales = onSnapshot(qCanales, (snap) => {
@@ -382,7 +390,15 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
         const data = change.doc.data();
         if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
         if (!data?.ultimoMensajeAt) return false;
-        return isNewSignature(buildLastMessageSignature(change.doc.id, data));
+        const ts = getMillis(data.ultimoMensajeAt);
+        if (!ts || ts < listenerStartedAt.current - 5000) return false;
+        if (ts === ultimoTsRef.current[change.doc.id]) return false;
+        if (!isNewSignature(buildLastMessageSignature(change.doc.id, data))) return false;
+        return true;
+      });
+      nuevos.forEach((change) => {
+        const ts = getMillis(change.doc.data().ultimoMensajeAt);
+        if (ts) ultimoTsRef.current[change.doc.id] = ts;
       });
       if (nuevos.length > 0) {
         setUnreadCount((prev) => prev + nuevos.length);
@@ -417,7 +433,15 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
         const data = change.doc.data();
         if (!data?.ultimoRemitenteId || data.ultimoRemitenteId === user.uid) return false;
         if (!data?.ultimoMensajeAt) return false;
-        return isNewSignature(buildLastMessageSignature(change.doc.id, data));
+        const ts = getMillis(data.ultimoMensajeAt);
+        if (!ts || ts < listenerStartedAt.current - 5000) return false;
+        if (ts === ultimoTsRef.current[change.doc.id]) return false;
+        if (!isNewSignature(buildLastMessageSignature(change.doc.id, data))) return false;
+        return true;
+      });
+      nuevos.forEach((change) => {
+        const ts = getMillis(change.doc.data().ultimoMensajeAt);
+        if (ts) ultimoTsRef.current[change.doc.id] = ts;
       });
       if (nuevos.length > 0) {
         setUnreadCount((prev) => prev + nuevos.length);
@@ -780,52 +804,166 @@ const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
   return children;
 };
 
-const UpdateBanner = () => {
-  const { updateAvailable, resetUpdateStatus } = useAppVersion();
-  if (!updateAvailable) return null;
-  
-  const handleUpdate = () => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(registrations => {
-        registrations.forEach(registration => {
-          registration.unregister();
-        });
-      });
-    }
-    
-    if ('caches' in window) {
-      caches.keys().then(names => {
-        names.forEach(name => {
-          caches.delete(name);
-        });
-      });
-    }
-    
-    window.location.replace(window.location.origin + window.location.pathname);
-  };
 
-  return (
-    <div className="fixed top-0 left-0 right-0 z-[9999] bg-blue-600 text-white text-sm font-semibold flex items-center justify-between px-4 py-2 shadow-lg">
-      <span>Hay una actualización disponible.</span>
-      <button
-        onClick={handleUpdate}
-        className="ml-4 bg-white text-blue-700 text-xs font-bold px-3 py-1 rounded-lg hover:bg-blue-50 transition-colors"
-      >
-        Actualizar ahora
-      </button>
-    </div>
-  );
+// ── Wrapper que decide qué componente de Carro Rojo renderizar según el rol ──
+const isJefaturaRole = (rol) => {
+  const r = normalizeRole(rol);
+  return ['jefa_enfermeria', 'jefa', 'admin', 'admin_maestro', 'administrador'].includes(r);
+};
+
+const CarroRojoRouter = () => {
+  const { user } = useAuth();
+  const isJefa = isJefaturaRole(user?.rol);
+  return isJefa ? <BitacoraCarroRojo /> : <BitacoraCarroRojoEnfermeria />;
+};
+
+// ── Ofuscador de rutas: codifica las URLs visibles en el navegador ──
+const RouteObfuscator = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialDecodeDone = useRef(false);
+
+  // Decodificar URL ofuscada en la carga inicial
+  useEffect(() => {
+    const rawPath = window.location.pathname + window.location.search + window.location.hash;
+    const decoded = decodeRoute(rawPath);
+    if (decoded !== rawPath) {
+      navigate(decoded, { replace: true });
+    }
+    initialDecodeDone.current = true;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reescribir la URL del navegador a su versión ofuscada en cada cambio de ruta
+  useEffect(() => {
+    if (!initialDecodeDone.current) return;
+    const currentPath = location.pathname + location.search + location.hash;
+    const encoded = encodeRoute(currentPath);
+    const browserPath = window.location.pathname + window.location.search + window.location.hash;
+    if (encoded !== browserPath) {
+      window.history.replaceState(null, '', encoded);
+    }
+  }, [location]);
+
+  return null;
 };
 
 function App() {
   const { user } = useAuth();
   const { activeAlert, triggerPanic, dismissAlert, hasActiveAlert } = usePanicSystem();
+  const { updateAvailable, notes, postponeUpdate } = useAppVersion();
+  const audioCtxRef = useRef(null);
+
+  // Sonido de notificación al detectar una nueva versión
+  useEffect(() => {
+    if (!updateAvailable) return;
+
+    const playSound = async () => {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const ctx = audioCtxRef.current;
+        if (ctx.state === 'suspended') await ctx.resume();
+
+        const now = ctx.currentTime;
+
+        // Tono 1 — ascendente
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(660, now);
+        osc1.frequency.linearRampToValueAtTime(880, now + 0.15);
+        gain1.gain.setValueAtTime(0.18, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc1.connect(gain1).connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.5);
+
+        // Tono 2 — armónico con delay
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(880, now + 0.15);
+        gain2.gain.setValueAtTime(0, now);
+        gain2.gain.setValueAtTime(0.13, now + 0.15);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        osc2.connect(gain2).connect(ctx.destination);
+        osc2.start(now + 0.15);
+        osc2.stop(now + 0.6);
+      } catch { /* silent fail */ }
+    };
+
+    playSound();
+  }, [updateAvailable]);
 
   return (
     <BrowserRouter>
-      <UpdateBanner />
+      <RouteObfuscator />
       <GlobalChatLauncher triggerPanic={triggerPanic} hasActiveAlert={hasActiveAlert} />
       <PanicAlertOverlay alert={activeAlert} onDismiss={dismissAlert} currentUserId={user?.uid} />
+
+      {/* Modal de nueva versión disponible */}
+      {updateAvailable && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-3xl shadow-2xl border border-blue-100/50 max-w-md w-full p-8 animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-5">
+              <RefreshCw size={28} className="text-blue-500" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-1 font-jakarta text-center">Nueva versión disponible</h3>
+            <p className="text-sm text-slate-500 leading-relaxed mb-5 text-center">
+              Hay una actualización del sistema. Recarga la página para obtener la versión más reciente.
+            </p>
+
+            {/* Changelog / Notas de la versión */}
+            {notes.length > 0 && (
+              <div className="mb-6 bg-slate-50 rounded-2xl border border-slate-100 p-4">
+                <div className="flex items-center gap-1.5 mb-3">
+                  <Info size={13} className="text-blue-500" />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Novedades</span>
+                </div>
+                <ul className="space-y-2">
+                  {notes.map((note, i) => (
+                    <li key={i} className="flex items-start gap-2 text-[13px] text-slate-600 leading-snug">
+                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                      {note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Botones */}
+            <div className="flex gap-2.5">
+              <button
+                onClick={() => postponeUpdate(5)}
+                className="flex-1 py-3 rounded-xl border border-slate-200 bg-white text-slate-600 font-bold text-sm hover:bg-slate-50 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              >
+                <Clock size={15} />
+                Posponer 5 min
+              </button>
+              <button
+                onClick={() => {
+                  // Hard reload: ignora caché del navegador y fuerza
+                  // re-descarga de todos los recursos (CSS, JS incluidos).
+                  // location.reload(true) está deprecated pero funciona
+                  // en todos los navegadores modernos.
+                  try { window.location.reload(true); } catch (_) {
+                    // Fallback: navegación limpia que evita caché
+                    window.location.replace(
+                      window.location.href.split('?')[0].split('#')[0]
+                    );
+                  }
+                }}
+                className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 active:scale-[0.98] transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+              >
+                <RefreshCw size={15} />
+                Recargar ahora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
@@ -845,17 +983,11 @@ function App() {
           <Route path="monitor" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><MonitorActividad /></PermissionRoute>} />
           <Route path="depuracion" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><DepuracionConsultas /></PermissionRoute>} />
           <Route path="agenda" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><AgendaAdmin /></PermissionRoute>} />
-          <Route
-            path="migracion"
-            element={
-              <PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}>
-                <Suspense fallback={null}>
-                  <AuditoriaMigracion />
-                </Suspense>
-              </PermissionRoute>
-            }
-          />
-        </Route>
+          <Route path="pacientes" element={<PermissionRoute permissionId="shared.pacientes" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion']}><Pacientes /></PermissionRoute>} />
+          <Route path="ssa" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><SsaCanvas /></PermissionRoute>} />
+          <Route path="ssa/editor/:templateId" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><AutoevaluacionSSA /></PermissionRoute>} />
+          <Route path="ssa/historial" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><SsaHistorial /></PermissionRoute>} />
+      </Route>
 
         {/* --- RUTAS RECURSOS HUMANOS --- */}
         <Route path="/rh/dashboard" element={<PermissionRoute permissionId="rh.dashboard" fallbackRoles={['rh', 'recursos_humanos', 'recursos humanos']}><DashboardRH /></PermissionRoute>} />
@@ -868,13 +1000,15 @@ function App() {
         {/* --- RUTAS DOCTOR --- */}
         <Route path="/doctor/consulta" element={<PermissionRoute permissionId="doctor.agenda" fallbackRoles={['medico', 'doctor']}><Consultorio /></PermissionRoute>} />
         <Route path="/doctor/expediente" element={<PermissionRoute permissionId="doctor.expediente" fallbackRoles={['medico', 'doctor']}><ExpedienteClinico /></PermissionRoute>} />
+        {/* Edición del expediente clínico electrónico desde el directorio de pacientes (solo admin) */}
+        <Route path="/expediente-electronico" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><ExpedienteClinico /></PermissionRoute>} />
         <Route path="/doctor/capacitacion" element={<PermissionRoute permissionId="doctor.agenda" fallbackRoles={['medico', 'doctor']}><CapacitacionMedicos /></PermissionRoute>} />
 
         {/* --- RUTAS ENFERMERÍA --- */}
         <Route path="/enfermeria/dashboard" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AgendaEnfermeria /></PermissionRoute>} /> 
         <Route path="/enfermeria/jefatura" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><DashboardJefaEnfermeria /></PermissionRoute>} /> 
         <Route path="/enfermeria/registros" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><RegistrosEnfermeriaView /></PermissionRoute>} />
-        <Route path="/enfermeria/carro-rojo" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><BitacoraCarroRojo /></PermissionRoute>} />
+        <Route path="/enfermeria/carro-rojo" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CarroRojoRouter /></PermissionRoute>} />
         <Route path="/enfermeria/triage" element={<PermissionRoute permissionId="enfermeria.triage" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><Triage /></PermissionRoute>} />
         <Route path="/enfermeria/antecedentes" element={<PermissionRoute permissionId="enfermeria.triage" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AntecedentesRapidos /></PermissionRoute>} />
         <Route path="/enfermeria/hoja-enfermeria" element={<PermissionRoute permissionId="enfermeria.hoja" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><HojaEnfermeria /></PermissionRoute>} />
@@ -886,6 +1020,12 @@ function App() {
         {/* --- RUTAS COMPARTIDAS --- */}
         <Route path="/agenda" element={<PermissionRoute permissionId="shared.agenda" fallbackRoles={['medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />
         <Route path="/pacientes" element={<PermissionRoute permissionId="shared.pacientes" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion']}><Pacientes /></PermissionRoute>} />
+
+        {/* --- COMPARTIDAS: SSA Evaluacion (medicos) --- */}
+        <Route path="/ssa/evaluar/:templateId" element={<RequireAuth><SsaEvaluacion /></RequireAuth>} />
+
+        {/* --- RUTA PÚBLICA: Expediente compartido (QR) --- */}
+        <Route path="/compartido/:token" element={<SharedExpedienteView />} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

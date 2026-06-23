@@ -1102,18 +1102,20 @@ const PlantillaDinamicaModal = ({
         lines: t.split('\n').length,
         weight: estimateVisualWeight(t),
       }));
+    const indicacionesItems = indicacionesText.trim()
+      ? tag([indicacionesText], 'indicaciones')
+      : [];
     const medsItems = tag(splitRecipeTextIntoItems(medsText), 'meds');
     const estItems = tag(splitRecipeTextIntoItems(estText), 'est');
     const procItems = tag(splitRecipeTextIntoItems(procText), 'proc');
     const refsItems = tag(splitRecipeTextIntoItems(refsText), 'refs');
     const tratItems = splitRecipeTextIntoItems(tratText);
-    const allItems = [...medsItems, ...estItems, ...procItems, ...refsItems];
+    const allItems = [...medsItems, ...estItems, ...procItems, ...refsItems, ...indicacionesItems];
     const totalWeight = allItems.reduce((s, i) => s + i.weight, 0);
 
     const BASE_MAX_WEIGHT = 19;
-    const indicacionesWeight = estimateVisualWeight(indicacionesText);
     const diagnosticoWeight = estimateVisualWeight(diagnosticoText);
-    const reservedWeight = Math.min(3, indicacionesWeight + diagnosticoWeight);
+    const reservedWeight = Math.min(3, diagnosticoWeight);
     const MAX_WEIGHT = Math.max(5, BASE_MAX_WEIGHT - reservedWeight);
 
     if (totalWeight <= MAX_WEIGHT || allItems.length === 0) return [null];
@@ -1137,6 +1139,7 @@ const PlantillaDinamicaModal = ({
       const pe = pageItems.filter((i) => i.src === 'est');
       const pp = pageItems.filter((i) => i.src === 'proc');
       const pr = pageItems.filter((i) => i.src === 'refs');
+      const pi = pageItems.filter((i) => i.src === 'indicaciones');
       const medIndices = pm.map((m) => medsItems.indexOf(m));
       const pageTrat = medIndices
         .map((idx) => tratItems[idx])
@@ -1147,6 +1150,7 @@ const PlantillaDinamicaModal = ({
       const estPage = pe.map((i) => i.text).join('\n');
       const procPage = pp.map((i) => i.text).join('\n');
       const refsPage = pr.map((i) => i.text).join('\n');
+      const indicacionesPage = pi.map((i) => i.text).join('\n');
       if (medsPage) seccionesPage.push(medsPage);
       if (estPage) {
         seccionesPage.push('');
@@ -1160,23 +1164,102 @@ const PlantillaDinamicaModal = ({
         seccionesPage.push('');
         seccionesPage.push(refsPage);
       }
+      if (indicacionesPage) {
+        seccionesPage.push('');
+        seccionesPage.push(indicacionesPage);
+      }
+      const escHtml = (v) =>
+        String(v || '')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+      const medsToHtml = (items) =>
+        items
+          .map((item) => {
+            const lines = item.text.split('\n');
+            const first = lines[0].trim();
+            const rest = lines.slice(1).filter((l) => l.trim());
+            let h = `<div style="margin-bottom:8px;"><div><strong>${escHtml(
+              first
+            )}</strong></div>`;
+            rest.forEach((l) => {
+              h += `<div style="margin-left:16px;">${escHtml(l.trim())}</div>`;
+            });
+            h += '</div>';
+            return h;
+          })
+          .join('');
+
+      const estudiosToHtml = (items) =>
+        items
+          .map((item) => {
+            const t = item.text.trim();
+            if (/^Paquetes:/i.test(t))
+              return `<div style="margin-bottom:6px;"><strong>${escHtml(t)}</strong></div>`;
+            if (/^Notas:/i.test(t))
+              return `<div style="margin-top:6px;"><em>${escHtml(t)}</em></div>`;
+            return `<div style="margin-bottom:2px;">${escHtml(t)}</div>`;
+          })
+          .join('');
+
+      const procsToHtml = (items) =>
+        items
+          .map((item) => {
+            const t = item.text.trim();
+            if (/^Notas:/i.test(t))
+              return `<div style="margin-top:6px;"><em>${escHtml(t)}</em></div>`;
+            return `<div style="margin-bottom:2px;">${escHtml(t)}</div>`;
+          })
+          .join('');
+
+      const refsToHtml = (items) =>
+        items
+          .map((item) => {
+            const lines = item.text.split('\n');
+            let h = '<div style="margin-bottom:8px;">';
+            lines.forEach((line, i) => {
+              const escaped = escHtml(line.trim());
+              h +=
+                i === 0
+                  ? `<div style="font-weight:bold;">${escaped}</div>`
+                  : `<div style="margin-left:16px;">${escaped}</div>`;
+            });
+            h += '</div>';
+            return h;
+          })
+          .join('');
+
+      const tratToHtml = (text) => {
+        if (!text) return '';
+        return text
+          .split('\n')
+          .filter((l) => l.trim())
+          .map((line) => {
+            const idx = line.indexOf(' - ');
+            const name =
+              idx >= 0 ? line.slice(0, idx).trim() : line.trim();
+            const detail =
+              idx >= 0 ? line.slice(idx + 3).trim() : '';
+            return `<div style="margin-bottom:4px;"><strong>${escHtml(
+              name
+            )}</strong>${detail ? ` - ${escHtml(detail)}` : ''}</div>`;
+          })
+          .join('');
+      };
+
       return {
         'consulta.medicamentos_texto': medsPage,
-        'consulta.medicamentos_html':
-          pm.length > 0 ? resolverCampo('consulta.medicamentos_html') || '' : '',
+        'consulta.medicamentos_html': pm.length > 0 ? medsToHtml(pm) : '',
         'consulta.estudios_texto': estPage,
-        'consulta.estudios_html':
-          pe.length > 0 ? resolverCampo('consulta.estudios_html') || '' : '',
+        'consulta.estudios_html': pe.length > 0 ? estudiosToHtml(pe) : '',
         'consulta.procedimientos_texto': procPage,
         'consulta.procedimientos_html':
-          pp.length > 0 ? resolverCampo('consulta.procedimientos_html') || '' : '',
+          pp.length > 0 ? procsToHtml(pp) : '',
         'consulta.referencias_texto': refsPage,
-        'consulta.referencias_html':
-          pr.length > 0 ? resolverCampo('consulta.referencias_html') || '' : '',
+        'consulta.referencias_html': pr.length > 0 ? refsToHtml(pr) : '',
         'consulta.tratamiento_texto': pageTrat,
-        'consulta.tratamiento_html': pageTrat
-          ? resolverCampo('consulta.tratamiento_html') || ''
-          : '',
+        'consulta.tratamiento_html': pageTrat ? tratToHtml(pageTrat) : '',
+        'consulta.indicaciones': indicacionesPage,
         'consulta.receta_contenido': seccionesPage.join('\n'),
       };
     });
@@ -1874,12 +1957,14 @@ const PlantillaDinamicaModal = ({
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            <button
-              onClick={onBackToMenu}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm"
-            >
-              Volver
-            </button>
+            {!isRecipeTemplate && (
+              <button
+                onClick={onBackToMenu}
+                className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm"
+              >
+                Volver
+              </button>
+            )}
 
             {hasSignatureField && (
               <button
@@ -1890,12 +1975,14 @@ const PlantillaDinamicaModal = ({
               </button>
             )}
 
-            <button
-              onClick={() => openPrintWindow('pdf')}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm"
-            >
-              PDF
-            </button>
+            {!isRecipeTemplate && (
+              <button
+                onClick={() => openPrintWindow('pdf')}
+                className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm"
+              >
+                PDF
+              </button>
+            )}
 
             <button
               onClick={() => openPrintWindow('print')}
@@ -1925,19 +2012,21 @@ const PlantillaDinamicaModal = ({
               {isPrinting ? 'Procesando…' : 'Imprimir'}
             </button>
 
-            {/* Botón Editar — abre/cierra panel derecho */}
-            <button
-              onClick={() => setShowEditor((prev) => !prev)}
-              className={`h-9 px-3.5 rounded-xl border text-sm font-semibold transition-all shadow-sm ${
-                showEditor
-                  ? 'border-blue-200 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-              }`}
-            >
-              {showEditor
-                ? `Editar ${hasManualEdits ? '●' : ''}`
-                : `Editar ${hasManualEdits ? '●' : ''}`}
-            </button>
+            {/* Botón Editar — abre/cierra panel derecho — no disponible en recetas */}
+            {!isRecipeTemplate && (
+              <button
+                onClick={() => setShowEditor((prev) => !prev)}
+                className={`h-9 px-3.5 rounded-xl border text-sm font-semibold transition-all shadow-sm ${
+                  showEditor
+                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                }`}
+              >
+                {showEditor
+                  ? `Editar ${hasManualEdits ? '●' : ''}`
+                  : `Editar ${hasManualEdits ? '●' : ''}`}
+              </button>
+            )}
 
             <button
               onClick={onClose}

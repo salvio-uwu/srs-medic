@@ -7,6 +7,14 @@ import path from 'path'
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 const appVersion = packageJson.version || '1.0.0'
 
+// Leer notas de la versión desde release-notes.json (archivo dedicado que el dev edita)
+let releaseNotes = []
+try {
+  const notesFile = path.resolve(__dirname, 'release-notes.json')
+  const notesData = JSON.parse(fs.readFileSync(notesFile, 'utf-8'))
+  releaseNotes = Array.isArray(notesData.notes) ? notesData.notes : []
+} catch { /* sin notas, se omite */ }
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -14,10 +22,12 @@ export default defineConfig({
     {
       name: 'generate-version-json',
       configureServer() {
-        fs.writeFileSync('public/version.json', JSON.stringify({ v: appVersion }))
+        const versionFile = path.resolve(__dirname, 'public/version.json');
+        fs.writeFileSync(versionFile, JSON.stringify({ v: appVersion, notes: releaseNotes }));
       },
       buildStart() {
-        fs.writeFileSync('public/version.json', JSON.stringify({ v: appVersion }))
+        const versionFile = path.resolve(__dirname, 'public/version.json');
+        fs.writeFileSync(versionFile, JSON.stringify({ v: appVersion, notes: releaseNotes }));
       }
     }
   ],

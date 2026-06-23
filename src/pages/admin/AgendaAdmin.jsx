@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Buildings, CalendarBlank, Clock, Stethoscope, User, CheckCircle, XCircle,
   Timer, MagnifyingGlass, Plus, ClipboardText, CaretLeft, CaretRight,
@@ -9,7 +10,7 @@ import {
 } from '@phosphor-icons/react';
 import {
   collection, query, where, orderBy, onSnapshot,
-  doc, updateDoc, addDoc, getDocs, deleteDoc, serverTimestamp
+  doc, updateDoc, addDoc, getDocs, deleteDoc, serverTimestamp, deleteField
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -88,6 +89,22 @@ const getDoctorStatus = (d) => {
   if (!d) return null;
   if (!isOnline(d)) return DOC_STATUS.offline;
   return DOC_STATUS[d.statusOperativo] || DOC_STATUS.disponible;
+};
+
+// Traduce un identificador (posible UID de Firebase) a un nombre legible
+// usando el mapa de usuarios; si no lo encuentra, devuelve el valor original.
+const nombreUsuario = (raw, usuariosMap = {}) => {
+  if (!raw) return '';
+  return usuariosMap[raw] || raw;
+};
+
+// Deduce el estado al que debe volver una cita cancelada, según sus marcas
+// de tiempo (como si la cancelación nunca hubiera ocurrido).
+const estadoPrevioACancelacion = (cita = {}) => {
+  if (cita.completadaAt) return 'completada';
+  if (cita.inicioConsultaAt) return 'en_consulta';
+  if (cita.llegadaAt) return 'en_espera';
+  return 'pendiente';
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -516,20 +533,20 @@ const EVT_STYLES = {
   modified:  { color: '#92400e', bg: '#fffbeb', dot: '#f59e0b', label: 'Modificada' },
 };
 
-const AuditPanel = ({ citas, stats, onClose }) => {
+const AuditPanel = ({ citas, stats, usuariosMap, onClose }) => {
   const events = useMemo(() => {
     const evts = [];
     citas.forEach((cita) => {
-      if (cita.createdAt) evts.push({ time: parseDateSafe(cita.createdAt), type: 'created', paciente: cita.paciente, by: cita.creadoPorNombre || cita.creadoPor, extra: `${cita.motivo || ''} · ${cita.hora || ''} · ${cita.consultorio || ''}` });
+      if (cita.createdAt) evts.push({ time: parseDateSafe(cita.createdAt), type: 'created', paciente: cita.paciente, by: cita.creadoPorNombre || nombreUsuario(cita.creadoPor, usuariosMap), extra: `${cita.motivo || ''} · ${cita.hora || ''} · ${cita.consultorio || ''}` });
       if (cita.llegadaAt) evts.push({ time: parseDateSafe(cita.llegadaAt), type: 'arrived', paciente: cita.paciente, by: '', extra: `${cita.hora || ''} · ${cita.consultorio || ''}` });
       if (cita.inicioConsultaAt) evts.push({ time: parseDateSafe(cita.inicioConsultaAt), type: 'started', paciente: cita.paciente, by: cita.doctorAsignado, extra: cita.consultorio || '' });
       if (cita.completadaAt) evts.push({ time: parseDateSafe(cita.completadaAt), type: 'completed', paciente: cita.paciente, by: cita.adminModificadoPor || cita.doctorAsignado, extra: cita.consultorio || '' });
-      if (cita.canceladaAt) evts.push({ time: parseDateSafe(cita.canceladaAt), type: 'cancelled', paciente: cita.paciente, by: cita.canceladaPor, extra: cita.canceladaMotivo || 'Sin motivo' });
+      if (cita.canceladaAt) evts.push({ time: parseDateSafe(cita.canceladaAt), type: 'cancelled', paciente: cita.paciente, by: cita.canceladaPorNombre || nombreUsuario(cita.canceladaPor, usuariosMap), extra: cita.canceladaMotivo || 'Sin motivo' });
       if (cita.adminModificadoAt && !cita.canceladaAt && !cita.completadaAt)
         evts.push({ time: parseDateSafe(cita.adminModificadoAt), type: 'modified', paciente: cita.paciente, by: cita.adminModificadoPor, extra: `Estado: ${getStatus(cita.estado).label}` });
     });
     return evts.filter((e) => e.time).sort((a, b) => b.time.getTime() - a.time.getTime()).slice(0, 60);
-  }, [citas]);
+  }, [citas, usuariosMap]);
 
   const auditStats = useMemo(() => {
     if (!stats) return [];
@@ -608,7 +625,7 @@ const AuditPanel = ({ citas, stats, onClose }) => {
 // SUB-COMPONENTES — DETALLE DE CITA (DRAWER)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DetalleCitaDrawer = ({ cita, onClose, onUpdateEstado, onCancelOpen, actionLoading, currentTime }) => {
+const DetalleCitaDrawer = ({ cita, onClose, onUpdateEstado, onCancelOpen, onRevert, canRevert, usuariosMap, actionLoading, currentTime }) => {
   const st = getEstadoDetallado(cita);
   const estado = normalizeEstado(cita.estado);
   const tiempoEspera = estado === 'en_espera' ? diffMin(cita.llegadaAt, currentTime) : 0;
@@ -624,11 +641,11 @@ const DetalleCitaDrawer = ({ cita, onClose, onUpdateEstado, onCancelOpen, action
   const NEXT_LABELS = { en_espera: 'Registrar llegada', en_consulta: 'Iniciar consulta', completada: 'Completar consulta' };
 
   const auditItems = [
-    cita.createdAt && { label: 'Cita creada', time: cita.createdAt, by: cita.creadoPorNombre || cita.creadoPor },
+    cita.createdAt && { label: 'Cita creada', time: cita.createdAt, by: cita.creadoPorNombre || nombreUsuario(cita.creadoPor, usuariosMap) },
     cita.llegadaAt && { label: 'Llegada registrada', time: cita.llegadaAt },
     cita.inicioConsultaAt && { label: 'Consulta iniciada', time: cita.inicioConsultaAt, by: cita.doctorAsignado },
     cita.completadaAt && { label: 'Consulta completada', time: cita.completadaAt, by: cita.adminModificadoPor },
-    cita.canceladaAt && { label: `Cancelada: ${cita.canceladaMotivo || 'sin motivo'}`, time: cita.canceladaAt, by: cita.canceladaPor },
+    cita.canceladaAt && { label: `Cancelada: ${cita.canceladaMotivo || 'sin motivo'}`, time: cita.canceladaAt, by: cita.canceladaPorNombre || nombreUsuario(cita.canceladaPor, usuariosMap) },
   ].filter(Boolean);
 
   const infoItems = [
@@ -772,6 +789,13 @@ const DetalleCitaDrawer = ({ cita, onClose, onUpdateEstado, onCancelOpen, action
               </button>
             );
           })}
+          {estado === 'cancelada' && canRevert && (
+            <button onClick={() => onRevert(cita)} disabled={actionLoading === cita.id}
+              style={{ flex: 1, height: 36, borderRadius: 9, border: 'none', background: actionLoading === cita.id ? 'var(--slate-200)' : '#059669', color: actionLoading === cita.id ? 'var(--slate-400)' : '#fff', fontSize: 12, fontWeight: 700, cursor: actionLoading === cita.id ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'background 0.15s' }}>
+              <ArrowClockwise size={14} weight="bold" />
+              Revertir cancelación
+            </button>
+          )}
           {estado !== 'cancelada' && estado !== 'completada' && (
             <button onClick={() => onCancelOpen(cita)}
               style={{ height: 36, padding: '0 14px', borderRadius: 9, border: '1px solid #fecdd3', background: '#fff1f2', color: '#f43f5e', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -826,6 +850,49 @@ const ModalCancelar = ({ cita, motivo, onMotivoChange, onConfirm, onClose, loadi
     </div>
   </div>
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUB-COMPONENTES — MODAL REVERTIR CANCELACIÓN
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ModalRevertir = ({ cita, onConfirm, onClose, loading }) => {
+  const estadoPrevio = estadoPrevioACancelacion(cita || {});
+  const destino = getStatus(estadoPrevio);
+  return createPortal(
+    <div className="aa-overlay aa-fade" style={{ zIndex: 100000 }} onClick={(e) => { if (e.target === e.currentTarget && !loading) onClose(); }}>
+      <div className="aa-modal aa-pop" style={{ width: 420, padding: '24px' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <ArrowClockwise size={20} weight="bold" style={{ color: '#059669' }} />
+          </div>
+          <div>
+            <div className="aa-sora" style={{ fontSize: 15, fontWeight: 800, color: 'var(--slate-900)' }}>Revertir cancelación</div>
+            <div style={{ fontSize: 13, color: 'var(--slate-500)', marginTop: 3 }}>{cita?.paciente}</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--slate-600)', lineHeight: 1.5, marginBottom: 18 }}>
+          La cita volverá al estado{' '}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 20, fontSize: 12, fontWeight: 700, background: destino.bg, color: destino.color, border: `1px solid ${destino.border}` }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: destino.dot }} />
+            {destino.label}
+          </span>{' '}
+          y se borrarán el motivo y los datos de la cancelación, como si nunca hubiera ocurrido.
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onClose} className="aa-ghost"
+            style={{ flex: 1, height: 38, borderRadius: 9, border: '1px solid var(--slate-200)', background: 'var(--surface)', color: 'var(--slate-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            Cancelar
+          </button>
+          <button onClick={onConfirm} disabled={loading}
+            style={{ flex: 1, height: 38, borderRadius: 9, border: 'none', background: loading ? 'var(--slate-200)' : '#059669', color: loading ? 'var(--slate-400)' : '#fff', fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', transition: 'background 0.15s' }}>
+            {loading ? 'Revirtiendo...' : 'Sí, revertir'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENTES — MODAL DUPLICADOS
@@ -1223,6 +1290,7 @@ const ModalCrearCita = ({ nuevaCita, setNuevaCita, doctores, consultorios, catal
 
 const AgendaAdmin = () => {
   const { user } = useAuth();
+  const isAdmin = user?.rol === 'admin' || user?.rol === 'admin_maestro';
 
   // ── Data ──────────────────────────────────────────────────────────────
   const [citas, setCitas] = useState([]);
@@ -1231,6 +1299,7 @@ const AgendaAdmin = () => {
   const [catalogoMotivos, setCatalogoMotivos] = useState([]);
   const [catalogoSucursales, setCatalogoSucursales] = useState([]);
   const [todosLosPacientes, setTodosLosPacientes] = useState([]);
+  const [usuariosMap, setUsuariosMap] = useState({});
 
   // ── UI ────────────────────────────────────────────────────────────────
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -1257,6 +1326,8 @@ const AgendaAdmin = () => {
   const [showCancelarModal, setShowCancelarModal] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
+  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [revertTarget, setRevertTarget] = useState(null);
 
   // Formulario nueva cita
   const emptyForm = {
@@ -1329,6 +1400,16 @@ const AgendaAdmin = () => {
       .catch(() => {});
     getDocs(collection(db, 'pacientes'))
       .then((snap) => setTodosLosPacientes(snap.docs.map((d) => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
+    getDocs(collection(db, 'users'))
+      .then((snap) => {
+        const map = {};
+        snap.docs.forEach((d) => {
+          const u = d.data();
+          map[d.id] = u.nombre || u.nombreCompleto || u.displayName || u.email || '';
+        });
+        setUsuariosMap(map);
+      })
       .catch(() => {});
   }, []);
 
@@ -1424,6 +1505,37 @@ const AgendaAdmin = () => {
     }
     setActionLoading('');
   }, [cancelTarget, cancelMotivo, user, showToast, selectedCita]);
+
+  const handleRevertCancel = useCallback(async () => {
+    if (!revertTarget) return;
+    setActionLoading(revertTarget.id);
+    try {
+      const estadoPrevio = estadoPrevioACancelacion(revertTarget);
+      await updateDoc(doc(db, 'citas', revertTarget.id), {
+        estado: estadoPrevio,
+        canceladaAt: deleteField(),
+        canceladaMotivo: deleteField(),
+        canceladaPor: deleteField(),
+        canceladaPorNombre: deleteField(),
+        canceladaPorUid: deleteField(),
+        adminModificadoPor: user?.nombre || 'Admin',
+        adminModificadoPorUid: user?.uid || '',
+        adminModificadoAt: serverTimestamp(),
+      });
+      showToast(`Cancelación revertida · ${getStatus(estadoPrevio).label}`);
+      setShowRevertModal(false);
+      setRevertTarget(null);
+    } catch (err) {
+      console.error(err);
+      showToast('Error al revertir la cancelación', 'error');
+    }
+    setActionLoading('');
+  }, [revertTarget, user, showToast]);
+
+  const openRevertModal = useCallback((cita) => {
+    setRevertTarget(cita);
+    setShowRevertModal(true);
+  }, []);
 
   const handlePacienteSearch = useCallback((q) => {
     setNuevaCita((prev) => ({ ...prev, paciente: q, pacienteId: '', pacienteTelefono: '' }));
@@ -1726,7 +1838,7 @@ const AgendaAdmin = () => {
         {/* Panel de auditoría */}
         {showAuditPanel && (
           <div style={{ width: 340, borderLeft: '1px solid var(--slate-200)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
-            <AuditPanel citas={citas} stats={stats} onClose={() => setShowAuditPanel(false)} />
+            <AuditPanel citas={citas} stats={stats} usuariosMap={usuariosMap} onClose={() => setShowAuditPanel(false)} />
           </div>
         )}
       </div>
@@ -1738,6 +1850,9 @@ const AgendaAdmin = () => {
           onClose={() => setSelectedCita(null)}
           onUpdateEstado={handleUpdateEstado}
           onCancelOpen={openCancelModal}
+          onRevert={openRevertModal}
+          canRevert={isAdmin}
+          usuariosMap={usuariosMap}
           actionLoading={actionLoading}
           currentTime={currentTime}
         />
@@ -1760,6 +1875,16 @@ const AgendaAdmin = () => {
           onConfirm={handleCancel}
           onClose={() => { setShowCancelarModal(false); setCancelTarget(null); setCancelMotivo(''); }}
           loading={actionLoading === cancelTarget?.id}
+        />
+      )}
+
+      {/* ── MODAL REVERTIR CANCELACIÓN ────────────────────────────────── */}
+      {showRevertModal && (
+        <ModalRevertir
+          cita={revertTarget}
+          onConfirm={handleRevertCancel}
+          onClose={() => { setShowRevertModal(false); setRevertTarget(null); }}
+          loading={actionLoading === revertTarget?.id}
         />
       )}
 

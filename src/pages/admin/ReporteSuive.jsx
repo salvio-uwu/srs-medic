@@ -3,8 +3,8 @@ import { collection, getDocs, onSnapshot, orderBy, query, where, Timestamp } fro
 import { db } from '../../config/firebase';
 import {
   Calendar, Download, FileSpreadsheet, Loader2, Search, Trash2, Upload, Users,
-  Activity, BarChart3, Hash, MapPin, ChevronDown, ChevronUp, Stethoscope,
-  AlertCircle,
+  BarChart3, MapPin, ChevronDown, ChevronUp, Stethoscope,
+  AlertCircle, AlertTriangle,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -77,10 +77,10 @@ const reconstruirCodigo = (codigo, desc) => {
 
 const parseCIE10 = (texto) => {
   if (!texto) return [];
-  const matches = texto.match(/([A-Z]\d{2}(?:\.\d{1,2})?)\s*[-–—]?\s*([^,;\n]*)/gi);
+  const matches = texto.match(/([A-Z]\d{2,3}(?:\.\d{1,2})?)\s*[-–—]?\s*([^,;\n]*)/gi);
   if (!matches) return [];
   return matches.map((m) => {
-    const parts = m.match(/^([A-Z]\d{2}(?:\.\d{1,2})?)\s*[-–—]?\s*(.*)/i);
+    const parts = m.match(/^([A-Z]\d{2,3}(?:\.\d{1,2})?)\s*[-–—]?\s*(.*)/i);
     if (!parts) return null;
     const codigo = parts[1].toUpperCase();
     const descripcion = limpiarDescripcion(parts[2], codigo);
@@ -435,7 +435,9 @@ const ReporteSuive = () => {
   const [fechaInicio, setFechaInicio] = useState(toDateInput(primerDiaMes));
   const [fechaFin, setFechaFin] = useState(toDateInput(hoy));
   const [consultorios, setConsultorios] = useState([]);
-  const [selectedConsultorio, setSelectedConsultorio] = useState('todos');
+  const [sucursales, setSucursales] = useState([]);
+  const [selectedSucursales, setSelectedSucursales] = useState([]);
+  const [selectedConsultorios, setSelectedConsultorios] = useState([]);
   const [incluirRelacion, setIncluirRelacion] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -444,6 +446,22 @@ const ReporteSuive = () => {
   const [templateName, setTemplateName] = useState(getTemplateName);
   const [showPacientes, setShowPacientes] = useState(false);
   const fileInputRef = useRef(null);
+  const [advertencias, setAdvertencias] = useState([]);
+  const [showSucursales, setShowSucursales] = useState(false);
+  const [showConsultorios, setShowConsultorios] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (!showSucursales && !showConsultorios) return;
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowSucursales(false);
+        setShowConsultorios(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSucursales, showConsultorios]);
 
   /* Subir plantilla */
   const handleTemplateUpload = (e) => {
@@ -480,14 +498,74 @@ const ReporteSuive = () => {
     setTemplateName('');
   };
 
-  /* Cargar catálogo de consultorios */
+  /* Cargar catálogos de sucursales y consultorios */
+  const consultoriosInicializados = useRef(false);
   useEffect(() => {
-    const q = query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
+    const qSuc = query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'));
+    const unsubSuc = onSnapshot(qSuc, (snap) => {
+      setSucursales(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => s.activo !== false));
+    });
+
+    const qCon = query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'));
+    const unsubCon = onSnapshot(qCon, (snap) => {
       setConsultorios(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((c) => c.activo !== false));
     });
-    return () => unsub();
+
+    return () => { unsubSuc(); unsubCon(); };
   }, []);
+
+  useEffect(() => {
+    if (consultorios.length > 0 && !consultoriosInicializados.current) {
+      setSelectedConsultorios(consultorios.map((c) => c.id));
+      setSelectedSucursales([]);
+      consultoriosInicializados.current = true;
+    }
+  }, [consultorios]);
+
+  /* Al cambiar sucursales seleccionadas, filtrar consultorios visibles */
+  const consultoriosFiltradosPorSucursal = useMemo(() => {
+    if (selectedSucursales.length === 0) return consultorios;
+    const sucSet = new Set(selectedSucursales);
+    return consultorios.filter((c) => sucSet.has(c.sucursalId));
+  }, [consultorios, selectedSucursales]);
+
+  /* Sincronizar selectedConsultorios cuando cambia el filtro de sucursal */
+  useEffect(() => {
+    if (consultoriosFiltradosPorSucursal.length === 0) return;
+    const visibles = new Set(consultoriosFiltradosPorSucursal.map((c) => c.id));
+    setSelectedConsultorios((prev) => {
+      if (prev.length === 0) return consultoriosFiltradosPorSucursal.map((c) => c.id);
+      return prev.filter((id) => visibles.has(id));
+    });
+  }, [consultoriosFiltradosPorSucursal]);
+
+  const toggleSucursal = (id, all) => {
+    if (all) {
+      setSelectedSucursales([]);
+      return;
+    }
+    setSelectedSucursales((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((x) => x !== id);
+        return next;
+      }
+      return [...prev, id];
+    });
+  };
+
+  const toggleConsultorio = (id, all) => {
+    if (all) {
+      setSelectedConsultorios(consultoriosFiltradosPorSucursal.map((c) => c.id));
+      return;
+    }
+    setSelectedConsultorios((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((x) => x !== id);
+        return next.length === 0 ? prev : next;
+      }
+      return [...prev, id];
+    });
+  };
 
   /* ─── Generar reporte ─── */
   const generarReporte = async () => {
@@ -495,6 +573,7 @@ const ReporteSuive = () => {
     setError('');
     setResultados(null);
     setDetallePacientes([]);
+    setAdvertencias([]);
 
     try {
       const inicio = new Date(`${fechaInicio}T00:00:00`);
@@ -517,18 +596,35 @@ const ReporteSuive = () => {
         orderBy('fecha', 'asc')
       );
       const histSnap = await getDocs(qHistorial);
-      const historiales = histSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      let historiales = histSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      if (historiales.length === 0) {
+      /* 1b) Consultar consultas (consultorio rápido) — sin índice, filtramos client-side */
+      let consultasRapidas = [];
+      try {
+        const qConsultas = query(collection(db, 'consultas'), orderBy('fecha', 'asc'));
+        const consultasSnap = await getDocs(qConsultas);
+        const fechaInicioStr = `${fechaInicio}T00:00:00.000Z`;
+        const fechaFinStr = `${fechaFin}T23:59:59.999Z`;
+        consultasRapidas = consultasSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((c) => {
+            const f = String(c.fecha || '');
+            return f >= fechaInicioStr && f <= fechaFinStr && String(c.diagnostico || '').trim();
+          });
+      } catch (e) {
+        console.warn('No se pudieron consultar las consultas rápidas:', e);
+      }
+
+      if (historiales.length === 0 && consultasRapidas.length === 0) {
         setError('No se encontraron consultas en el rango de fechas seleccionado.');
         setLoading(false);
         return;
       }
 
-      /* 2) Obtener IDs únicos de pacientes */
+      /* 2) Obtener IDs únicos de pacientes (solo de historial_clinico) */
       const pacienteIds = [...new Set(historiales.map((h) => h.pacienteId).filter(Boolean))];
 
-      /* 3) Batch fetch de pacientes (sexo) */
+      /* 3) Batch fetch de pacientes (sexo, nombre, fecha nacimiento) */
       const pacientesMap = new Map();
       const chunks = [];
       for (let i = 0; i < pacienteIds.length; i += 30) {
@@ -547,11 +643,17 @@ const ReporteSuive = () => {
         });
       }
 
-      /* 4) Filtrar por consultorio si aplica */
+      /* 4) Filtrar por consultorios seleccionados */
+      const advertenciasLista = [];
       let historialesFiltrados = historiales;
-      if (selectedConsultorio !== 'todos') {
-        const consultorioSeleccionado = consultorios.find((c) => c.id === selectedConsultorio);
-        const nombreConsultorio = consultorioSeleccionado?.nombre || '';
+      let consultasExcluidasConsultorio = 0;
+      const todosConsultoriosSeleccionados = selectedConsultorios.length >= consultorios.length;
+
+      if (!todosConsultoriosSeleccionados && selectedConsultorios.length > 0) {
+        const selectedSet = new Set(selectedConsultorios);
+        const nombresConsultorios = new Set(
+          consultorios.filter((c) => selectedSet.has(c.id)).map((c) => c.nombre).filter(Boolean)
+        );
 
         const sinCampoDirecto = historiales.filter((h) => !h.consultorioId && h.citaId);
         const citasMap = new Map();
@@ -568,23 +670,24 @@ const ReporteSuive = () => {
           }
         }
 
+        const antes = historiales.length;
         historialesFiltrados = historiales.filter((h) => {
-          if (h.consultorioId) {
-            return h.consultorioId === selectedConsultorio;
-          }
-          if (h.consultorioNombre) {
-            return h.consultorioNombre === nombreConsultorio;
-          }
+          if (h.consultorioId) return selectedSet.has(h.consultorioId);
+          if (h.consultorioNombre) return nombresConsultorios.has(h.consultorioNombre);
           if (h.citaId) {
             const cita = citasMap.get(h.citaId);
             if (!cita) return false;
-            return cita.consultorioId === selectedConsultorio || cita.consultorioNombre === nombreConsultorio;
+            return selectedSet.has(cita.consultorioId) || nombresConsultorios.has(cita.consultorioNombre);
           }
           return false;
         });
+        consultasExcluidasConsultorio = antes - historialesFiltrados.length;
+        if (consultasExcluidasConsultorio > 0) {
+          advertenciasLista.push(`${consultasExcluidasConsultorio} consultas excluidas por no pertenecer a los consultorios seleccionados.`);
+        }
 
-        if (historialesFiltrados.length === 0) {
-          setError('No se encontraron consultas para el consultorio seleccionado en el rango de fechas.');
+        if (historialesFiltrados.length === 0 && consultasRapidas.length === 0) {
+          setError('No se encontraron consultas para los consultorios seleccionados en el rango de fechas.');
           setLoading(false);
           return;
         }
@@ -593,15 +696,9 @@ const ReporteSuive = () => {
       /* 5) Procesar datos: extraer diagnósticos y agrupar */
       const agrupado = {};
       const listaPacientes = [];
+      let consultasSinCIE10 = 0;
 
-      for (const h of historialesFiltrados) {
-        const fechaConsulta = h.fecha?.toDate ? h.fecha.toDate() : new Date();
-        const px = pacientesMap.get(h.pacienteId) || {};
-        const fechaNac = h.px_info?.fecha_nacimiento || px.fechaNacimiento || '';
-        const edad = calcularEdad(fechaNac, fechaConsulta);
-        const sexoNorm = normalizeSexo(px.sexo);
-        const grupoEdadIdx = getGrupoEdadIdx(edad);
-
+      const procesarRegistro = (h, pxData, consultaFecha, origen) => {
         let diagnosticos = [];
 
         const cie10Array = h.consulta?.diagnostico?.cie10;
@@ -622,7 +719,13 @@ const ReporteSuive = () => {
           diagnosticos = parseCIE10(textoEnf);
         }
 
-        if (diagnosticos.length === 0) continue;
+        if (diagnosticos.length === 0) {
+          consultasSinCIE10++;
+          return;
+        }
+
+        const sexoNorm = pxData.sexo || 'I';
+        const grupoEdadIdx = pxData.grupoEdadIdx;
 
         for (const dx of diagnosticos) {
           const grupo = getGrupoSuive(dx.codigo);
@@ -651,15 +754,96 @@ const ReporteSuive = () => {
         if (incluirRelacion) {
           for (const dx of diagnosticos) {
             listaPacientes.push({
-              paciente: px.nombre || h.pacienteNombre || 'Sin nombre',
+              paciente: pxData.nombre || h.pacienteNombre || 'Sin nombre',
+              sexo: sexoNorm,
+              edad: pxData.edad >= 0 ? pxData.edad : '?',
+              diagnostico: `${dx.codigo} - ${dx.descripcion}`,
+              fecha: consultaFecha.toLocaleDateString('es-MX'),
+              medico: h.medicoNombre || '',
+              origen,
+            });
+          }
+        }
+      };
+
+      /* Procesar historial_clinico */
+      for (const h of historialesFiltrados) {
+        const fechaConsulta = h.fecha?.toDate ? h.fecha.toDate() : new Date();
+        const px = pacientesMap.get(h.pacienteId) || {};
+        const fechaNac = h.px_info?.fecha_nacimiento || px.fechaNacimiento || '';
+        const edad = calcularEdad(fechaNac, fechaConsulta);
+        const pxData = {
+          sexo: normalizeSexo(px.sexo),
+          nombre: px.nombre || h.pacienteNombre || '',
+          grupoEdadIdx: getGrupoEdadIdx(edad),
+          edad,
+        };
+        procesarRegistro(h, pxData, fechaConsulta, 'expediente');
+      }
+
+      /* Procesar consultas (consultorio rápido) */
+      for (const c of consultasRapidas) {
+        let diagnosticos = parseCIE10(c.diagnostico || '');
+        if (diagnosticos.length === 0) {
+          consultasSinCIE10++;
+          continue;
+        }
+
+        const fechaConsulta = new Date(c.fecha || Date.now());
+        const edadRaw = parseInt(c.paciente?.edad, 10);
+        const edad = Number.isNaN(edadRaw) ? -1 : edadRaw;
+        const sexoNorm = 'I';
+        const pxData = {
+          sexo: sexoNorm,
+          nombre: c.paciente?.nombre || '',
+          grupoEdadIdx: getGrupoEdadIdx(edad),
+          edad,
+        };
+
+        for (const dx of diagnosticos) {
+          const grupo = getGrupoSuive(dx.codigo);
+          const key = `${dx.codigo} - ${dx.descripcion || 'Sin descripción'}`;
+
+          if (!agrupado[grupo]) agrupado[grupo] = {};
+          if (!agrupado[grupo][key]) {
+            agrupado[grupo][key] = {
+              codigo: dx.codigo,
+              descripcion: dx.descripcion || 'Sin descripción',
+              conteo: GRUPOS_EDAD.map(() => ({ H: 0, M: 0, I: 0 })),
+              ignorados: { H: 0, M: 0, I: 0 },
+              total: { H: 0, M: 0, I: 0 },
+            };
+          }
+
+          const entry = agrupado[grupo][key];
+          if (pxData.grupoEdadIdx >= 0) {
+            entry.conteo[pxData.grupoEdadIdx][sexoNorm]++;
+          } else {
+            entry.ignorados[sexoNorm]++;
+          }
+          entry.total[sexoNorm]++;
+        }
+
+        if (incluirRelacion) {
+          for (const dx of diagnosticos) {
+            listaPacientes.push({
+              paciente: pxData.nombre || c.paciente?.nombre || 'Sin nombre',
               sexo: sexoNorm,
               edad: edad >= 0 ? edad : '?',
               diagnostico: `${dx.codigo} - ${dx.descripcion}`,
               fecha: fechaConsulta.toLocaleDateString('es-MX'),
-              medico: h.medicoNombre || '',
+              medico: c.doctorNombre || '',
+              origen: 'consultorio',
             });
           }
         }
+      }
+
+      if (consultasSinCIE10 > 0) {
+        advertenciasLista.push(`${consultasSinCIE10} consultas no contienen un código CIE-10 válido y fueron omitidas del reporte.`);
+      }
+      if (consultasRapidas.length > 0) {
+        advertenciasLista.push(`${consultasRapidas.length} consultas del módulo rápido fueron incluidas. El sexo no se registra en este módulo (figura como Indeterminado).`);
       }
 
       /* 6) Convertir a array ordenado */
@@ -676,6 +860,7 @@ const ReporteSuive = () => {
 
       setResultados(tablaFinal);
       setDetallePacientes(listaPacientes);
+      setAdvertencias(advertenciasLista);
     } catch (err) {
       console.error('Error generando reporte SUIVE:', err);
       setError(`Error al generar el reporte: ${err.message}`);
@@ -723,21 +908,13 @@ const ReporteSuive = () => {
           }
 
           if (ignPair) {
-            let ignM = row.ignorados.H;
-            let ignF = row.ignorados.M;
-            for (let i = 0; i < GRUPOS_EDAD.length; i++) {
-              ignM += row.conteo[i].I;
-            }
-            ignM += row.ignorados.I;
-            writeCell(ws, currentRow, ignPair.mCol, ignM);
-            writeCell(ws, currentRow, ignPair.fCol, ignF);
+            writeCell(ws, currentRow, ignPair.mCol, row.ignorados.H);
+            writeCell(ws, currentRow, ignPair.fCol, row.ignorados.M);
           }
 
           if (totalPair) {
-            let totalM = row.total.H + row.total.I;
-            let totalF = row.total.M;
-            writeCell(ws, currentRow, totalPair.mCol, totalM);
-            writeCell(ws, currentRow, totalPair.fCol, totalF);
+            writeCell(ws, currentRow, totalPair.mCol, row.total.H);
+            writeCell(ws, currentRow, totalPair.fCol, row.total.M);
           }
 
           if (totalGeneralCol >= 0) {
@@ -754,10 +931,10 @@ const ReporteSuive = () => {
         }
 
         if (detallePacientes.length > 0) {
-          const encPx = ['Paciente', 'Sexo', 'Edad', 'Diagnóstico', 'Fecha', 'Médico'];
-          const filasPx = [encPx, ...detallePacientes.map((p) => [p.paciente, p.sexo, p.edad, p.diagnostico, p.fecha, p.medico])];
+          const encPx = ['Paciente', 'Sexo', 'Edad', 'Diagnóstico', 'Fecha', 'Médico', 'Origen'];
+          const filasPx = [encPx, ...detallePacientes.map((p) => [p.paciente, p.sexo, p.edad, p.diagnostico, p.fecha, p.medico, p.origen === 'consultorio' ? 'Consultorio rápido' : 'Expediente'])];
           const wsPx = XLSX.utils.aoa_to_sheet(filasPx);
-          wsPx['!cols'] = [{ wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 50 }, { wch: 14 }, { wch: 30 }];
+          wsPx['!cols'] = [{ wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 50 }, { wch: 14 }, { wch: 30 }, { wch: 18 }];
           XLSX.utils.book_append_sheet(wb, wsPx, 'Relación Pacientes');
         }
 
@@ -822,10 +999,10 @@ const ReporteSuive = () => {
     XLSX.utils.book_append_sheet(wb, ws, 'SUIVE');
 
     if (detallePacientes.length > 0) {
-      const encPx = ['Paciente', 'Sexo', 'Edad', 'Diagnóstico', 'Fecha', 'Médico'];
-      const filasPx = [encPx, ...detallePacientes.map((p) => [p.paciente, p.sexo, p.edad, p.diagnostico, p.fecha, p.medico])];
+      const encPx = ['Paciente', 'Sexo', 'Edad', 'Diagnóstico', 'Fecha', 'Médico', 'Origen'];
+      const filasPx = [encPx, ...detallePacientes.map((p) => [p.paciente, p.sexo, p.edad, p.diagnostico, p.fecha, p.medico, p.origen === 'consultorio' ? 'Consultorio rápido' : 'Expediente'])];
       const wsPx = XLSX.utils.aoa_to_sheet(filasPx);
-      wsPx['!cols'] = [{ wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 50 }, { wch: 14 }, { wch: 30 }];
+      wsPx['!cols'] = [{ wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 50 }, { wch: 14 }, { wch: 30 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, wsPx, 'Relación Pacientes');
     }
 
@@ -854,30 +1031,25 @@ const ReporteSuive = () => {
     return { conteo: totConteo, ignorados: totIgnorados, total: totTotal };
   }, [resultados]);
 
-  /* ─── Estadísticas resumen ─── */
-  const stats = useMemo(() => {
-    if (!resultados || resultados.length === 0) return null;
-    const gruposUnicos = new Set(resultados.map((r) => r.grupo));
-    const diagnosticosUnicos = new Set(resultados.map((r) => `${r.codigo} - ${r.descripcion}`));
-    const totalCasos = resultados.reduce((acc, r) => acc + r.total.H + r.total.M + r.total.I, 0);
-    const totalMasculino = resultados.reduce((acc, r) => acc + r.total.H, 0);
-    const totalFemenino = resultados.reduce((acc, r) => acc + r.total.M, 0);
-    return {
-      totalCasos,
-      totalMasculino,
-      totalFemenino,
-      gruposEncontrados: gruposUnicos.size,
-      diagnosticosUnicos: diagnosticosUnicos.size,
-      totalPacientes: detallePacientes.length || 0,
-    };
-  }, [resultados, detallePacientes]);
-
   /* ─── Nombre del consultorio seleccionado ─── */
   const consultorioNombre = useMemo(() => {
-    if (selectedConsultorio === 'todos') return 'Todos los consultorios';
-    const c = consultorios.find((c) => c.id === selectedConsultorio);
-    return c ? `${c.nombre}${c.sucursal ? ` (${c.sucursal})` : ''}` : 'Seleccionado';
-  }, [selectedConsultorio, consultorios]);
+    if (selectedConsultorios.length === 0) return 'Todos los consultorios';
+    if (selectedConsultorios.length >= consultorios.length && selectedSucursales.length === 0) return 'Todos los consultorios';
+    if (selectedConsultorios.length === 1) {
+      const c = consultorios.find((c) => c.id === selectedConsultorios[0]);
+      return c ? `${c.nombre}${c.sucursal ? ` (${c.sucursal})` : ''}` : 'Seleccionado';
+    }
+    return `${selectedConsultorios.length} consultorios`;
+  }, [selectedConsultorios, consultorios, selectedSucursales]);
+
+  const sucursalNombre = useMemo(() => {
+    if (selectedSucursales.length === 0) return 'Todas las sucursales';
+    if (selectedSucursales.length === 1) {
+      const s = sucursales.find((s) => s.id === selectedSucursales[0]);
+      return s?.nombre || 'Seleccionada';
+    }
+    return `${selectedSucursales.length} sucursales`;
+  }, [selectedSucursales, sucursales]);
 
   /* ─── Formatear rango de fechas ─── */
   const rangoTexto = useMemo(() => {
@@ -898,134 +1070,115 @@ const ReporteSuive = () => {
   }, [resultados]);
 
   /* ─── Render ─── */
+  const ckInputStyle = { accentColor: '#0077B6', cursor: 'pointer', width: 13, height: 13, flexShrink: 0 };
+  const inputStyle = { padding: '6px 8px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '.74rem', color: '#334155', outline: 'none', fontFamily: 'inherit', width: 142 };
+  const toggleBtnStyle = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: '1px solid #e2e8f0', background: '#fafbfc', fontSize: '.7rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', marginBottom: 1 };
+  const ckDropdownItem = { display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', fontSize: '.72rem', color: '#334155', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
+
   return (
     <div className="rs">
       <style>{S}</style>
 
-      {/* ═══ Section header ═══ */}
-      <div className="rs-section">
-        <div className="rs-section-l">
-          <h2><Stethoscope size={18} color="#0077B6" /> Reporte SUIVE</h2>
-          <p>Sistema Único de Información para la Vigilancia Epidemiológica · Morbilidad por diagnóstico CIE-10</p>
+      {/* ═══ Section header (compacto) ═══ */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div>
+          <h2 style={{ fontFamily: "'Sora', sans-serif", fontSize: '.9rem', fontWeight: 700, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 7 }}>
+            <Stethoscope size={16} color="#0077B6" /> SUIVE
+          </h2>
         </div>
-        <div className="rs-section-r">
-          <span className="rs-tag"><Calendar size={11} /> {rangoTexto}</span>
-          <span className="rs-tag"><MapPin size={11} /> {consultorioNombre}</span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="rs-tag"><Calendar size={10} /> {rangoTexto}</span>
+          <span className="rs-tag"><MapPin size={10} /> {sucursalNombre}</span>
+          <span className="rs-tag"><MapPin size={10} /> {consultorioNombre}</span>
         </div>
       </div>
 
       {/* ═══ Filtros ═══ */}
-      <div className="rs-panel">
-        <div className="rs-panel-head">
-          <h3><Search size={14} /> Filtros del reporte</h3>
-        </div>
-        <div className="rs-panel-body">
-          <div className="rs-fields">
-            <div className="rs-field">
-              <label>Fecha inicio</label>
-              <div className="rs-input-wrap">
-                <Calendar size={13} />
-                <input
-                  type="date"
-                  value={fechaInicio}
-                  onChange={(e) => setFechaInicio(e.target.value)}
-                  className="rs-input"
-                />
-              </div>
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 16px', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <label style={{ fontSize: '.62rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.5px' }}>Inicio</label>
+              <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} style={inputStyle} />
             </div>
-
-            <div className="rs-field">
-              <label>Fecha fin</label>
-              <div className="rs-input-wrap">
-                <Calendar size={13} />
-                <input
-                  type="date"
-                  value={fechaFin}
-                  onChange={(e) => setFechaFin(e.target.value)}
-                  className="rs-input"
-                />
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <label style={{ fontSize: '.62rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.5px' }}>Fin</label>
+              <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} style={inputStyle} />
             </div>
+            <div style={{ height: 1, width: 1, background: '#e2e8f0', alignSelf: 'stretch', margin: '4px 2px' }} />
 
-            <div className="rs-field">
-              <label>Consultorio</label>
-              <select
-                value={selectedConsultorio}
-                onChange={(e) => setSelectedConsultorio(e.target.value)}
-                className="rs-select"
-              >
-                <option value="todos">Todos los consultorios</option>
-                {consultorios.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nombre}{c.sucursal ? ` (${c.sucursal})` : ''}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="rs-actions">
-            <label className="rs-check">
-              <input
-                type="checkbox"
-                checked={incluirRelacion}
-                onChange={(e) => setIncluirRelacion(e.target.checked)}
-              />
-              <Users size={13} />
-              <span>Incluir relación de pacientes</span>
-            </label>
-
-            <button
-              onClick={generarReporte}
-              disabled={loading}
-              className="rs-btn rs-btn-primary rs-ml-auto"
-            >
-              {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-              {loading ? 'Generando reporte...' : 'Generar reporte'}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══ Plantilla SUIVE ═══ */}
-      <div className="rs-panel">
-        <div className="rs-panel-head">
-          <h3><FileSpreadsheet size={14} /> Plantilla oficial SUIVE</h3>
-          {templateName && <span className="rs-tpl-badge">Configurada</span>}
-        </div>
-        <div className="rs-panel-body">
-          <div className="rs-tpl">
-            <div className="rs-tpl-l">
-              {templateName ? (
-                <>
-                  <div className="rs-tpl-chip">
-                    <FileSpreadsheet size={14} className="rs-tpl-icon" />
-                    <span>{templateName}</span>
-                    <button onClick={handleRemoveTemplate} title="Quitar plantilla">
-                      <Trash2 size={12} />
-                    </button>
+            <div ref={dropdownRef} style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => { setShowSucursales(!showSucursales); setShowConsultorios(false); }} style={toggleBtnStyle}>
+                Sucursales {showSucursales ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                <span style={{ fontWeight: 400, color: '#94a3b8', fontSize: '.62rem' }}>{selectedSucursales.length === 0 ? 'Todas' : selectedSucursales.length}</span>
+              </button>
+              {showSucursales && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,.12)', zIndex: 50, minWidth: 220, padding: '4px 0', animation: 'rpFadeIn .15s ease' }}>
+                  <div style={{ maxHeight: 170, overflowY: 'auto', paddingRight: 2 }} className="rs-suive-scroll">
+                    <label style={{ ...ckDropdownItem, fontWeight: 600, color: '#0f172a' }}>
+                      <input type="checkbox" checked={selectedSucursales.length === 0} onChange={() => setSelectedSucursales([])} style={ckInputStyle} />
+                      Todas las sucursales
+                    </label>
+                    {sucursales.map((s) => (
+                      <label key={s.id} style={ckDropdownItem}>
+                        <input type="checkbox" checked={selectedSucursales.includes(s.id)} onChange={() => toggleSucursal(s.id, false)} style={ckInputStyle} />
+                        {s.nombre}
+                      </label>
+                    ))}
                   </div>
-                  <span className="rs-tpl-hint">Se usará al exportar el reporte en formato oficial SUIVE.</span>
-                </>
-              ) : (
-                <span className="rs-tpl-empty">Sin plantilla cargada — el reporte se exportará en formato genérico.</span>
+                </div>
               )}
             </div>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleTemplateUpload}
-              style={{ display: 'none' }}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="rs-btn rs-btn-ghost"
-            >
-              <Upload size={13} />
-              {templateName ? 'Cambiar plantilla' : 'Subir plantilla XLSX'}
-            </button>
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => { setShowConsultorios(!showConsultorios); setShowSucursales(false); }} style={toggleBtnStyle}>
+                Consultorios {showConsultorios ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                <span style={{ fontWeight: 400, color: '#94a3b8', fontSize: '.62rem' }}>{selectedConsultorios.length >= consultorios.length ? 'Todos' : selectedConsultorios.length}</span>
+              </button>
+              {showConsultorios && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,.12)', zIndex: 50, minWidth: 220, padding: '4px 0', animation: 'rpFadeIn .15s ease' }}>
+                  <div style={{ maxHeight: 170, overflowY: 'auto', paddingRight: 2 }} className="rs-suive-scroll">
+                    <label style={{ ...ckDropdownItem, fontWeight: 600, color: '#0f172a' }}>
+                      <input type="checkbox" checked={selectedConsultorios.length >= consultoriosFiltradosPorSucursal.length} onChange={(e) => { if (e.target.checked) toggleConsultorio(null, true); }} style={ckInputStyle} />
+                      Todos los consultorios
+                    </label>
+                    {consultoriosFiltradosPorSucursal.map((c) => (
+                      <label key={c.id} style={ckDropdownItem}>
+                        <input type="checkbox" checked={selectedConsultorios.includes(c.id)} onChange={() => toggleConsultorio(c.id, false)} style={ckInputStyle} />
+                        {c.nombre}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            </div>
+
+            <div style={{ height: 1, width: 1, background: '#e2e8f0', alignSelf: 'stretch', margin: '4px 2px' }} />
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '.7rem', color: '#64748b', cursor: 'pointer', userSelect: 'none', paddingBottom: 5 }}>
+              <input type="checkbox" checked={incluirRelacion} onChange={(e) => setIncluirRelacion(e.target.checked)} style={{ accentColor: '#0077B6' }} />
+              <Users size={11} />
+              Relación
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '.68rem', color: '#94a3b8', paddingBottom: 4 }}>
+              {templateName ? (
+                <>
+                  <FileSpreadsheet size={11} color="#059669" />
+                  <span style={{ color: '#065f46', fontWeight: 500, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{templateName}</span>
+                  <button onClick={handleRemoveTemplate} title="Quitar" style={{ padding: '0 2px', background: 'transparent', border: 0, cursor: 'pointer', color: '#94a3b8', fontSize: '.6rem' }}><Trash2 size={9} /></button>
+                </>
+              ) : (
+                <span style={{ cursor: 'pointer', paddingBottom: 1 }} onClick={() => fileInputRef.current?.click()}><Upload size={10} /> Plantilla</span>
+              )}
+            </div>
           </div>
+          <button onClick={generarReporte} disabled={loading} className="rs-btn rs-btn-primary" style={{ padding: '6px 16px', fontSize: '.72rem' }}>
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+            {loading ? 'Generando...' : 'Generar'}
+          </button>
         </div>
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleTemplateUpload} style={{ display: 'none' }} />
       </div>
 
       {/* ═══ Error ═══ */}
@@ -1036,56 +1189,25 @@ const ReporteSuive = () => {
         </div>
       )}
 
+      {/* ═══ Advertencias ═══ */}
+      {advertencias.length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: '6px',
+          background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px',
+          padding: '14px 16px', marginBottom: '14px'
+        }}>
+          {advertencias.map((adv, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '.76rem', color: '#92400e' }}>
+              {i === 0 ? <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1, color: '#d97706' }} /> : <span style={{ width: 15, flexShrink: 0 }} />}
+              <span>{adv}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ═══ Resultados ═══ */}
-      {resultados && resultados.length > 0 && stats && (
+      {resultados && resultados.length > 0 && (
         <>
-          {/* ── KPIs ── */}
-          <div className="rs-kpis">
-            <div className="rs-kpi">
-              <div className="rs-kpi-r">
-                <span className="rs-kpi-l">Casos totales</span>
-                <div className="rs-kpi-i" style={{ background: '#eff6ff' }}>
-                  <Activity size={15} color="#3b82f6" />
-                </div>
-              </div>
-              <p className="rs-kpi-v">{stats.totalCasos}</p>
-              <p className="rs-kpi-s">{stats.totalMasculino} H · {stats.totalFemenino} M</p>
-            </div>
-
-            <div className="rs-kpi">
-              <div className="rs-kpi-r">
-                <span className="rs-kpi-l">Dx únicos</span>
-                <div className="rs-kpi-i" style={{ background: '#f0fdfa' }}>
-                  <Hash size={15} color="#0d9488" />
-                </div>
-              </div>
-              <p className="rs-kpi-v">{stats.diagnosticosUnicos}</p>
-              <p className="rs-kpi-s">códigos CIE-10 distintos</p>
-            </div>
-
-            <div className="rs-kpi">
-              <div className="rs-kpi-r">
-                <span className="rs-kpi-l">Grupos SUIVE</span>
-                <div className="rs-kpi-i" style={{ background: '#faf5ff' }}>
-                  <BarChart3 size={15} color="#8b5cf6" />
-                </div>
-              </div>
-              <p className="rs-kpi-v">{stats.gruposEncontrados}</p>
-              <p className="rs-kpi-s">capítulos con casos</p>
-            </div>
-
-            <div className="rs-kpi">
-              <div className="rs-kpi-r">
-                <span className="rs-kpi-l">Periodo</span>
-                <div className="rs-kpi-i" style={{ background: '#fffbeb' }}>
-                  <Calendar size={15} color="#d97706" />
-                </div>
-              </div>
-              <p className="rs-kpi-r-text">{rangoTexto}</p>
-              <p className="rs-kpi-r-sub">{consultorioNombre}</p>
-            </div>
-          </div>
-
           {/* ── Tabla SUIVE ── */}
           <div className="rs-tw">
             <div className="rs-tw-head">
@@ -1230,6 +1352,7 @@ const ReporteSuive = () => {
                         <th>Diagnóstico</th>
                         <th>Fecha</th>
                         <th>Médico</th>
+                        <th>Origen</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1244,6 +1367,7 @@ const ReporteSuive = () => {
                           <td className="rs-px-dx" title={p.diagnostico}>{p.diagnostico}</td>
                           <td className="rs-px-fecha">{p.fecha}</td>
                           <td>{p.medico || '—'}</td>
+                          <td className="rs-px-fecha">{p.origen === 'consultorio' ? 'Rápido' : 'Expediente'}</td>
                         </tr>
                       ))}
                     </tbody>

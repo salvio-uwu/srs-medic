@@ -3,40 +3,37 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Activity, UserPlus, Package, Tags, FileText, BarChart3,
-  ClipboardCheck, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle, FlaskConical
+  ClipboardCheck, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle, FlaskConical,
+  ShieldCheck
 } from 'lucide-react';
 import { CalendarBlank } from '@phosphor-icons/react';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
+import useIsMobile from '../hooks/useIsMobile';
 
 /* ─── DESIGN SYSTEM ───────────────────────────────────────────────── */
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 
   :root {
-    --blue-50:  #F2F8FB; --blue-100: #DFF0F7; --blue-200: #BCE0EF;
-    --blue-300: #8CCAE4; --blue-400: #5CB4D8; --blue-500: #2998C6;
-    --blue-600: #0077B6; --blue-700: #005B8E; --blue-800: #00436B;
-    --blue-900: #002E4C;
-    --slate-50:  #f8fafc; --slate-100: #f1f5f9; --slate-200: #e2e8f0;
-    --slate-300: #cbd5e1; --slate-400: #94a3b8; --slate-500: #64748b;
-    --slate-600: #475569; --slate-700: #334155; --slate-800: #1e293b;
-    --slate-900: #0f172a;
-    --emerald-500: #059669; --rose-500: #e11d48; --amber-500: #d97706;
-    --surface: #ffffff; --bg: #f4f7f9;
-    --radius: 12px; --radius-lg: 16px;
-    --shadow-sm: 0 1px 2px rgba(15,23,42,.05);
-    --shadow-md: 0 4px 6px rgba(15,23,42,.06);
-    --shadow-lg: 0 10px 15px rgba(15,23,42,.08);
-    --shadow-blue: 0 4px 12px rgba(0,119,182,.15);
+    --slate-50:  #fafafa; --slate-100: #f5f5f4;
+    --slate-200: #e5e7eb; --slate-300: #d1d5db;
+    --slate-400: #9ca3af; --slate-500: #6b7280;
+    --slate-600: #4b5563; --slate-700: #374151;
+    --slate-800: #1f2937; --slate-900: #111;
+    --surface: #ffffff; --bg: #f8f9fa;
+    --radius: 8px;
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
   }
 
   /* ── SHELL ── */
   .admin-shell {
-    font-family: 'DM Sans', system-ui, sans-serif;
+    font-family: 'Sora', 'DM Sans', system-ui, sans-serif;
     background: var(--bg);
-    color: var(--slate-800);
+    color: var(--slate-900);
     display: flex;
     height: 100vh;
     overflow: hidden;
@@ -51,74 +48,74 @@ const STYLES = `
     overflow: hidden;
     transition: width .22s cubic-bezier(.4,0,.2,1);
   }
-  .admin-sidebar.collapsed { width: 64px; }
+  .admin-sidebar.collapsed { width: 56px; }
 
   .sidebar-brand {
-    height: 64px; padding: 0 16px;
-    border-bottom: 1px solid var(--slate-100);
-    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+    height: 56px; padding: 0 14px;
+    border-bottom: 1px solid var(--slate-200);
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   }
   .brand-logo {
-    width: 36px; height: 36px; border-radius: 10px;
-    background: linear-gradient(135deg, var(--blue-600) 0%, var(--blue-500) 100%);
+    width: 30px; height: 30px; border-radius: 6px;
+    background: #f3f4f6;
     display: flex; align-items: center; justify-content: center;
-    color: #fff; flex-shrink: 0; box-shadow: var(--shadow-blue);
+    color: var(--slate-700); flex-shrink: 0;
   }
   .brand-name {
-    font-family: 'Sora', sans-serif; font-size: 14px; font-weight: 700;
+    font-family: 'Sora', sans-serif; font-size: 13px; font-weight: 700;
     color: var(--slate-900); white-space: nowrap; line-height: 1.2;
   }
   .brand-sub {
-    font-size: 10px; font-weight: 600; color: var(--slate-400);
-    text-transform: uppercase; letter-spacing: .07em; white-space: nowrap;
+    font-size: 9px; font-weight: 600; color: var(--slate-400);
+    text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
   }
 
-  .sidebar-nav { flex: 1; overflow-y: auto; padding: 12px 8px; }
+  .sidebar-nav { flex: 1; overflow-y: auto; padding: 8px; }
   .sidebar-nav::-webkit-scrollbar { width: 4px; }
   .sidebar-nav::-webkit-scrollbar-thumb { background: var(--slate-200); border-radius: 99px; }
 
   .nav-section-label {
-    font-size: 9px; font-weight: 800; text-transform: uppercase;
-    letter-spacing: .1em; color: var(--slate-400);
-    padding: 8px 12px 4px; white-space: nowrap; overflow: hidden;
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--slate-400);
+    padding: 8px 10px 4px; white-space: nowrap; overflow: hidden;
   }
 
   .nav-lnk {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px; border-radius: 10px;
-    font-size: 13px; font-weight: 600; color: var(--slate-600);
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 6px;
+    font-size: 12px; font-weight: 600; color: var(--slate-600);
     text-decoration: none;
-    transition: background .15s, color .15s;
-    white-space: nowrap; margin-bottom: 2px;
+    transition: background .12s, color .12s;
+    white-space: nowrap; margin-bottom: 1px;
   }
-  .nav-lnk:hover { background: var(--slate-50); color: var(--slate-800); }
-  .nav-lnk.active { background: var(--blue-50); color: var(--blue-700); font-weight: 700; }
-  .nav-lnk .ni { width: 20px; height: 20px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--slate-400); transition: color .15s; }
+  .nav-lnk:hover { background: var(--slate-100); color: var(--slate-900); }
+  .nav-lnk.active { background: #f3f4f6; color: var(--slate-900); font-weight: 700; }
+  .nav-lnk .ni { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--slate-400); transition: color .12s; }
   .nav-lnk:hover .ni { color: var(--slate-600); }
-  .nav-lnk.active .ni { color: var(--blue-600); }
+  .nav-lnk.active .ni { color: var(--slate-700); }
   .nav-lnk .nl { overflow: hidden; text-overflow: ellipsis; }
 
-  .nav-divider { height: 1px; background: var(--slate-100); margin: 8px; }
+  .nav-divider { height: 1px; background: var(--slate-200); margin: 6px 8px; }
 
-  .sidebar-footer { padding: 8px 8px 12px; border-top: 1px solid var(--slate-100); }
+  .sidebar-footer { padding: 6px 8px 10px; border-top: 1px solid var(--slate-200); }
 
   .logout-btn {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px; border-radius: 10px; width: 100%;
-    font-size: 13px; font-weight: 600; color: var(--rose-500);
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 6px; width: 100%;
+    font-size: 12px; font-weight: 600; color: var(--slate-600);
     background: transparent; border: none; cursor: pointer;
-    transition: background .15s;
+    transition: background .12s;
     white-space: nowrap;
   }
-  .logout-btn:hover { background: #fff1f2; }
-  .logout-btn .ni { width: 20px; height: 20px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .logout-btn:hover { background: var(--slate-100); color: var(--slate-900); }
+  .logout-btn .ni { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 
   /* ── TOPBAR ── */
   .admin-topbar {
-    height: 64px; background: #fff;
+    height: 56px; background: #fff;
     border-bottom: 1px solid var(--slate-200);
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0 24px; flex-shrink: 0; box-shadow: var(--shadow-sm);
+    padding: 0 20px; flex-shrink: 0;
     gap: 14px;
   }
 
@@ -126,7 +123,7 @@ const STYLES = `
   .topbar-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-shrink: 0;
   }
 
@@ -138,30 +135,29 @@ const STYLES = `
   }
 
   .assistant-bar {
-    height: 40px;
-    border-radius: 11px;
+    height: 36px;
+    border-radius: 6px;
     border: 1px solid var(--slate-200);
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    background: #fff;
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
-    box-shadow: var(--shadow-sm);
   }
 
   .assistant-dot {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 999px;
-    background: var(--blue-600);
+    background: var(--slate-400);
     animation: pulse-soft 1.8s ease-in-out infinite;
     flex-shrink: 0;
   }
 
   .assistant-icon {
-    color: var(--blue-600);
-    width: 16px;
-    height: 16px;
+    color: var(--slate-500);
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
   }
 
@@ -172,59 +168,57 @@ const STYLES = `
     outline: none;
     background: transparent;
     color: var(--slate-700);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
   }
 
   .assistant-send {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
     border: 0;
-    background: var(--blue-600);
+    background: var(--slate-900);
     color: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background .15s, transform .12s;
+    transition: opacity .12s;
     flex-shrink: 0;
   }
-  .assistant-send:hover { background: var(--blue-700); }
-  .assistant-send:active { transform: scale(.96); }
-  .assistant-send:disabled { opacity: .6; cursor: not-allowed; }
+  .assistant-send:hover { opacity: .85; }
+  .assistant-send:disabled { opacity: .4; cursor: not-allowed; }
 
   .assistant-toggle {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
     border: 1px solid var(--slate-200);
     background: #fff;
-    color: var(--slate-500);
+    color: var(--slate-400);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all .15s;
+    transition: all .12s;
     flex-shrink: 0;
   }
   .assistant-toggle:hover {
-    color: var(--blue-700);
-    border-color: var(--blue-200);
-    background: var(--blue-50);
+    color: var(--slate-700);
+    border-color: var(--slate-300);
+    background: var(--slate-100);
   }
 
   .assistant-result {
     position: absolute;
-    top: 46px;
+    top: 42px;
     left: 0;
     right: 0;
-    border-radius: 12px;
+    border-radius: 8px;
     background: #fff;
     border: 1px solid var(--slate-200);
-    box-shadow: var(--shadow-md);
-    padding: 10px 12px 12px;
-    animation: slide-down .2s ease-out;
+    padding: 10px 14px 12px;
+    animation: slide-down .15s ease-out;
     z-index: 20;
   }
 
@@ -235,16 +229,16 @@ const STYLES = `
     gap: 8px;
     padding-bottom: 8px;
     margin-bottom: 8px;
-    border-bottom: 1px solid var(--slate-100);
+    border-bottom: 1px solid var(--slate-200);
   }
 
   .assistant-title {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    font-weight: 800;
-    color: var(--slate-700);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--slate-600);
     text-transform: uppercase;
     letter-spacing: .05em;
   }
@@ -260,16 +254,16 @@ const STYLES = `
     display: inline-flex;
     align-items: center;
     border: 1px solid var(--slate-200);
-    border-radius: 999px;
+    border-radius: 99px;
     padding: 2px 8px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--slate-600);
     background: #fff;
   }
 
   .assistant-result-text {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--slate-700);
     line-height: 1.42;
     white-space: pre-line;
@@ -286,30 +280,30 @@ const STYLES = `
     border: 1px solid var(--slate-200);
     background: #fff;
     color: var(--slate-700);
-    border-radius: 8px;
-    padding: 4px 8px;
+    border-radius: 6px;
+    padding: 4px 10px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
   }
-  .assistant-action-btn:hover { background: var(--slate-50); }
-  .assistant-action-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .assistant-action-btn:hover { background: var(--slate-100); }
+  .assistant-action-btn:disabled { opacity: .5; cursor: not-allowed; }
 
   .assistant-close {
     border: 0;
     background: transparent;
     color: var(--slate-400);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
-    font-weight: 700;
+    font-weight: 600;
     padding: 0;
     line-height: 1;
   }
   .assistant-close:hover { color: var(--slate-600); }
 
   @keyframes pulse-soft {
-    0%, 100% { transform: scale(1); opacity: .95; }
-    50% { transform: scale(1.45); opacity: .45; }
+    0%, 100% { transform: scale(1); opacity: .8; }
+    50% { transform: scale(1.45); opacity: .3; }
   }
 
   @keyframes slide-down {
@@ -318,31 +312,31 @@ const STYLES = `
   }
 
   .icon-btn {
-    width: 36px; height: 36px; border-radius: 9px;
+    width: 34px; height: 34px; border-radius: 6px;
     border: 1px solid var(--slate-200); background: #fff;
     display: flex; align-items: center; justify-content: center;
-    color: var(--slate-500); cursor: pointer; transition: all .15s;
+    color: var(--slate-500); cursor: pointer; transition: all .12s;
   }
-  .icon-btn:hover { color: var(--blue-600); border-color: var(--blue-200); background: var(--blue-50); }
+  .icon-btn:hover { color: var(--slate-900); border-color: var(--slate-300); background: var(--slate-100); }
 
   .user-chip {
-    display: flex; align-items: center; gap: 10px;
-    padding: 5px 12px 5px 6px; border-radius: 12px;
-    border: 1px solid var(--slate-200); background: var(--slate-50);
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 10px 4px 5px; border-radius: 6px;
+    border: 1px solid var(--slate-200); background: #fff;
   }
   .user-avatar {
-    width: 32px; height: 32px; border-radius: 8px;
-    background: linear-gradient(135deg, var(--blue-600) 0%, var(--blue-400) 100%);
+    width: 28px; height: 28px; border-radius: 6px;
+    background: #f3f4f6;
     display: flex; align-items: center; justify-content: center;
-    color: #fff; font-family: 'Sora', sans-serif;
-    font-weight: 700; font-size: 12px; box-shadow: 0 2px 6px rgba(0,119,182,.2);
+    color: var(--slate-700); font-family: 'Sora', sans-serif;
+    font-weight: 700; font-size: 11px;
   }
   .user-name {
-    font-family: 'Sora', sans-serif; font-size: 13px;
-    font-weight: 700; color: var(--slate-800); white-space: nowrap; line-height: 1.2;
+    font-family: 'Sora', sans-serif; font-size: 12px;
+    font-weight: 700; color: var(--slate-900); white-space: nowrap; line-height: 1.2;
   }
   .user-branch {
-    font-size: 11px; color: var(--slate-400); white-space: nowrap; font-weight: 500;
+    font-size: 10px; color: var(--slate-400); white-space: nowrap; font-weight: 500;
     display: flex; align-items: center; gap: 3px;
   }
 
@@ -364,6 +358,37 @@ const STYLES = `
 
   @media (max-width: 720px) {
     .topbar-center { display: none; }
+  }
+
+  /* ── MOBILE SIDEBAR ── */
+  @media (max-width: 767px) {
+    .admin-sidebar {
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      width: 260px;
+      z-index: 1000;
+      transform: translateX(-100%);
+      transition: transform .25s cubic-bezier(.4,0,.2,1);
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0);
+      pointer-events: none;
+    }
+    .admin-sidebar.mobile-open {
+      transform: translateX(0);
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+      pointer-events: auto;
+    }
+    .admin-sidebar.collapsed { width: 260px; }
+    .sidebar-brand, .sidebar-nav, .sidebar-footer {
+      pointer-events: auto;
+    }
+    .mobile-hamburger {
+      display: inline-flex !important;
+    }
+    .topbar-left .icon-btn.hide-mobile { display: none; }
+  }
+
+  @media (min-width: 768px) {
+    .mobile-hamburger { display: none !important; }
   }
 `;
 
@@ -417,9 +442,8 @@ const isOnline = (u = {}) => {
 const NAV = [
   { label: 'Dashboard',   icon: Activity,       to: '/admin/dashboard' },
   { label: 'Personal',    icon: UserPlus,        to: '/admin/usuarios' },
-  { label: 'Pacientes',   icon: User,            to: '/pacientes' },
+  { label: 'Pacientes',   icon: User,            to: '/admin/pacientes' },
   { label: 'Auditoría',   icon: FlaskConical,    to: '/admin/depuracion' },
-  { label: 'Migracion',   icon: Building2,       to: '/admin/migracion' },
   { label: 'Inventario',  icon: Package,         to: '/admin/inventario' },
   { label: 'Catálogos',   icon: Tags,            to: '/admin/catalogos' },
   { label: 'Plantillas',  icon: FileText,        to: '/admin/plantillas' },
@@ -427,6 +451,7 @@ const NAV = [
   { label: 'Encuestas',   icon: MessageCircle,   to: '/admin/encuestas' },
   { label: 'Monitor',     icon: Activity,        to: '/admin/monitor' },
   { label: 'Supervisión', icon: ClipboardCheck,  to: '/admin/supervision' },
+  { label: 'SSA',         icon: ShieldCheck,     to: '/admin/ssa' },
 ];
 
 /* ─── COMPONENTE ─────────────────────────────────────────────────────── */
@@ -444,12 +469,30 @@ const AdminLayout = () => {
       return true;
     }
   });
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const sidebarLeaveTimer = useRef(null);
+  const isMobile = useIsMobile();
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     try {
       localStorage.setItem('admin_sidebar_collapsed', String(collapsed));
     } catch {}
   }, [collapsed]);
+
+  const handleSidebarMouseEnter = () => {
+    if (sidebarLeaveTimer.current) {
+      clearTimeout(sidebarLeaveTimer.current);
+      sidebarLeaveTimer.current = null;
+    }
+    setSidebarHovered(true);
+  };
+
+  const handleSidebarMouseLeave = () => {
+    sidebarLeaveTimer.current = setTimeout(() => {
+      setSidebarHovered(false);
+    }, 180);
+  }; // small delay so the sidebar doesn't flicker when moving across nav items
 
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantLoading, setAssistantLoading] = useState(false);
@@ -639,7 +682,6 @@ const AdminLayout = () => {
   const runAssistantAction = (actionId) => {
     if (actionId === 'go_supervision') navigate('/admin/supervision');
     if (actionId === 'go_monitor') navigate('/admin/monitor');
-    if (actionId === 'go_migracion') navigate('/admin/migracion');
     if (actionId === 'go_inventory') navigate('/admin/inventario');
     if (actionId === 'go_reports') navigate('/admin/reportes');
     if (actionId === 'go_users') navigate('/admin/usuarios');
@@ -656,7 +698,6 @@ const AdminLayout = () => {
       { key: 'dashboard', actionId: 'go_dashboard', label: 'Ir a Dashboard' },
       { key: 'supervision', actionId: 'go_supervision', label: 'Ir a Supervision' },
       { key: 'monitor', actionId: 'go_monitor', label: 'Ir a Monitor' },
-      { key: 'migracion', actionId: 'go_migracion', label: 'Ir a Migracion' },
       { key: 'inventario', actionId: 'go_inventory', label: 'Ir a Inventario' },
       { key: 'plantilla', actionId: 'go_templates', label: 'Ir a Plantillas' },
       { key: 'reporte', actionId: 'go_reports', label: 'Ver Reportes' },
@@ -770,7 +811,7 @@ Devuelve SOLO JSON:
 {
   "message": "entre 5 y 8 lineas, accionable, natural y especifico con datos",
   "actions": [
-    {"label":"texto","actionId":"go_supervision|go_monitor|go_migracion|go_inventory|go_reports|go_users|go_catalogs|go_templates|go_dashboard|go_agenda|none"}
+    {"label":"texto","actionId":"go_supervision|go_monitor|go_inventory|go_reports|go_users|go_catalogs|go_templates|go_dashboard|go_agenda|none"}
   ]
 }
 `;
@@ -813,7 +854,7 @@ Devuelve SOLO JSON:
         ? parsed.actions
             .slice(0, 3)
             .map((a) => ({ label: a?.label || 'Abrir', actionId: a?.actionId || 'none' }))
-            .filter((a) => ['go_supervision', 'go_monitor', 'go_migracion', 'go_inventory', 'go_reports', 'go_users', 'go_catalogs', 'go_templates', 'go_dashboard', 'go_agenda', 'none'].includes(a.actionId))
+            .filter((a) => ['go_supervision', 'go_monitor', 'go_inventory', 'go_reports', 'go_users', 'go_catalogs', 'go_templates', 'go_dashboard', 'go_agenda', 'none'].includes(a.actionId))
         : [];
 
       setAssistantReply({
@@ -849,11 +890,15 @@ Devuelve SOLO JSON:
       <div className="admin-shell">
 
         {/* ── SIDEBAR ──────────────────────────────── */}
-        <aside className={`admin-sidebar${collapsed ? ' collapsed' : ''}`}>
+        <aside
+          className={`admin-sidebar${(collapsed && !sidebarHovered && !isMobile) ? ' collapsed' : ''}${isMobile && mobileSidebarOpen ? ' mobile-open' : ''}`}
+          onMouseEnter={isMobile ? undefined : handleSidebarMouseEnter}
+          onMouseLeave={isMobile ? undefined : handleSidebarMouseLeave}
+        >
 
           <div className="sidebar-brand">
-            <div className="brand-logo"><Activity size={18} /></div>
-            {!collapsed && (
+            <div className="brand-logo"><Activity size={15} /></div>
+            {(isMobile || !collapsed || sidebarHovered) && (
               <div>
                 <div className="brand-name">SRS Médico</div>
                 <div className="brand-sub">Panel Admin</div>
@@ -862,31 +907,32 @@ Devuelve SOLO JSON:
           </div>
 
           <nav className="sidebar-nav">
-            {!collapsed && <div className="nav-section-label">Módulos</div>}
+            {(isMobile || !collapsed || sidebarHovered) && <div className="nav-section-label">Módulos</div>}
             {NAV.map(({ label, icon: Icon, to }) => (
               <NavLink
                 key={to}
                 to={to}
                 className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`}
-                title={collapsed ? label : undefined}
+                title={collapsed && !sidebarHovered && !isMobile ? label : undefined}
+                onClick={() => { if (isMobile) setMobileSidebarOpen(false); }}
               >
-                <span className="ni"><Icon size={17} /></span>
-                {!collapsed && <span className="nl">{label}</span>}
+                <span className="ni"><Icon size={15} /></span>
+                {(isMobile || !collapsed || sidebarHovered) && <span className="nl">{label}</span>}
               </NavLink>
             ))}
 
             <div className="nav-divider" />
-            {!collapsed && <div className="nav-section-label">Accesos</div>}
-            <NavLink to="/admin/agenda" className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`} title={collapsed ? 'Agenda' : undefined}>
-              <span className="ni"><CalendarBlank size={17} /></span>
-              {!collapsed && <span className="nl">Agenda</span>}
+            {(isMobile || !collapsed || sidebarHovered) && <div className="nav-section-label">Accesos</div>}
+            <NavLink to="/admin/agenda" className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`} title={collapsed && !sidebarHovered && !isMobile ? 'Agenda' : undefined}>
+              <span className="ni"><CalendarBlank size={15} /></span>
+              {(isMobile || !collapsed || sidebarHovered) && <span className="nl">Agenda</span>}
             </NavLink>
           </nav>
 
           <div className="sidebar-footer">
-            <button className="logout-btn" onClick={handleLogout} title={collapsed ? 'Cerrar sesión' : undefined}>
-              <span className="ni"><LogOut size={17} /></span>
-              {!collapsed && <span>Cerrar Sesión</span>}
+            <button className="logout-btn" onClick={handleLogout} title={collapsed && !sidebarHovered && !isMobile ? 'Cerrar sesión' : undefined}>
+              <span className="ni"><LogOut size={15} /></span>
+              {(isMobile || !collapsed || sidebarHovered) && <span>Cerrar Sesión</span>}
             </button>
           </div>
         </aside>
@@ -896,8 +942,11 @@ Devuelve SOLO JSON:
 
           <header className="admin-topbar">
             <div className="topbar-left">
-              <button className="icon-btn" onClick={() => setCollapsed(c => !c)}>
-                {collapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
+              <button className="icon-btn hide-mobile" onClick={() => setCollapsed(c => !c)}>
+                {collapsed ? <Menu size={15} /> : <ChevronLeft size={15} />}
+              </button>
+              <button className="icon-btn mobile-hamburger" onClick={() => setMobileSidebarOpen(o => !o)} style={{ display: 'none' }}>
+                <Menu size={15} />
               </button>
             </div>
 

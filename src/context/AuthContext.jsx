@@ -24,6 +24,7 @@ export const AuthProvider = ({ children }) => {
   // Mantiene sincronizado el perfil (users/{uid}) para reflejar cambios de consultorio al instante.
   useEffect(() => {
     let unsubscribeProfile = null;
+    let initialNullTimer = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       if (unsubscribeProfile) {
@@ -31,29 +32,45 @@ export const AuthProvider = ({ children }) => {
         unsubscribeProfile = null;
       }
 
-      if (!currentUser) {
-        setUser(null);
+      // ── El usuario autenticado llegó ──
+      if (currentUser) {
+        if (initialNullTimer) { clearTimeout(initialNullTimer); initialNullTimer = null; }
+        // Paso 1: usuario básico inmediato → RequireAuth no redirige
+        setUser(currentUser);
         setLoading(false);
+
+        // Paso 2: enriquecer con perfil asíncrono de Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        unsubscribeProfile = onSnapshot(
+          userRef,
+          (snap) => {
+            const profileData = snap.exists() ? snap.data() : {};
+            setUser({ ...currentUser, ...profileData });
+          },
+          (error) => {
+            console.error('Error sincronizando perfil:', error);
+          }
+        );
         return;
       }
 
-      const userRef = doc(db, 'users', currentUser.uid);
-      unsubscribeProfile = onSnapshot(
-        userRef,
-        (snap) => {
-          const profileData = snap.exists() ? snap.data() : {};
-          setUser({ ...currentUser, ...profileData });
+      // ── onAuthStateChanged disparó null ──
+      // En producción, Firebase puede disparar null antes de restaurar
+      // la sesión del IndexedDB. Si aceptamos ese null inmediatamente,
+      // RequireAuth redirige a /login y se pierde la ruta actual.
+      // Damos 2.5 segundos de gracia. Si en ese lapso llega el usuario,
+      // se cancela el null. Si no, es un logout genuino.
+      if (!initialNullTimer) {
+        initialNullTimer = setTimeout(() => {
+          initialNullTimer = null;
+          setUser(null);
           setLoading(false);
-        },
-        (error) => {
-          console.error('Error sincronizando perfil:', error);
-          setUser(currentUser);
-          setLoading(false);
-        }
-      );
+        }, 2500);
+      }
     });
 
     return () => {
+      if (initialNullTimer) clearTimeout(initialNullTimer);
       if (unsubscribeProfile) unsubscribeProfile();
       unsubscribeAuth();
     };
