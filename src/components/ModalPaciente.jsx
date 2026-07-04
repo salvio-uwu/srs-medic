@@ -56,9 +56,16 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
   const initialState = {
     // --- FICHA DEL PACIENTE ---
     nombre: '', apellidoPaterno: '', apellidoMaterno: '', 
-    fechaNacimiento: '', sexo: '', grupoSanguineo: '',
+    fechaNacimiento: '', lugarNacimiento: '', sexo: '', grupoSanguineo: '',
+    estadoCivil: '', ocupacion: '', religion: '',
     telefonoMovil: '', telefonoFijo: '', email: '',
-    pais: 'México', calleNumero: '', cp: '', colonia: '', municipioEstado: '',
+    personaResponsable: '',
+    pais: 'México',
+    // Dirección — nuevos campos separados (NOM-004)
+    calle: '', numeroExterior: '', numeroInterior: '',
+    colonia: '', cp: '', municipio: '', estado: '',
+    // Campos legacy para compatibilidad
+    calleNumero: '', municipioEstado: '',
     notasPersonales: '',
     // Padecimientos
     padecimientoHipertension: false, padecimientoDiabetes: false,
@@ -77,6 +84,11 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
   useEffect(() => {
     if (pacienteAEditar) {
             const normalizedNames = sanitizePatientNameFields(pacienteAEditar);
+            // Retrocompatibilidad: si no hay campos nuevos, derivar de los legacy
+            const calle = pacienteAEditar.calle || (pacienteAEditar.calleNumero || '').replace(/\s+\d+.*$/, '');
+            const numExt = pacienteAEditar.numeroExterior || ((pacienteAEditar.calleNumero || '').match(/\d+[\w-]*/) || [''])[0];
+            const municipio = pacienteAEditar.municipio || (pacienteAEditar.municipioEstado || '').replace(/,.*$/, '').trim();
+            const estadoFromLegacy = pacienteAEditar.estado || ((pacienteAEditar.municipioEstado || '').match(/,\s*(.+)/) || ['', ''])[1];
       setFormData(prev => ({
         ...prev, 
         ...pacienteAEditar,
@@ -84,7 +96,18 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                 apellidoPaterno: normalizedNames.apellidoPaterno,
                 apellidoMaterno: normalizedNames.apellidoMaterno,
                 nombreCompleto: normalizedNames.nombreCompleto,
-        notasPersonales: pacienteAEditar.notasPersonales || pacienteAEditar.resumenClinico?.notas_previas || ''
+        notasPersonales: pacienteAEditar.notasPersonales || pacienteAEditar.resumenClinico?.notas_previas || '',
+        // Poblar campos nuevos desde legacy si no existen
+        calle: calle.trim(),
+        numeroExterior: numExt.trim(),
+        numeroInterior: pacienteAEditar.numeroInterior || '',
+        municipio,
+        estado: estadoFromLegacy || '',
+        ocupacion: pacienteAEditar.ocupacion || '',
+        estadoCivil: pacienteAEditar.estadoCivil || '',
+        lugarNacimiento: pacienteAEditar.lugarNacimiento || '',
+        religion: pacienteAEditar.religion || '',
+        personaResponsable: pacienteAEditar.personaResponsable || ''
       }));
     }
   }, [pacienteAEditar]);
@@ -271,6 +294,10 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                 }
             }
 
+      // Computar campos legacy para retrocompatibilidad
+      const calleLegacy = [formData.calle, formData.numeroExterior].filter(Boolean).join(' ') || formData.calleNumero || '';
+      const municipioEstadoLegacy = [formData.municipio, formData.estado].filter(Boolean).join(', ') || formData.municipioEstado || '';
+
       const datosFinales = { 
                 ...formData,
         nombre: normalizedNames.nombre,
@@ -281,7 +308,10 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                 idPaciente,
                 curp: curpNormalizada,
                 fechaNacimiento: normalizeDateIso(formData.fechaNacimiento) || '',
-        fechaActualizacion: new Date().toISOString()
+        fechaActualizacion: new Date().toISOString(),
+        // Campos legacy computados para compatibilidad
+        calleNumero: calleLegacy,
+        municipioEstado: municipioEstadoLegacy
       };
 
       let docId;
@@ -424,6 +454,11 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                                     </select>
                                 </div>
                                 <div><label className="label-style">Tipo Sangre</label><input type="text" className="input-style" placeholder="Ej. O+" value={formData.grupoSanguineo} onChange={e => setFormData({...formData, grupoSanguineo: e.target.value})} /></div>
+                                <div><label className="label-style">Estado Civil</label><select className="input-style" value={formData.estadoCivil} onChange={e => setFormData({...formData, estadoCivil: e.target.value})}><option value="">Seleccione</option><option value="Soltero">Soltero(a)</option><option value="Casado">Casado(a)</option><option value="Union Libre">Unión Libre</option><option value="Divorciado">Divorciado(a)</option><option value="Viudo">Viudo(a)</option></select></div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3 mt-3">
+                                <div><label className="label-style">Lugar de Nacimiento</label><input type="text" className="input-style" placeholder="Ciudad, Estado" value={formData.lugarNacimiento} onChange={e => setFormData({...formData, lugarNacimiento: e.target.value})} /></div>
+                                <div><label className="label-style">Ocupación</label><input type="text" className="input-style" placeholder="Profesión u oficio actual" value={formData.ocupacion} onChange={e => setFormData({...formData, ocupacion: e.target.value})} /></div>
                             </div>
                             
                             {/* Checkboxes Enfermedades */}
@@ -450,11 +485,30 @@ const ModalPaciente = ({ onClose, onPacienteCreado, pacienteAEditar }) => {
                                 <div><label className="label-style">Teléfono Móvil</label><input type="tel" className="input-style" value={formData.telefonoMovil} onChange={e => setFormData({...formData, telefonoMovil: e.target.value})} /></div>
                                 <div><label className="label-style">Teléfono Fijo</label><input type="tel" className="input-style" value={formData.telefonoFijo} onChange={e => setFormData({...formData, telefonoFijo: e.target.value})} /></div>
                                 <div className="col-span-2"><label className="label-style">Correo Electrónico</label><input type="email" className="input-style" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
-                                
-                                <div className="col-span-2"><label className="label-style">Calle y Número</label><input type="text" className="input-style" value={formData.calleNumero} onChange={e => setFormData({...formData, calleNumero: e.target.value})} /></div>
-                                <div><label className="label-style">Código Postal</label><input type="text" className="input-style" value={formData.cp} onChange={e => setFormData({...formData, cp: e.target.value})} /></div>
-                                <div><label className="label-style">Colonia</label><input type="text" className="input-style" value={formData.colonia} onChange={e => setFormData({...formData, colonia: e.target.value})} /></div>
-                                <div className="col-span-2"><label className="label-style">Municipio / Estado</label><input type="text" className="input-style" value={formData.municipioEstado} onChange={e => setFormData({...formData, municipioEstado: e.target.value})} /></div>
+                            </div>
+
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-4">Dirección</h4>
+                            <div className="grid grid-cols-1 gap-3">
+                                <div><label className="label-style">Calle</label><input type="text" className="input-style" value={formData.calle} onChange={e => setFormData({...formData, calle: e.target.value})} /></div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div><label className="label-style">Núm. Exterior</label><input type="text" className="input-style" value={formData.numeroExterior} onChange={e => setFormData({...formData, numeroExterior: e.target.value})} /></div>
+                                    <div><label className="label-style">Núm. Interior</label><input type="text" className="input-style" placeholder="Opcional" value={formData.numeroInterior} onChange={e => setFormData({...formData, numeroInterior: e.target.value})} /></div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div><label className="label-style">Colonia</label><input type="text" className="input-style" value={formData.colonia} onChange={e => setFormData({...formData, colonia: e.target.value})} /></div>
+                                    <div><label className="label-style">C.P.</label><input type="text" className="input-style" maxLength="5" value={formData.cp} onChange={e => setFormData({...formData, cp: e.target.value})} /></div>
+                                    <div><label className="label-style">País</label><input type="text" className="input-style" value={formData.pais} onChange={e => setFormData({...formData, pais: e.target.value})} /></div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div><label className="label-style">Municipio</label><input type="text" className="input-style" value={formData.municipio} onChange={e => setFormData({...formData, municipio: e.target.value})} /></div>
+                                    <div><label className="label-style">Estado</label><input type="text" className="input-style" value={formData.estado} onChange={e => setFormData({...formData, estado: e.target.value})} /></div>
+                                </div>
+                            </div>
+
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-2">Información Complementaria</h4>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div><label className="label-style">Religión</label><select className="input-style" value={formData.religion} onChange={e => setFormData({...formData, religion: e.target.value})}><option value="">Seleccione</option><option>Católica</option><option>Cristiana</option><option>Judía</option><option>Testigo de Jehová</option><option>Mormona</option><option>Ninguna</option><option>Otra</option></select></div>
+                                <div><label className="label-style">Persona Responsable</label><input type="text" className="input-style" placeholder="Nombre y parentesco" value={formData.personaResponsable} onChange={e => setFormData({...formData, personaResponsable: e.target.value})} /></div>
                             </div>
                             
                             <div className="mt-4">

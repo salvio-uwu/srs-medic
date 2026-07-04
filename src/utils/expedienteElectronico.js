@@ -252,6 +252,7 @@ export const normalizeConsulta = (item = {}) => {
     signos: exploracion.signos || {},
     antropometria: exploracion.antropometria || {},
     colesterol: exploracion.colesterol || {},
+    glucosa: exploracion.glucosa || {},
     fisica: exploracion.fisica || {},
     diagnostico: limpiar(diagnostico.enfermedad_actual),
     cie10: Array.isArray(diagnostico.cie10) ? diagnostico.cie10 : [],
@@ -267,6 +268,7 @@ export const normalizeConsulta = (item = {}) => {
       seleccionados: Array.isArray(procedimientos.seleccionados) ? procedimientos.seleccionados : [],
       notas: limpiar(procedimientos.notas_generales)
     },
+    referencias: Array.isArray(consulta.referencias_medicas?.seleccionadas) ? consulta.referencias_medicas.seleccionadas : [],
     recetasGeneradas: Array.isArray(item.recetasGeneradas) ? item.recetasGeneradas.map(normalizarEventoArchivo) : [],
     documentosGenerados: Array.isArray(item.documentosGenerados) ? item.documentosGenerados.map(normalizarEventoArchivo) : [],
     pxInfo: item.px_info || {},
@@ -359,7 +361,7 @@ export const formatAlergias = (alergias = {}) => {
     : [];
   const otros = String(alergias.otros || alergias.otras || '').trim();
   const todo = [...lista, otros].filter(Boolean);
-  return todo.length ? todo.join(', ') : 'Sin alergias registradas';
+  return todo.length ? todo.join(', ') : 'Niega antecedentes alérgicos';
 };
 
 export const nombrePaciente = (paciente = {}) => {
@@ -372,7 +374,18 @@ export const nombrePaciente = (paciente = {}) => {
 };
 
 export const direccionPaciente = (paciente = {}) => {
-  return [paciente.calleNumero, paciente.colonia, paciente.cp, paciente.municipioEstado, paciente.pais]
+  // Campos nuevos (NOM-004) con fallback a legacy
+  const calle = paciente.calle || (paciente.calleNumero || '').replace(/\s+\d+.*$/, '').trim();
+  const num = paciente.numeroExterior || '';
+  const numInt = paciente.numeroInterior ? `Int. ${paciente.numeroInterior}` : '';
+  const lineaCalle = [calle, num, numInt].filter(Boolean).join(' ');
+  const colonia = paciente.colonia || '';
+  const cp = paciente.cp || '';
+  const municipio = paciente.municipio || (paciente.municipioEstado || '').replace(/,.*$/, '').trim();
+  const estado = paciente.estado || ((paciente.municipioEstado || '').match(/,\s*(.+)/) || ['', ''])[1];
+  const pais = paciente.pais || '';
+
+  return [lineaCalle, colonia, cp, municipio, estado, pais]
     .map((p) => String(p || '').trim())
     .filter(Boolean)
     .join(', ');
@@ -433,6 +446,226 @@ export const resolveTemplateToPlainText = (html = '', contexto = {}) => {
     .trim();
 
   return resolved;
+};
+
+/**
+ * Resuelve una plantilla HTML reemplazando {{ variables }} con el contexto dado
+ * PERO conservando las etiquetas HTML (negritas, tablas, listas, alineación).
+ * Se usa para reconstruir el documento con formato dentro del PDF del expediente.
+ */
+export const resolveTemplateToHtml = (html = '', contexto = {}) => {
+  if (!html || !String(html).trim()) return '';
+
+  const normalizeKey = (raw = '') =>
+    String(raw || '').replace(/\u00A0/g, ' ').replace(/\s+/g, '').trim().toLowerCase();
+
+  const getDeep = (obj, path) =>
+    path.split('.').reduce((acc, key) => {
+      if (acc && typeof acc === 'object' && key in acc) return acc[key];
+      return '';
+    }, obj);
+
+  return String(html).replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, key) => {
+    const fieldPath = normalizeKey(key);
+    if (fieldPath === 'firma.linea') return '____________________________';
+    if (fieldPath === 'firma.medico') return '[Firma digital del médico]';
+    const aliasPath =
+      fieldPath === 'consultorio.ubicacion' || fieldPath === 'consultorio.ubicacionconsultorio'
+        ? 'consultorio.direccion'
+        : fieldPath === 'sucursal.ubicacion'
+          ? 'sucursal.direccion'
+          : fieldPath;
+    const valor = getDeep(contexto, aliasPath);
+    if (valor === null || valor === undefined) return '';
+    return String(valor);
+  });
+};
+
+// ── Conversión de HTML de plantilla a bloques serializables ──────────────────
+// Convierte el HTML ya resuelto de un documento en una estructura plana de
+// bloques (encabezados, párrafos, listas, tablas, reglas) compuesta solo por
+// objetos/arrays/strings, de modo que sobreviva la sanitización y pueda
+// renderizarse con primitivas de @react-pdf/renderer conservando el formato.
+
+const decodeHtmlEntities = (text = '') =>
+  String(text)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+// Recorre nodos en línea de un elemento DOM y devuelve "runs": fragmentos de
+// texto con marcas de negrita/itálica. <br> se traduce a salto de línea.
+const walkInlineRuns = (node, flags = { bold: false, italic: false }) => {
+  const runs = [];
+  if (!node || !node.childNodes) return runs;
+
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === 3) {
+      const raw = String(child.textContent || '').replace(/\s+/g, ' ');
+      if (raw) runs.push({ text: raw, bold: flags.bold, italic: flags.italic });
+      return;
+    }
+    if (child.nodeType !== 1) return;
+
+    const tag = child.tagName ? child.tagName.toLowerCase() : '';
+    if (tag === 'br') { runs.push({ text: '\n', bold: flags.bold, italic: flags.italic }); return; }
+    if (tag === 'style' || tag === 'script' || tag === 'img') return;
+
+    const styleAttr = (child.getAttribute && child.getAttribute('style')) || '';
+    const weight = /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+    const italicStyle = /font-style\s*:\s*italic/i.test(styleAttr);
+    const nextFlags = {
+      bold: flags.bold || tag === 'strong' || tag === 'b' || weight,
+      italic: flags.italic || tag === 'em' || tag === 'i' || italicStyle
+    };
+    runs.push(...walkInlineRuns(child, nextFlags));
+  });
+
+  return runs;
+};
+
+// Normaliza una lista de runs: une los contiguos con el mismo estilo y limpia
+// espacios redundantes alrededor de saltos de línea.
+const compactRuns = (runs = []) => {
+  const out = [];
+  runs.forEach((r) => {
+    const prev = out[out.length - 1];
+    if (prev && prev.bold === r.bold && prev.italic === r.italic) {
+      prev.text += r.text;
+    } else {
+      out.push({ ...r });
+    }
+  });
+  return out
+    .map((r) => ({ ...r, text: r.text.replace(/[ \t]*\n[ \t]*/g, '\n') }))
+    .filter((r) => r.text.length > 0);
+};
+
+const runsTienenTexto = (runs = []) => runs.some((r) => String(r.text || '').trim());
+
+const getAlign = (el) => {
+  if (!el || !el.getAttribute) return '';
+  const style = el.getAttribute('style') || '';
+  const m = style.match(/text-align\s*:\s*(left|center|right|justify)/i);
+  if (m) return m[1].toLowerCase();
+  const attr = (el.getAttribute('align') || '').toLowerCase();
+  return ['left', 'center', 'right', 'justify'].includes(attr) ? attr : '';
+};
+
+const parseConDom = (html) => {
+  const parser = new DOMParser();
+  const docHtml = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+  const root = docHtml.body.firstChild;
+  const blocks = [];
+
+  const BLOCK_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'p', 'div', 'ul', 'ol', 'table', 'hr', 'blockquote', 'section', 'header', 'footer']);
+
+  const pushParrafo = (runs, align) => {
+    const compact = compactRuns(runs);
+    if (runsTienenTexto(compact)) blocks.push({ type: 'paragraph', align: align || '', runs: compact });
+  };
+
+  const procesarNodo = (node) => {
+    if (!node) return;
+    if (node.nodeType === 3) {
+      const txt = String(node.textContent || '').replace(/\s+/g, ' ');
+      if (txt.trim()) pushParrafo([{ text: txt, bold: false, italic: false }], '');
+      return;
+    }
+    if (node.nodeType !== 1) return;
+
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'style' || tag === 'script') return;
+
+    if (tag === 'hr') { blocks.push({ type: 'rule' }); return; }
+
+    if (/^h[1-4]$/.test(tag)) {
+      const runs = compactRuns(walkInlineRuns(node));
+      if (runsTienenTexto(runs)) blocks.push({ type: 'heading', level: Number(tag[1]), align: getAlign(node), runs });
+      return;
+    }
+
+    if (tag === 'ul' || tag === 'ol') {
+      const items = [];
+      node.childNodes.forEach((li) => {
+        if (li.nodeType === 1 && li.tagName.toLowerCase() === 'li') {
+          const runs = compactRuns(walkInlineRuns(li));
+          if (runsTienenTexto(runs)) items.push(runs);
+        }
+      });
+      if (items.length) blocks.push({ type: 'list', ordered: tag === 'ol', items });
+      return;
+    }
+
+    if (tag === 'table') {
+      const rows = [];
+      node.querySelectorAll('tr').forEach((tr) => {
+        const cells = [];
+        tr.childNodes.forEach((cell) => {
+          if (cell.nodeType === 1 && /^t[dh]$/.test(cell.tagName.toLowerCase())) {
+            cells.push({
+              header: cell.tagName.toLowerCase() === 'th',
+              align: getAlign(cell),
+              runs: compactRuns(walkInlineRuns(cell))
+            });
+          }
+        });
+        if (cells.length) rows.push(cells);
+      });
+      if (rows.length) blocks.push({ type: 'table', rows });
+      return;
+    }
+
+    // Contenedores: si tienen hijos de bloque, recursar; si no, tratar como párrafo.
+    if (tag === 'div' || tag === 'section' || tag === 'header' || tag === 'footer' || tag === 'blockquote') {
+      const tieneHijosBloque = Array.from(node.childNodes).some(
+        (c) => c.nodeType === 1 && BLOCK_TAGS.has(c.tagName.toLowerCase())
+      );
+      if (tieneHijosBloque) {
+        node.childNodes.forEach(procesarNodo);
+      } else {
+        pushParrafo(walkInlineRuns(node), getAlign(node));
+      }
+      return;
+    }
+
+    if (tag === 'p') { pushParrafo(walkInlineRuns(node), getAlign(node)); return; }
+
+    // Cualquier otro elemento en línea suelto al nivel raíz.
+    pushParrafo(walkInlineRuns(node), '');
+  };
+
+  root.childNodes.forEach(procesarNodo);
+  return blocks;
+};
+
+// Fallback sin DOMParser: degrada el HTML a párrafos de texto plano.
+const parseSinDom = (html) => {
+  const texto = String(html)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-4])>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '\u2022 ')
+    .replace(/<[^>]+>/g, '');
+  return decodeHtmlEntities(texto)
+    .split(/\n{1,}/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((linea) => ({ type: 'paragraph', align: '', runs: [{ text: linea, bold: false, italic: false }] }));
+};
+
+export const parseDocumentHtmlToBlocks = (html = '') => {
+  if (!html || !String(html).trim()) return [];
+  try {
+    if (typeof DOMParser !== 'undefined') return parseConDom(html);
+  } catch (_) { /* fallback abajo */ }
+  try {
+    return parseSinDom(html);
+  } catch (_) {
+    return [];
+  }
 };
 
 /**

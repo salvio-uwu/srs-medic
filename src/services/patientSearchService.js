@@ -16,27 +16,19 @@ const extractPatientData = (docRef) => {
     apellidoMaterno: data.apellidoMaterno || '',
     nombreCompleto: data.nombreCompleto || ''
   });
+  // Conservar el documento completo: el listado de búsqueda alimenta edición y
+  // el visor de expediente; recortar campos hacía que datos del alta de px no
+  // aparecieran aunque sí estuvieran guardados en Firestore.
   return {
+    ...data,
     id: docRef.id,
     nombre: normalizedNames.nombre,
     nombreCompleto: normalizedNames.nombreCompleto,
     apellidoPaterno: normalizedNames.apellidoPaterno,
     apellidoMaterno: normalizedNames.apellidoMaterno,
     telefono: data.telefonoMovil || data.telefono || '',
-    telefonoMovil: data.telefonoMovil || '',
+    telefonoMovil: data.telefonoMovil || data.telefono || '',
     idPaciente: data.idPaciente || data.idPacienteMigrado || '',
-    sexo: data.sexo || '',
-    fechaNacimiento: data.fechaNacimiento || '',
-    municipioEstado: data.municipioEstado || '',
-    grupoSanguineo: data.grupoSanguineo || '',
-    email: data.email || '',
-    fechaRegistro: data.fechaRegistro || '',
-    fechaActualizacion: data.fechaActualizacion || '',
-    idPacienteMigrado: data.idPacienteMigrado || '',
-    padecimientoHipertension: data.padecimientoHipertension || false,
-    padecimientoDiabetes: data.padecimientoDiabetes || false,
-    padecimientoObesidad: data.padecimientoObesidad || false,
-    padecimientoArtritis: data.padecimientoArtritis || false,
   };
 };
 

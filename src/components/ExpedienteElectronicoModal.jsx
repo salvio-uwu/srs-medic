@@ -5,7 +5,8 @@ import {
   X, FileText, Download, Loader2, Edit3, Calendar,
   Droplet, MapPin, Phone, Mail, ClipboardList, Pill,
   ShieldAlert, ChevronDown, ChevronRight, Clock,
-  FileSignature, Printer, Share2
+  FileSignature, Printer, Share2, User, Heart, Baby,
+  Scissors, Briefcase, Globe, Church, Users
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
@@ -30,6 +31,8 @@ import {
   bulletproofSanitize,
   safeDateStr,
   resolveTemplateToPlainText,
+  resolveTemplateToHtml,
+  parseDocumentHtmlToBlocks,
   buildTemplateContext
 } from '../utils/expedienteElectronico';
 
@@ -55,10 +58,12 @@ const InfoChip = ({ icon: Icon, label, value }) => (
   </div>
 );
 
-const Dato = ({ label, value, fallback = 'No referido' }) => (
+const Dato = ({ label, value, negado = false, fallback = 'No refiere' }) => (
   <div className="flex items-baseline justify-between gap-2 py-0.5">
     <span className="text-[10px] text-slate-400 shrink-0">{label}</span>
-    <span className="text-[11px] text-slate-700 text-right">{String(value || '').trim() || fallback}</span>
+    <span className={`text-[11px] text-right ${negado ? 'text-amber-600 italic font-medium' : String(value || '').trim() ? 'text-slate-700' : 'text-slate-300'}`}>
+      {negado ? 'Negado' : String(value || '').trim() || fallback}
+    </span>
   </div>
 );
 
@@ -147,6 +152,46 @@ const ConsultaCard = ({ consulta, index, total }) => {
               </div>
             </SeccionBloque>
           )}
+
+          {/* Colesterol y perfil lipídico */}
+          {(() => {
+            const col = c.colesterol || {};
+            const hayCol = Object.values(col).some(v => String(v || '').trim());
+            if (!hayCol) return null;
+            const labels = { trigliceridos: 'Triglicéridos', colesterol: 'Colesterol', hba1c: 'HbA1c' };
+            return (
+              <SeccionBloque titulo="Perfil lipídico">
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {Object.entries(col).map(([k, v]) => (String(v || '').trim() ? (
+                    <span key={k} className="text-[11px]">
+                      <span className="text-slate-400">{labels[k] || k}:</span>{' '}
+                      <span className="font-semibold text-slate-700">{v}</span>
+                    </span>
+                  ) : null))}
+                </div>
+              </SeccionBloque>
+            );
+          })()}
+
+          {/* Glucosa */}
+          {(() => {
+            const glu = c.glucosa || {};
+            const lista = glu.lista || [];
+            if (lista.length === 0) return null;
+            return (
+              <SeccionBloque titulo="Glucosa" badge={`${lista.length} registro${lista.length !== 1 ? 's' : ''}`}>
+                <div className="space-y-1">
+                  {lista.map((g, i) => (
+                    <div key={i} className="flex items-baseline gap-2 text-[11px]">
+                      <span className="font-semibold text-slate-700">{g.valor} mg/dL</span>
+                      {g.fecha && <span className="text-slate-400">{typeof g.fecha === 'string' ? g.fecha : ''}</span>}
+                      {g.nota && <span className="text-slate-400">— {g.nota}</span>}
+                    </div>
+                  ))}
+                </div>
+              </SeccionBloque>
+            );
+          })()}
 
           {/* Exploración física */}
           {hayFisica && (
@@ -243,6 +288,9 @@ const ConsultaCard = ({ consulta, index, total }) => {
                   <span key={i} className="text-[10px] bg-slate-50 text-slate-600 px-2 py-0.5 rounded">{e}</span>
                 ))}
               </div>
+              {c.estudios?.notas && String(c.estudios.notas).trim() && (
+                <p className="text-[10px] text-slate-400 italic mt-1.5">Notas: {String(c.estudios.notas).trim()}</p>
+              )}
             </SeccionBloque>
           )}
 
@@ -254,6 +302,33 @@ const ConsultaCard = ({ consulta, index, total }) => {
                   <span key={i} className="text-[10px] bg-slate-50 text-slate-600 px-2 py-0.5 rounded">{p}</span>
                 ))}
               </div>
+              {c.procedimientos?.notas && String(c.procedimientos.notas).trim() && (
+                <p className="text-[10px] text-slate-400 italic mt-1.5">Notas: {String(c.procedimientos.notas).trim()}</p>
+              )}
+            </SeccionBloque>
+          )}
+
+          {/* Referencias médicas */}
+          {(() => {
+            const refs = c.referencias || [];
+            if (refs.length === 0) return null;
+            return (
+              <SeccionBloque titulo="Referencias médicas">
+                <div className="flex flex-wrap gap-1.5">
+                  {refs.map((r, i) => (
+                    <span key={i} className="text-[10px] bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded">
+                      {typeof r === 'string' ? r : (r?.especialidad || r?.nombre || r)}
+                    </span>
+                  ))}
+                </div>
+              </SeccionBloque>
+            );
+          })()}
+
+          {/* Notas de estudios (si hay texto y no se mostró con el bloque de estudios) */}
+          {c.estudios?.notas && String(c.estudios.notas).trim() && (
+            <SeccionBloque titulo="Notas de estudios">
+              <p className="text-xs text-slate-600">{String(c.estudios.notas).trim()}</p>
             </SeccionBloque>
           )}
 
@@ -302,8 +377,10 @@ const ConsultaCard = ({ consulta, index, total }) => {
 const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [pacienteCompleto, setPacienteCompleto] = useState(paciente || null);
+  const pxDoc = pacienteCompleto || paciente || {};
   const generadoPor = String(user?.nombre || user?.displayName || user?.email || '').trim();
-  const folio = String(paciente?.idPaciente || paciente?.id || '').trim();
+  const folio = String(pxDoc?.idPaciente || pxDoc?.id || '').trim();
   const [loading, setLoading] = useState(true);
   const [consultas, setConsultas] = useState([]);
   const [antecedentes, setAntecedentes] = useState({});
@@ -319,8 +396,12 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
   const [sharingLoading, setSharingLoading] = useState(false);
   const previewUrlRef = useRef('');
 
-  const pacienteId = paciente?.id;
-  const nombre = nombrePaciente(paciente || {});
+  const pacienteId = pxDoc?.id;
+  const nombre = nombrePaciente(pxDoc);
+
+  useEffect(() => {
+    setPacienteCompleto(paciente || null);
+  }, [paciente]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,16 +409,23 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
       if (!pacienteId) { setLoading(false); return; }
       setLoading(true);
       try {
-        const q = query(
-          collection(db, 'historial_clinico'),
-          where('pacienteId', '==', pacienteId),
-          orderBy('fecha', 'asc')
-        );
-        const snap = await getDocs(q);
-        const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const [pxSnap, historialSnap] = await Promise.all([
+          getDoc(doc(db, 'pacientes', pacienteId)),
+          getDocs(query(
+            collection(db, 'historial_clinico'),
+            where('pacienteId', '==', pacienteId),
+            orderBy('fecha', 'asc')
+          ))
+        ]);
+
+        if (!cancelled && pxSnap.exists()) {
+          setPacienteCompleto({ id: pxSnap.id, ...pxSnap.data() });
+        }
+
+        const docs = historialSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
         const ordenados = [...docs].reverse();
         const ant = pickSeccionReciente(ordenados, 'antecedentes') || {};
-        const px = pickSeccionReciente(ordenados, 'px_info') || {};
+        const pxInfoReciente = pickSeccionReciente(ordenados, 'px_info') || {};
         const normalizadas = ordenados.map(normalizeConsulta).filter(tieneConsultaContenido);
 
         // Cargar plantillas y resolver contenido de documentos emitidos
@@ -359,22 +447,55 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
           );
         }
 
+        const pxDocActual = pxSnap.exists() ? { id: pxSnap.id, ...pxSnap.data() } : (paciente || {});
+
         // Resolver contenido para cada documento
         const consultasConResuelto = normalizadas.map((c) => {
-          const ctx = buildTemplateContext(paciente || {}, px || {}, c);
+          const ctx = buildTemplateContext(pxDocActual, pxInfoReciente, c);
           const resolverDocEntry = (entry) => {
             const tpl = templateMap[entry.plantillaId];
             if (!tpl || !tpl.schema) return entry;
-            const htmlSources = [
-              tpl.schema.documentHtml || '',
-              ...(tpl.schema.bloques || []).map((b) => b.contenidoHtml || b.contenido || ''),
-              ...(tpl.schema.elements || []).map((e) => e.contentHtml || e.content || '')
-            ].filter(Boolean);
-            const resolvedContent = htmlSources
+            const schema = tpl.schema;
+
+            // Fuentes HTML del documento. IMPORTANTE: `bloques` y `elements`
+            // contienen el MISMO contenido (ambos se derivan del mismo arreglo al
+            // guardar la plantilla), por lo que solo se lee `elements` para no
+            // duplicar. Los `elements` de lienzo se ordenan por posición (arriba
+            // -> abajo, izquierda -> derecha) para un flujo de lectura natural.
+            const elementsOrdenados = Array.isArray(schema.elements)
+              ? [...schema.elements]
+                .filter((e) => e && e.type !== 'image' && e.type !== 'shape')
+                .sort((a, b) => (Number(a.y || 0) - Number(b.y || 0)) || (Number(a.x || 0) - Number(b.x || 0)))
+              : [];
+
+            const fuentes = [
+              schema.documentHtml || '',
+              ...elementsOrdenados.map((e) => {
+                const html = e.contentHtml || e.content || '';
+                if (!html) return '';
+                const align = e.align && e.align !== 'left' ? `text-align:${e.align};` : '';
+                const weight = e.bold ? 'font-weight:bold;' : '';
+                return (align || weight) ? `<div style="${align}${weight}">${html}</div>` : html;
+              })
+            ].filter((h) => String(h || '').trim());
+
+            // Dedupe por firma de texto plano: evita repetir contenido idéntico
+            // que pudiera existir tanto en documentHtml como en elements.
+            const vistos = new Set();
+            const fuentesUnicas = fuentes.filter((html) => {
+              const firma = resolveTemplateToPlainText(html, ctx).replace(/\s+/g, ' ').trim().toLowerCase();
+              if (!firma || vistos.has(firma)) return false;
+              vistos.add(firma);
+              return true;
+            });
+
+            const resolvedHtml = fuentesUnicas.map((html) => resolveTemplateToHtml(html, ctx)).join('\n');
+            const contentBlocks = parseDocumentHtmlToBlocks(resolvedHtml);
+            const resolvedContent = fuentesUnicas
               .map((html) => resolveTemplateToPlainText(html, ctx))
               .filter(Boolean)
               .join('\n');
-            return { ...entry, resolvedContent };
+            return { ...entry, resolvedContent, contentBlocks };
           };
           return {
             ...c,
@@ -385,7 +506,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
 
         if (!cancelled) {
           setAntecedentes(ant);
-          setPxInfo(px);
+          setPxInfo(pxInfoReciente);
           setConsultas(consultasConResuelto);
         }
       } catch (error) {
@@ -400,13 +521,14 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
 
   const pdfDocument = useMemo(() => (
     <ExpedienteElectronicoPDF
-      paciente={bulletproofSanitize(paciente || {})}
+      paciente={bulletproofSanitize(pxDoc)}
       antecedentes={bulletproofSanitize(antecedentes)}
       consultas={bulletproofSanitize(consultas)}
+      pxInfo={bulletproofSanitize(pxInfo)}
       generadoPor={generadoPor}
       folio={folio}
     />
-  ), [paciente, antecedentes, consultas, generadoPor, folio]);
+  ), [pxDoc, antecedentes, consultas, pxInfo, generadoPor, folio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -477,9 +599,10 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
 
       const pdfConQR = (
         <ExpedienteElectronicoPDF
-          paciente={bulletproofSanitize(paciente || {})}
+          paciente={bulletproofSanitize(pxDoc)}
           antecedentes={bulletproofSanitize(antecedentes)}
           consultas={bulletproofSanitize(consultas)}
+          pxInfo={bulletproofSanitize(pxInfo)}
           generadoPor={generadoPor}
           folio={folio}
           qrDataUrl={qrDataUrl}
@@ -503,15 +626,26 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
     });
   };
 
-  const edad = calcularEdad(paciente?.fechaNacimiento);
+  const edad = calcularEdad(pxDoc?.fechaNacimiento);
+  const edadNumerica = Number(edad) || 0;
+  const esMenor = edadNumerica > 0 && edadNumerica < 18;
+  const esFemenino = String(pxDoc?.sexo || '').toLowerCase() === 'femenino';
   const heredo = formatHeredofamiliares(antecedentes.hereditarios || {});
   const noPat = antecedentes.no_patologicos || {};
   const pat = antecedentes.patologicos || {};
   const adicciones = formatAdicciones(pat.adicciones || {});
+  const adiccionesNegado = adicciones ? /^NEGAD/i.test(String(adicciones).trim()) : false;
   const esp = pat.especificos || {};
   const especificosTexto = formatEspecificos(esp);
   const alergiasTexto = formatAlergias(antecedentes.alergias || {});
-  const tieneAlergias = alergiasTexto !== 'Sin alergias registradas' && alergiasTexto !== 'Preguntadas y negadas';
+  const tieneAlergias = alergiasTexto !== 'Niega antecedentes alérgicos' && alergiasTexto !== 'Preguntadas y negadas';
+  const pxGrupoSangre = (pxInfo.grupo_sanguineo || pxDoc?.grupoSanguineo || '');
+  const pxRequiereQx = pxInfo.requiere_cirugia?.general || pxInfo.requiere_cirugia?.ginecologica;
+  const pxEsEmbarazada = pxInfo.es_embarazada;
+  const pxFum = pxInfo.fum || '';
+  const pxSdg = pxInfo.sdg || '';
+  const pxFpp = pxInfo.fpp || '';
+  const tieneMetaClinica = pxGrupoSangre || pxRequiereQx || pxEsEmbarazada || pxFum;
 
   return (
     <>
@@ -525,7 +659,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
               Expediente Clínico
             </h2>
             <p className="text-[11px] text-slate-400 truncate mt-0.5">
-              {nombre} · {edad ? `${edad} años` : '—'} · {paciente?.sexo || '—'}
+              {nombre} · {edad ? `${edad} años` : '—'} · {pxDoc?.sexo || '—'}
             </p>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
@@ -607,19 +741,86 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
                 <h3 className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Ficha de identificación</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5">
                   <InfoChip icon={Calendar} label="Edad" value={edad ? `${edad} años` : '—'} />
-                  <InfoChip label="Sexo" value={paciente?.sexo} />
-                  <InfoChip icon={Droplet} label="Grupo sanguíneo" value={paciente?.grupoSanguineo} />
-                  <InfoChip label="CURP" value={paciente?.curp} />
-                  <InfoChip icon={Phone} label="Teléfono" value={paciente?.telefonoMovil} />
-                  <InfoChip icon={Mail} label="Correo" value={paciente?.email} />
-                  <InfoChip label="Fecha nac." value={safeDateStr(paciente?.fechaNacimiento)} />
-                  <InfoChip label="Ocupación" value={paciente?.ocupacion} />
+                  <InfoChip label="Sexo" value={pxDoc?.sexo} />
+                  <InfoChip icon={Droplet} label="Grupo sanguíneo" value={pxGrupoSangre} />
+                  <InfoChip label="CURP" value={pxDoc?.curp} />
+                  <InfoChip label="Estado civil" value={pxDoc?.estadoCivil} />
+                  <InfoChip label="Fecha nac." value={safeDateStr(pxDoc?.fechaNacimiento)} />
+                  <InfoChip icon={Globe} label="Lugar nac." value={pxDoc?.lugarNacimiento} />
+                  <InfoChip icon={Phone} label="Teléfono móvil" value={pxDoc?.telefonoMovil} />
+                  <InfoChip icon={Phone} label="Teléfono fijo" value={pxDoc?.telefonoFijo} />
+                  <InfoChip icon={Mail} label="Correo" value={pxDoc?.email} />
+                  <InfoChip icon={Briefcase} label="Ocupación" value={pxDoc?.ocupacion} />
+                  <InfoChip icon={Church} label="Religión" value={pxDoc?.religion} />
+                  <InfoChip label="Escolaridad" value={pxDoc?.escolaridad} />
+                  <InfoChip label="Lengua" value={pxDoc?.lengua} />
+                  <InfoChip label="Derechohabiencia" value={pxDoc?.derechohabiente} />
+                  <InfoChip label="Aseguradora" value={pxDoc?.aseguradora} />
+                  <InfoChip label="Empresa" value={pxDoc?.empresa} />
+                  <InfoChip icon={Users} label="Responsable" value={pxDoc?.personaResponsable} />
                 </div>
                 <div className="flex items-start gap-1.5 text-[11px] text-slate-500">
                   <MapPin size={12} className="text-slate-400 mt-0.5 shrink-0" />
-                  <span>{direccionPaciente(paciente || {}) || 'Sin domicilio registrado'}</span>
+                  <span>{direccionPaciente(pxDoc) || 'Sin domicilio registrado'}</span>
                 </div>
+                {[
+                  pxDoc?.padecimientoHipertension && 'Hipertensión',
+                  pxDoc?.padecimientoDiabetes && 'Diabetes',
+                  pxDoc?.padecimientoObesidad && 'Obesidad',
+                  pxDoc?.padecimientoArtritis && 'Artritis'
+                ].filter(Boolean).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {[
+                      pxDoc?.padecimientoHipertension && 'Hipertensión',
+                      pxDoc?.padecimientoDiabetes && 'Diabetes',
+                      pxDoc?.padecimientoObesidad && 'Obesidad',
+                      pxDoc?.padecimientoArtritis && 'Artritis'
+                    ].filter(Boolean).map((label) => (
+                      <span key={label} className="text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {String(pxDoc?.notasPersonales || '').trim() && (
+                  <div className="pt-2">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase mb-1">Notas personales</p>
+                    <p className="text-xs text-slate-600 leading-relaxed">{pxDoc.notasPersonales}</p>
+                  </div>
+                )}
               </div>
+
+              {/* ── Indicadores clínicos (px_info) ──────── */}
+              {tieneMetaClinica && (
+                <div className="space-y-2 py-2.5 px-3 rounded-lg bg-blue-50/50 border border-blue-100">
+                  <h4 className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide">Datos clínicos de la consulta</h4>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+                    {pxGrupoSangre && (
+                      <span><span className="text-slate-400">Grupo:</span> <span className="font-semibold text-slate-700">{pxGrupoSangre}</span></span>
+                    )}
+                    {pxInfo.requiere_cirugia?.general && (
+                      <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 py-px rounded border border-amber-200">
+                        <Scissors size={10} /> Cirugía General
+                      </span>
+                    )}
+                    {pxInfo.requiere_cirugia?.ginecologica && (
+                      <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 py-px rounded border border-amber-200">
+                        <Scissors size={10} /> Cirugía Ginecológica
+                      </span>
+                    )}
+                    {pxEsEmbarazada && (
+                      <span className="inline-flex items-center gap-1 text-pink-700 bg-pink-50 px-1.5 py-px rounded border border-pink-200">
+                        <Baby size={10} /> Embarazada
+                        {pxSdg && <span className="font-semibold">· {pxSdg} SDG</span>}
+                        {pxFpp && <span>· FPP: {safeDateStr(pxFpp)}</span>}
+                      </span>
+                    )}
+                    {pxFum && !pxEsEmbarazada && (
+                      <span><span className="text-slate-400">FUM:</span> <span className="text-slate-700">{safeDateStr(pxFum)}</span></span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* ── Alergias ────────────────────────────── */}
               <div className={`flex items-start gap-2.5 py-2.5 px-3 rounded-lg ${tieneAlergias ? 'bg-red-50/50' : 'bg-slate-50'}`}>
@@ -636,30 +837,275 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-100 pt-3">
                 <div>
                   <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Heredofamiliares</h4>
-                  {heredo.length ? (
+                  {(antecedentes.hereditarios?.preguntados_y_negados) ? (
+                    <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>
+                  ) : heredo.length ? (
                     heredo.map((h) => <Dato key={h.label} label={h.label} value={h.valor} />)
                   ) : (
-                    <p className="text-[10px] text-slate-400 italic">Interrogados y negados.</p>
+                    <p className="text-[10px] text-slate-300 italic">Interrogados y negados.</p>
+                  )}
+                  {antecedentes.hereditarios?.otros && !antecedentes.hereditarios.preguntados_y_negados && (
+                    <Dato label="Otros" value={antecedentes.hereditarios.otros} />
                   )}
                 </div>
                 <div>
                   <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">No Patológicos</h4>
-                  <Dato label="Alimentación" value={noPat.alimentacion} />
-                  <Dato label="Higiene / baño" value={noPat.bano} />
-                  <Dato label="Lavado dental" value={noPat.lavado_dientes} />
-                  <Dato label="Habitación" value={noPat.habitacion} />
-                  <Dato label="Sedentarismo" value={noPat.sedentarismo} />
-                  {String(noPat.otros || '').trim() ? <Dato label="Otros" value={noPat.otros} /> : null}
+                  <Dato label="Alimentación" value={noPat.alimentacion} fallback="Sin particularidades" />
+                  <Dato label="Higiene / baño" value={noPat.bano} fallback="Sin particularidades" />
+                  <Dato label="Lavado dental" value={noPat.lavado_dientes} fallback="Sin particularidades" />
+                  <Dato label="Habitación" value={noPat.habitacion} fallback="Sin particularidades" />
+                  <Dato label="Sedentarismo" value={noPat.sedentarismo} fallback="Sin particularidades" />
+                  <Dato label="Otros" value={noPat.otros} fallback="Sin particularidades" />
                 </div>
                 <div>
                   <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Patológicos</h4>
-                  <Dato label="Padecimientos" value={pat.actuales} />
-                  <Dato label="Quirúrgicos" value={pat.quirurgicos} />
-                  <Dato label="Hospitalizaciones" value={pat.hospitalizaciones} />
-                  <Dato label="Transfusionales" value={pat.transfusionales} />
-                  <Dato label="Adicciones" value={adicciones || 'Negadas'} />
-                  {especificosTexto ? <Dato label="Específicos" value={especificosTexto} /> : null}
+                  <Dato label="Padecimientos" value={pat.actuales} negado={pat.actuales_negado} fallback="Niega antecedentes" />
+                  <Dato label="Quirúrgicos" value={pat.quirurgicos} negado={pat.quirurgicos_negado} fallback="Niega antecedentes" />
+                  <Dato label="Traumáticos" value={pat.traumaticos} negado={pat.traumaticos_negado} fallback="Niega antecedentes" />
+                  <Dato label="Hospitalizaciones" value={pat.hospitalizaciones} negado={pat.hospitalizaciones_negado} fallback="Niega antecedentes" />
+                  <Dato label="Transfusionales" value={pat.transfusionales} negado={pat.transfusionales_negado} fallback="Niega antecedentes" />
+                  <Dato label="Adicciones" value={adiccionesNegado ? undefined : (adicciones || undefined)} negado={adiccionesNegado} fallback="Niega adicciones" />
+                  <Dato label="Glaucoma" value={esp.glaucoma} negado={esp.glaucoma_negado} fallback="S/P" />
+                  <Dato label="Cálculo biliar" value={esp.calculo} negado={esp.calculo_negado} fallback="S/P" />
+                  <Dato label="Reflujo" value={esp.reflujo} negado={esp.reflujo_negado} fallback="S/P" />
+                  <Dato label="Incontinencia" value={esp.incontinencia} negado={esp.incontinencia_negado} fallback="S/P" />
+                  <Dato label="Dislipidemias" value={esp.dislipidemias} negado={esp.dislipidemias_negado} fallback="S/P" />
+                  {esp.otro && <Dato label="Otro" value={esp.otro} negado={esp.otro_negado} />}
                 </div>
+              </div>
+
+              {/* ── CIE-10 del paciente ─────────────────── */}
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Enfermedades CIE-10</h4>
+                {antecedentes.cie10_preguntados_y_negados ? (
+                  <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>
+                ) : antecedentes.cie10 && antecedentes.cie10.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {antecedentes.cie10.map((item, i) => (
+                      <span key={i} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded">
+                        {item.code} — {item.description}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-300 italic">Interrogados y negados.</p>
+                )}
+              </div>
+
+              {/* ── Datos de padres ─────────────────────── */}
+              {esMenor && (
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Datos de los padres</h4>
+                {antecedentes.padres?.preguntados_y_negados ? (
+                  <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-4">
+                    <Dato label="Madre" value={antecedentes.padres?.madre_nombre} fallback="Desconocidos" />
+                    <Dato label="Padre" value={antecedentes.padres?.padre_nombre} fallback="Desconocidos" />
+                    <Dato label="Edad madre al embarazo" value={antecedentes.padres?.edad_madre_embarazo ? `${antecedentes.padres.edad_madre_embarazo} años` : undefined} fallback="Desconocidos" />
+                    <Dato label="Embarazo No." value={antecedentes.padres?.numero_embarazo} fallback="Desconocidos" />
+                    <Dato label="Semanas gestación" value={antecedentes.padres?.semanas_gestacion} fallback="Desconocidos" />
+                  </div>
+                )}
+              </div>
+              )}
+
+              {/* ── Perinatales ──────────────────────────── */}
+              {esMenor && (
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Antecedentes perinatales</h4>
+                {(() => {
+                  const per = antecedentes.perinatales || {};
+                  if (per.preguntados_y_negados) return <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>;
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4">
+                      <Dato label="Anestesia" value={per.anestesia} fallback="Desconocidos" />
+                      <Dato label="Sitio atención" value={per.sitio_atencion} fallback="Desconocidos" />
+                      <Dato label="Curso normal" value={per.curso_normal === true ? 'Sí' : per.curso_normal === false ? 'No' : undefined} fallback="Desconocidos" />
+                      <Dato label="Tipo nacimiento" value={per.tipo_nacimiento} fallback="Desconocidos" />
+                      <Dato label="Duración parto" value={per.duracion_parto} fallback="Desconocidos" />
+                      <Dato label="Peso bebé" value={per.peso ? `${per.peso} kg` : undefined} fallback="Desconocidos" />
+                      <Dato label="Talla bebé" value={per.talla ? `${per.talla} cm` : undefined} fallback="Desconocidos" />
+                      <Dato label="APGAR" value={per.apgar} fallback="Desconocidos" />
+                      <Dato label="Silverman" value={per.silverman} fallback="Desconocidos" />
+                      <Dato label="Tamiz metabólico" value={per.tamiz_metabolico} fallback="Desconocidos" />
+                      <Dato label="Tamiz auditivo" value={per.tamiz_auditivo} fallback="Desconocidos" />
+                      <Dato label="Reanimación" value={per.reanimacion} fallback="Sin datos de interés" />
+                      <Dato label="Otros" value={per.otros} fallback="Sin particularidades" />
+                    </div>
+                  );
+                })()}
+              </div>
+              )}
+
+              {/* ── Psicomotor ───────────────────────────── */}
+              {esMenor && (
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Desarrollo psicomotor</h4>
+                {(() => {
+                  const psi = antecedentes.psicomotor || {};
+                  if (psi.preguntados_y_negados) return <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>;
+                  const hitos = [
+                    { k: 'sostuvo_cabeza', l: 'Sostuvo cabeza' }, { k: 'rodamiento', l: 'Rodamiento' },
+                    { k: 'sedestacion', l: 'Sedestación' }, { k: 'gateo', l: 'Gateó' },
+                    { k: 'sonrio', l: 'Sonrió' }, { k: 'siguio_objetos', l: 'Siguió objetos' },
+                    { k: 'bisilabos', l: 'Bisílabos' }, { k: 'lenguaje_fluido', l: 'Lenguaje fluido' },
+                    { k: 'camino', l: 'Caminó' }, { k: 'correr', l: 'Correr' },
+                    { k: 'bipedestacion', l: 'Bipedestación' }, { k: 'subir_escaleras', l: 'Subir escaleras' },
+                    { k: 'control_esfinteres', l: 'Control esfínteres' }
+                  ];
+                  return (
+                    <>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 mb-2">
+                        {hitos.map(h => (
+                          <span key={h.k} className="text-[11px]">
+                            <span className="text-slate-400">{h.l}:</span>{' '}
+                            <span className={psi[h.k] ? 'font-semibold text-slate-700' : 'text-slate-300'}>{psi[h.k] ? `${psi[h.k]} ${['lenguaje_fluido'].includes(h.k) ? 'años' : 'meses'}` : 'Desconocido'}</span>
+                          </span>
+                        ))}
+                      </div>
+                      <Dato label="Desempeño escolar" value={psi.desempeno_escolar} fallback="Sin datos de interés" />
+                      <Dato label="Otros hallazgos" value={psi.otros_psicomotor} fallback="Sin particularidades" />
+                    </>
+                  );
+                })()}
+              </div>
+              )}
+
+              {/* ── Gineco-obstétricos ───────────────────── */}
+              {esFemenino && (
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Gineco-obstétricos</h4>
+                {(() => {
+                  const gin = antecedentes.gineco_obstetricos || {};
+                  if (gin.preguntados_y_negados) return <p className="text-[10px] text-amber-600 italic">Interrogados y negados.</p>;
+
+                  const metodos = gin.metodos_anticonceptivos || {};
+                  const metodosLista = [];
+                  if (metodos.implante) metodosLista.push('Implante');
+                  if (metodos.mirena) metodosLista.push('Mirena');
+                  if (metodos.kyleena) metodosLista.push('Kyleena');
+                  if (metodos.diu_plata) metodosLista.push('DIU plata');
+                  if (metodos.diu_cobre) metodosLista.push('DIU cobre');
+                  const metodosTexto = metodosLista.length > 0 ? metodosLista.join(', ') : (gin.metodos_anticonceptivos_texto || '');
+
+                  return (
+                    <div>
+                      {/* Sub-sección: Menstruación */}
+                      <h5 className="text-[10px] font-bold text-blue-600 uppercase tracking-wide mt-1 mb-2 border-b border-blue-50 pb-1">Menstruación</h5>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 mb-3">
+                        <Dato label="Menarca" value={gin.menarca ? `${gin.menarca} años` : undefined} fallback="No refiere" />
+                        <Dato label="FUM" value={safeDateStr(gin.fum)} fallback="No refiere" />
+                        <Dato label="Características" value={gin.caracteristicas_menstruacion} fallback="No refiere" />
+                        <Dato label="IVSA" value={gin.ivsa ? `${gin.ivsa} años` : undefined} fallback="No refiere" />
+                        <Dato label="Menopausia" value={gin.menopausia ? `${gin.menopausia} años` : undefined} fallback="No refiere" />
+                        <Dato label="Otros menstruales" value={gin.menstruacion_otros} fallback="Sin particularidades" />
+                      </div>
+
+                      {/* Sub-sección: Embarazos */}
+                      <h5 className="text-[10px] font-bold text-pink-600 uppercase tracking-wide mt-3 mb-2 border-b border-pink-50 pb-1">Historial de embarazos</h5>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 mb-3">
+                        <Dato label="Gestaciones" value={gin.gestas} fallback="S/A" />
+                        <Dato label="Partos" value={gin.partos} fallback="S/A" />
+                        <Dato label="Cesáreas" value={gin.cesareas} fallback="S/A" />
+                        <Dato label="Abortos" value={gin.abortos} fallback="S/A" />
+                        <Dato label="Nacidos vivos" value={gin.nacidos_vivos} fallback="S/A" />
+                        <Dato label="Vivos actuales" value={gin.vivos_actuales} fallback="S/A" />
+                        <Dato label="Otros embarazos" value={gin.embarazos_otros} fallback="Sin particularidades" />
+                      </div>
+
+                      {/* Sub-sección: Salud sexual */}
+                      <h5 className="text-[10px] font-bold text-rose-600 uppercase tracking-wide mt-3 mb-2 border-b border-rose-50 pb-1">Salud sexual y estudios</h5>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 mb-3">
+                        <Dato label="Parejas sexuales" value={gin.parejas_sexuales} fallback="No refiere" />
+                        <Dato label="Métodos anticonceptivos" value={metodosTexto} fallback="Niega antecedentes" />
+                        <Dato label="VPH" value={gin.vph} fallback="S/P" />
+                        <Dato label="Papanicolaou" value={gin.papanicolaou_check ? safeDateStr(gin.fecha_papanicolaou) : (gin.papanicolaou || undefined)} fallback="S/P" />
+                        <Dato label="Colposcopia" value={gin.colposcopia_check ? safeDateStr(gin.fecha_colposcopia) : undefined} fallback="S/P" />
+                        <Dato label="Mastografía" value={gin.mamografia_check ? safeDateStr(gin.fecha_mamografia) : (gin.mastografia || undefined)} fallback="S/P" />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                        <Dato label="Procedimientos ginecológicos" value={gin.procedimientos_ginecologicos} fallback="Niega antecedentes" />
+                        <Dato label="Hábitos" value={gin.habitos} fallback="No refiere" />
+                        <Dato label="Flujos vaginales" value={gin.flujos_vaginales} fallback="No refiere" />
+                        <Dato label="Otros ginecológicos" value={gin.otros_ginecologicos} fallback="Sin particularidades" />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              )}
+
+              {/* ── Vacunas ───────────────────────────────── */}
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
+                  Vacunación
+                  {antecedentes.vacunas?.completo_para_la_edad && <span className="ml-2 text-[9px] text-emerald-600 bg-emerald-50 px-1.5 py-px rounded">Completo para la edad</span>}
+                </h4>
+                {(() => {
+                  const vac = antecedentes.vacunas || {};
+                  const lista = vac.lista || [];
+                  if (lista.length > 0) {
+                    return (
+                      <div className="space-y-1">
+                        {lista.map((v, i) => (
+                          <div key={i} className="flex items-baseline gap-2 text-[11px]">
+                            <span className="font-semibold text-slate-700 min-w-[100px]">{v.nombre}</span>
+                            <span className="text-slate-400">{v.fecha}</span>
+                            {v.nota && <span className="text-slate-400">— {v.nota}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  if (vac.completo_para_la_edad) return <p className="text-[10px] text-emerald-600 italic">Esquema completo para la edad.</p>;
+                  return <p className="text-[10px] text-slate-300 italic">Niega antecedentes de vacunación.</p>;
+                })()}
+              </div>
+
+              {/* ── Cirugías ──────────────────────────────── */}
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Cirugías previas</h4>
+                {(() => {
+                  const cir = antecedentes.cirugias || {};
+                  if (cir.preguntados_y_negados) return <p className="text-[10px] text-amber-600 italic">Interrogadas y negadas.</p>;
+                  const lista = cir.lista || [];
+                  if (lista.length === 0) return <p className="text-[10px] text-slate-300 italic">Niega antecedentes quirúrgicos.</p>;
+                  return (
+                    <div className="space-y-1.5">
+                      {lista.map((c, i) => (
+                        <div key={i} className="text-[11px] flex flex-wrap gap-x-3 gap-y-0.5">
+                          <span className="font-semibold text-slate-700">{c.procedimiento || c.operacion}</span>
+                          {c.operacion && c.procedimiento !== c.operacion && <span className="text-slate-400">{c.operacion}</span>}
+                          {c.fecha && <span className="text-slate-400">{c.fecha}</span>}
+                          {c.unidad && <span className="text-slate-400">· {c.unidad}</span>}
+                          {c.nota && <span className="text-slate-500 italic">— {c.nota}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── Aparatos y sistemas ───────────────────── */}
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Interrogatorio por aparatos y sistemas</h4>
+                {(() => {
+                  const SISTEMAS = [
+                    'Digestivo', 'Cardiovascular', 'Respiratorio', 'Urinario', 'Genital',
+                    'Hematológico', 'Endocrino', 'Osteomuscular', 'Nervioso', 'Sensorial',
+                    'Psicosomático', 'Otro'
+                  ];
+                  const ap = antecedentes.aparatos || {};
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+                      {SISTEMAS.map(sistema => {
+                        const key = sistema.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(' ', '_');
+                        return <Dato key={key} label={sistema} value={ap[key]} fallback="Sin datos de interés" />;
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* ── Historial de Consultas ───────────────── */}
@@ -692,7 +1138,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
         pdfBlob={sharePdfBlob}
         token={shareToken}
         shareUrl={shareUrl}
-        paciente={paciente}
+        paciente={pxDoc}
         generadoPor={generadoPor}
         folio={folio}
         onClose={() => { setShowShareModal(false); setSharePdfBlob(null); }}
