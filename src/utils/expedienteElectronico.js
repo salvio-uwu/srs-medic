@@ -281,6 +281,10 @@ export const normalizeConsulta = (item = {}) => {
   };
 };
 
+/** Documento con PDF archivado al expedir (canvas/plantilla dinámica). */
+export const docUsaArchivoOriginal = (entry = {}) =>
+  Boolean(String(entry?.archivoUrl || '').trim());
+
 export const tieneConsultaContenido = (c) => Boolean(
   c.padecimiento ||
   c.diagnostico ||
@@ -292,7 +296,9 @@ export const tieneConsultaContenido = (c) => Boolean(
   Object.values(c.antropometria).some(Boolean) ||
   Object.values(c.fisica).some(Boolean) ||
   c.estudios.seleccionados.length ||
-  c.procedimientos.seleccionados.length
+  c.procedimientos.seleccionados.length ||
+  (c.recetasGeneradas || []).some(docUsaArchivoOriginal) ||
+  (c.documentosGenerados || []).some(docUsaArchivoOriginal)
 );
 
 // Convierte el objeto de antecedentes heredofamiliares en una lista legible.

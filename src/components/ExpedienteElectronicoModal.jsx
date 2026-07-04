@@ -33,7 +33,8 @@ import {
   resolveTemplateToPlainText,
   resolveTemplateToHtml,
   parseDocumentHtmlToBlocks,
-  buildTemplateContext
+  buildTemplateContext,
+  docUsaArchivoOriginal
 } from '../utils/expedienteElectronico';
 
 // ─── Sub-componentes ────────────────────────────────────────────────────────
@@ -66,6 +67,49 @@ const Dato = ({ label, value, negado = false, fallback = 'No refiere' }) => (
     </span>
   </div>
 );
+
+/** Vista del PDF archivado al expedir (canvas/plantilla dinámica). */
+const DocArchivoPreview = ({ doc, icon: Icon = FileText }) => {
+  const url = String(doc?.archivoUrl || '').trim();
+  if (!url) return null;
+  const titulo = doc?.nombre || 'Documento clínico';
+  const meta = [
+    doc?.plantillaNombre || doc?.formato || '',
+    doc?.totalMedicamentos ? `${doc.totalMedicamentos} med.` : '',
+    doc?.generadoAt
+      ? (() => {
+          const d = new Date(doc.generadoAt);
+          return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+        })()
+      : ''
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-100">
+        <Icon size={12} className="text-slate-400 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold text-slate-700 truncate">{titulo}</p>
+          {meta ? <p className="text-[10px] text-slate-400 truncate">{meta}</p> : null}
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] font-medium text-blue-600 hover:text-blue-800 shrink-0"
+        >
+          Abrir PDF
+        </a>
+      </div>
+      <iframe
+        title={titulo}
+        src={`${url}#toolbar=0&navpanes=0`}
+        className="w-full bg-white"
+        style={{ height: 420, border: 0 }}
+      />
+    </div>
+  );
+};
 
 // ─── Tarjeta de consulta (sección colapsable) ───────────────────────────────
 
@@ -335,33 +379,41 @@ const ConsultaCard = ({ consulta, index, total }) => {
           {/* Archivos generados (recetas impresas + documentos) */}
           {hayArchivos && (
             <SeccionBloque titulo="Documentos expedidos en esta consulta">
-              <div className="space-y-1.5">
+              <div className="space-y-3">
                 {recetas.map((receta, i) => (
-                  <div key={`rec-${i}`} className="flex items-center gap-2 text-[11px]">
-                    <FileSignature size={11} className="text-slate-400 shrink-0" />
-                    <span className="font-medium text-slate-700">{receta.nombre || 'Receta médica'}</span>
-                    <span className="text-slate-400">
-                      {receta.formato === 'clinico' ? 'Formato clínico' : receta.plantillaNombre || receta.formato || ''}
-                      {receta.totalMedicamentos > 0 && ` · ${receta.totalMedicamentos} med.`}
-                    </span>
-                    {receta.generadoAt && (
-                      <span className="text-slate-400 ml-auto">
-                        {(() => { const d = new Date(receta.generadoAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }); })()}
+                  docUsaArchivoOriginal(receta) ? (
+                    <DocArchivoPreview key={`rec-${i}`} doc={receta} icon={FileSignature} />
+                  ) : (
+                    <div key={`rec-${i}`} className="flex items-center gap-2 text-[11px]">
+                      <FileSignature size={11} className="text-slate-400 shrink-0" />
+                      <span className="font-medium text-slate-700">{receta.nombre || 'Receta médica'}</span>
+                      <span className="text-slate-400">
+                        {receta.formato === 'clinico' ? 'Formato clínico' : receta.plantillaNombre || receta.formato || ''}
+                        {receta.totalMedicamentos > 0 && ` · ${receta.totalMedicamentos} med.`}
                       </span>
-                    )}
-                  </div>
+                      {receta.generadoAt && (
+                        <span className="text-slate-400 ml-auto">
+                          {(() => { const d = new Date(receta.generadoAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }); })()}
+                        </span>
+                      )}
+                    </div>
+                  )
                 ))}
                 {documentos.map((docEmitido, i) => (
-                  <div key={`doc-${i}`} className="flex items-center gap-2 text-[11px]">
-                    <FileText size={11} className="text-slate-400 shrink-0" />
-                    <span className="font-medium text-slate-700">{docEmitido.nombre || 'Documento'}</span>
-                    <span className="text-slate-400">{docEmitido.plantillaNombre || docEmitido.formato || 'Documento clínico'}</span>
-                    {docEmitido.generadoAt && (
-                      <span className="text-slate-400 ml-auto">
-                        {(() => { const d = new Date(docEmitido.generadoAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }); })()}
-                      </span>
-                    )}
-                  </div>
+                  docUsaArchivoOriginal(docEmitido) ? (
+                    <DocArchivoPreview key={`doc-${i}`} doc={docEmitido} icon={FileText} />
+                  ) : (
+                    <div key={`doc-${i}`} className="flex items-center gap-2 text-[11px]">
+                      <FileText size={11} className="text-slate-400 shrink-0" />
+                      <span className="font-medium text-slate-700">{docEmitido.nombre || 'Documento'}</span>
+                      <span className="text-slate-400">{docEmitido.plantillaNombre || docEmitido.formato || 'Documento clínico'}</span>
+                      {docEmitido.generadoAt && (
+                        <span className="text-slate-400 ml-auto">
+                          {(() => { const d = new Date(docEmitido.generadoAt); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }); })()}
+                        </span>
+                      )}
+                    </div>
+                  )
                 ))}
               </div>
             </SeccionBloque>
@@ -453,6 +505,14 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
         const consultasConResuelto = normalizadas.map((c) => {
           const ctx = buildTemplateContext(pxDocActual, pxInfoReciente, c);
           const resolverDocEntry = (entry) => {
+            if (docUsaArchivoOriginal(entry)) {
+              return {
+                ...entry,
+                usarArchivoOriginal: true,
+                contentBlocks: [],
+                resolvedContent: ''
+              };
+            }
             const tpl = templateMap[entry.plantillaId];
             if (!tpl || !tpl.schema) return entry;
             const schema = tpl.schema;

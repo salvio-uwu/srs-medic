@@ -1,5 +1,5 @@
 import React from 'react';
-import { Document, Page, Image, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Document, Page, Image, StyleSheet, Text, View, Link } from '@react-pdf/renderer';
 import {
   limpiar,
   calcularEdad,
@@ -8,7 +8,8 @@ import {
   formatHeredofamiliares,
   formatAdicciones,
   formatAlergias,
-  safeDateStr
+  safeDateStr,
+  docUsaArchivoOriginal
 } from '../../utils/expedienteElectronico';
 
 const INSTITUCION = 'CENTRO MÉDICO SANTA CRUZ';
@@ -98,6 +99,8 @@ const styles = StyleSheet.create({
   docTableRow: { flexDirection: 'row' },
   docTableCell: { borderWidth: 0.5, borderColor: '#cbd5e1', paddingVertical: 2.5, paddingHorizontal: 4 },
   docTableCellText: { fontSize: 8 },
+  docArchivoNote: { fontSize: 8.5, color: '#64748b', marginBottom: 4 },
+  docArchivoLink: { fontSize: 8.5, color: '#1d4ed8', textDecoration: 'underline' },
   p: { marginBottom: 1 },
   empty: { fontFamily: 'Helvetica-Oblique', color: '#64748b' },
   closing: { marginTop: 16 },
@@ -236,8 +239,9 @@ const DocExpedido = ({ doc, num }) => {
     doc?.totalMedicamentos ? `${doc.totalMedicamentos} medicamento(s)` : '',
     formatHoraEvento(doc?.generadoAt)
   ].filter(Boolean).join('  ·  ');
-
+  const archivoUrl = String(doc?.archivoUrl || '').trim();
   const bloques = Array.isArray(doc?.contentBlocks) ? doc.contentBlocks : [];
+  const usaArchivo = docUsaArchivoOriginal(doc);
 
   return (
     <View style={styles.docCard}>
@@ -246,9 +250,20 @@ const DocExpedido = ({ doc, num }) => {
         {meta ? <Text style={styles.docCardMeta}>{meta}</Text> : null}
       </View>
       <View style={styles.docCardBody}>
-        {bloques.length > 0
-          ? bloques.map((b, i) => <DocBlock key={i} block={b} />)
-          : <Parrafo value={doc?.resolvedContent} style={styles.docPara} />}
+        {usaArchivo ? (
+          <>
+            <Text style={styles.docArchivoNote}>
+              Documento generado y archivado al momento de la consulta (formato original).
+            </Text>
+            <Link src={archivoUrl} style={styles.docArchivoLink}>
+              Abrir documento PDF archivado
+            </Link>
+          </>
+        ) : bloques.length > 0 ? (
+          bloques.map((b, i) => <DocBlock key={i} block={b} />)
+        ) : (
+          <Parrafo value={doc?.resolvedContent} style={styles.docPara} />
+        )}
       </View>
     </View>
   );
@@ -701,7 +716,8 @@ const ExpedienteElectronicoPDF = ({
             const docsExpedidos = [
               ...(Array.isArray(c.recetasGeneradas) ? c.recetasGeneradas : []),
               ...(Array.isArray(c.documentosGenerados) ? c.documentosGenerados : [])
-            ].filter((d) => (Array.isArray(d?.contentBlocks) && d.contentBlocks.length > 0)
+            ].filter((d) => docUsaArchivoOriginal(d)
+              || (Array.isArray(d?.contentBlocks) && d.contentBlocks.length > 0)
               || String(limpiar(d?.resolvedContent, '')).trim());
 
             const metaTexto = [
