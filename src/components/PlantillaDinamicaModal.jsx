@@ -1754,34 +1754,45 @@ const PlantillaDinamicaModal = ({
 
       let archivoUrl = '';
       let archivoPath = '';
-      if (pacienteId && printPageRef.current) {
+      if (pacienteId) {
         try {
-          const _rFb = flattenSelectsInEl(printPageRef.current);
-          const rawCanvas = await captureElementAsCanvas(
-            printPageRef.current,
-            2,
-            { width: finalPrintWidth, height: finalPrintHeight }
-          );
-          restoreSelectsInEl(_rFb);
-          const canvas = prepareCanvasForPdf(rawCanvas);
-          if (!canvas)
-            throw new Error('No fue posible capturar el documento en canvas.');
-          const capturePdf = new jsPDF({
-            orientation: 'portrait',
-            unit: 'pt',
-            format: 'letter',
-            compress: true,
-          });
-          addCanvasToPdfPage(capturePdf, canvas);
-          const pdfBlob = capturePdf.output('blob');
-          const result = await uploadDocumentoPDF({
-            pacienteId,
-            pdfBlob,
-            nombre: docNombre,
-            tipo: isRecipeTemplate ? 'receta' : 'documento',
-          });
-          archivoUrl = result.url;
-          archivoPath = result.storagePath;
+          const printOutEl = document.querySelector('.tpl-print-root .tpl-print-page-out');
+          const captureEl = printOutEl || printPageRef.current;
+          if (captureEl) {
+            const prev = captureEl.style.cssText;
+            if (printOutEl) {
+              captureEl.style.cssText = `position:absolute;left:0;top:0;width:${finalPrintWidth}px;height:${finalPrintHeight}px;overflow:hidden;pointer-events:none;z-index:-1;opacity:0;`;
+            }
+            const _rFb = flattenSelectsInEl(captureEl);
+            const rawCanvas = await captureElementAsCanvas(
+              captureEl,
+              2,
+              { width: finalPrintWidth, height: finalPrintHeight }
+            );
+            restoreSelectsInEl(_rFb);
+            if (printOutEl) {
+              captureEl.style.cssText = prev;
+            }
+            const canvas = prepareCanvasForPdf(rawCanvas);
+            if (!canvas)
+              throw new Error('No fue posible capturar el documento en canvas.');
+            const capturePdf = new jsPDF({
+              orientation: 'portrait',
+              unit: 'pt',
+              format: 'letter',
+              compress: true,
+            });
+            addCanvasToPdfPage(capturePdf, canvas);
+            const pdfBlob = capturePdf.output('blob');
+            const result = await uploadDocumentoPDF({
+              pacienteId,
+              pdfBlob,
+              nombre: docNombre,
+              tipo: isRecipeTemplate ? 'receta' : 'documento',
+            });
+            archivoUrl = result.url;
+            archivoPath = result.storagePath;
+          }
         } catch (uploadErr) {
           console.warn(
             'No se pudo capturar/subir el PDF al expediente:',
