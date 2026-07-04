@@ -7,11 +7,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  * Convierte un PDF (URL de Storage) en imágenes PNG (data URLs) para
  * incrustar en @react-pdf/renderer u otras vistas que no pueden renderizar PDF.
  */
-export async function pdfUrlToDataUrls(url, { maxPages = 8, scale = 2 } = {}) {
+export async function pdfUrlToDataUrls(url, { maxPages = 8, scale = 3 } = {}) {
   const src = String(url || '').trim();
   if (!src) return [];
 
-  const loadingTask = pdfjs.getDocument({ url: src, withCredentials: false });
+  const response = await fetch(src);
+  const arrayBuffer = await response.arrayBuffer();
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) });
   const pdf = await loadingTask.promise;
   const total = Math.min(pdf.numPages, maxPages);
   const dataUrls = [];
@@ -24,8 +26,10 @@ export async function pdfUrlToDataUrls(url, { maxPages = 8, scale = 2 } = {}) {
     canvas.height = Math.floor(viewport.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) continue;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     await page.render({ canvasContext: ctx, viewport }).promise;
-    dataUrls.push(canvas.toDataURL('image/png'));
+    dataUrls.push(canvas.toDataURL('image/jpeg', 0.92));
   }
 
   return dataUrls;
