@@ -36,6 +36,7 @@ import {
   buildTemplateContext,
   docUsaArchivoOriginal
 } from '../utils/expedienteElectronico';
+import { rasterizarDocumentosEnConsultas } from '../utils/pdfToImages';
 
 // ─── Sub-componentes ────────────────────────────────────────────────────────
 
@@ -68,14 +69,15 @@ const Dato = ({ label, value, negado = false, fallback = 'No refiere' }) => (
   </div>
 );
 
-/** Vista del PDF archivado al expedir (canvas/plantilla dinámica). */
+/** Vista incrustada del documento archivado al expedir (canvas/plantilla dinámica). */
 const DocArchivoPreview = ({ doc, icon: Icon = FileText }) => {
-  const url = String(doc?.archivoUrl || '').trim();
-  if (!url) return null;
+  if (!docUsaArchivoOriginal(doc)) return null;
   const titulo = doc?.nombre || 'Documento clínico';
+  const paginas = Array.isArray(doc?.archivoPaginas) ? doc.archivoPaginas : [];
   const meta = [
     doc?.plantillaNombre || doc?.formato || '',
     doc?.totalMedicamentos ? `${doc.totalMedicamentos} med.` : '',
+    paginas.length > 1 ? `${paginas.length} páginas` : '',
     doc?.generadoAt
       ? (() => {
           const d = new Date(doc.generadoAt);
@@ -92,21 +94,21 @@ const DocArchivoPreview = ({ doc, icon: Icon = FileText }) => {
           <p className="text-[11px] font-semibold text-slate-700 truncate">{titulo}</p>
           {meta ? <p className="text-[10px] text-slate-400 truncate">{meta}</p> : null}
         </div>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[10px] font-medium text-blue-600 hover:text-blue-800 shrink-0"
-        >
-          Abrir PDF
-        </a>
       </div>
-      <iframe
-        title={titulo}
-        src={`${url}#toolbar=0&navpanes=0`}
-        className="w-full bg-white"
-        style={{ height: 420, border: 0 }}
-      />
+      <div className="p-2 space-y-2 bg-white">
+        {paginas.length > 0 ? paginas.map((src, i) => (
+          <img
+            key={i}
+            src={src}
+            alt={`${titulo} — página ${i + 1}`}
+            className="w-full h-auto block border border-slate-100 rounded"
+          />
+        )) : (
+          <p className="text-xs text-slate-400 text-center py-8">
+            No se pudo incrustar el contenido del documento archivado.
+          </p>
+        )}
+      </div>
     </div>
   );
 };
@@ -564,10 +566,15 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
           };
         });
 
+        const consultasConRaster = await rasterizarDocumentosEnConsultas(
+          consultasConResuelto,
+          docUsaArchivoOriginal
+        );
+
         if (!cancelled) {
           setAntecedentes(ant);
           setPxInfo(pxInfoReciente);
-          setConsultas(consultasConResuelto);
+          setConsultas(consultasConRaster);
         }
       } catch (error) {
         console.error('Error cargando expediente electrónico:', error);
@@ -774,7 +781,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
           {loading ? (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
               <Loader2 className="animate-spin" size={22} />
-              <p className="text-xs">Cargando expediente...</p>
+              <p className="text-xs">Cargando expediente y documentos...</p>
             </div>
           ) : panel === 'pdf' ? (
             <div className="h-full p-3 sm:p-4 flex flex-col">
