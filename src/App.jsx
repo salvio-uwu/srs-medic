@@ -820,22 +820,9 @@ const CarroRojoRouter = () => {
 // ── Ofuscador de rutas: codifica las URLs visibles en el navegador ──
 const RouteObfuscator = () => {
   const location = useLocation();
-  const navigate = useNavigate();
-  const initialDecodeDone = useRef(false);
-
-  // Decodificar URL ofuscada en la carga inicial
-  useEffect(() => {
-    const rawPath = window.location.pathname + window.location.search + window.location.hash;
-    const decoded = decodeRoute(rawPath);
-    if (decoded !== rawPath) {
-      navigate(decoded, { replace: true });
-    }
-    initialDecodeDone.current = true;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reescribir la URL del navegador a su versión ofuscada en cada cambio de ruta
   useEffect(() => {
-    if (!initialDecodeDone.current) return;
     const currentPath = location.pathname + location.search + location.hash;
     const encoded = encodeRoute(currentPath);
     const browserPath = window.location.pathname + window.location.search + window.location.hash;
@@ -845,6 +832,20 @@ const RouteObfuscator = () => {
   }, [location]);
 
   return null;
+};
+
+// ── Redirección de URLs ofuscadas (/app/xyz) a su ruta interna ──
+// Debe ser una RUTA (no un efecto): al recargar con una URL /app/... el router
+// arrancaba en el catch-all "*" y su <Navigate to="/" /> ganaba la carrera
+// contra el efecto de decodificación, mandando al usuario al login.
+const ObfuscatedRedirect = () => {
+  const location = useLocation();
+  const rawPath = location.pathname + location.search + location.hash;
+  const decoded = decodeRoute(rawPath);
+  if (decoded !== rawPath) {
+    return <Navigate to={decoded} replace />;
+  }
+  return <Navigate to="/" replace />;
 };
 
 function App() {
@@ -1026,6 +1027,9 @@ function App() {
 
         {/* --- RUTA PÚBLICA: Expediente compartido (QR) --- */}
         <Route path="/compartido/:token" element={<SharedExpedienteView />} />
+
+        {/* --- URLs OFUSCADAS: decodificar y redirigir a la ruta interna --- */}
+        <Route path="/app/*" element={<ObfuscatedRedirect />} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

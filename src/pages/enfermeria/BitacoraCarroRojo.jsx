@@ -7,9 +7,11 @@ import {
 } from 'lucide-react';
 import { db } from '../../config/firebase';
 import {
-  collection, doc, setDoc, onSnapshot, serverTimestamp, addDoc
+  collection, doc, setDoc, onSnapshot, serverTimestamp, addDoc, getDocs,
+  query, orderBy, limit
 } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
+import { alignSucursalData, tieneDatosHuerfanos, nombresDesdeHistorial } from '../../utils/carroRojoData';
 
 /* ═══════════════════════════════════════════════════════════════
    DATOS INICIALES
@@ -122,7 +124,13 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
   const [showSucDropdown, setShowSucDropdown] = useState(false);
   const [bloqueado, setBloqueado] = useState(false); // true = este mes en esta sucursal ya fue enviado
 
-  const mesActual = useMemo(() => new Date().toLocaleDateString('en-CA').slice(0, 7), []); // "2026-06"
+  // Mes actual como estado con refresco periódico: si la pestaña queda abierta
+  // al cambiar de mes, la bitácora debe empezar a operar sobre el mes nuevo.
+  const [mesActual, setMesActual] = useState(() => new Date().toLocaleDateString('en-CA').slice(0, 7)); // "2026-07"
+  useEffect(() => {
+    const id = setInterval(() => setMesActual(new Date().toLocaleDateString('en-CA').slice(0, 7)), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const toastTimer = useRef(null);
   const dropdownRef = useRef(null);
@@ -222,22 +230,51 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
   useEffect(() => {
     if (!sucursalActiva) { setLoading(false); return; }
     setLoading(true);
-    const unsub = onSnapshot(doc(db, 'bitacora_carro_rojo', sucursalActiva), (snap) => {
+    const unsub = onSnapshot(doc(db, 'bitacora_carro_rojo', sucursalActiva), async (snap) => {
       if (snap.exists()) {
         const d = snap.data();
-        const docMes = d.mesBloqueado || '';
-        const matData = d.materialData || {};
-        const medData = d.medicamentoData || {};
-        setSucursalMaterialData(matData);
-        setSucursalMedicamentoData(medData);
+        let matData = d.materialData || {};
+        let medData = d.medicamentoData || {};
 
-        if (docMes === mesActual) {
+        // Re-alinear con la plantilla vigente. Si se eliminaron y re-agregaron
+        // artículos, los datos quedaron bajo ids viejos ("huérfanos"). Se
+        // recuperan por nombre de artículo; para datos legacy sin nombre, se
+        // obtiene el nombre del último snapshot del historial.
+        let nombresPorId = {};
+        if (tieneDatosHuerfanos(plantillaMaterial, matData) || tieneDatosHuerfanos(plantillaMedicamento, medData)) {
+          try {
+            const histSnap = await getDocs(query(
+              collection(db, 'bitacora_carro_rojo', sucursalActiva, 'historial'),
+              orderBy('fecha', 'desc'), limit(1)
+            ));
+            if (!histSnap.empty) nombresPorId = nombresDesdeHistorial(histSnap.docs[0].data());
+          } catch { /* sin recuperación vía historial */ }
+        }
+        matData = alignSucursalData(plantillaMaterial, matData, nombresPorId);
+        medData = alignSucursalData(plantillaMedicamento, medData, nombresPorId);
+        // `mes` se escribe en CADA guardado (parcial o completo). `mesBloqueado`
+        // solo cuando está al 100%. Docs antiguos sin `mes` ni `mesBloqueado`
+        // con datos se asumen del mes en curso (mismo criterio que jefatura).
+        const docMes = d.mes || d.mesBloqueado || '';
+        const hayDatos = Object.keys(d.materialData || {}).length > 0 || Object.keys(d.medicamentoData || {}).length > 0;
+        const esDelMesActual = docMes === mesActual || (!docMes && hayDatos);
+
+        if (esDelMesActual) {
+          setSucursalMaterialData(matData);
+          setSucursalMedicamentoData(medData);
           const allMatFilled = plantillaMaterial.every(item => matData[item.id]?.cantidadExistente);
           const allMedFilled = plantillaMedicamento.every(item => medData[item.id]?.cantidadExistente);
-          setBloqueado(allMatFilled && allMedFilled);
+          setBloqueado(d.mesBloqueado === mesActual && allMatFilled && allMedFilled);
         } else {
-          setSucursalMaterialData({});
-          setSucursalMedicamentoData({});
+          // Mes nuevo: se reinician las cantidades para el re-conteo, pero las
+          // caducidades se conservan (la caducidad física no cambia con el mes).
+          const soloCaducidades = (data) => Object.fromEntries(
+            Object.entries(data)
+              .filter(([, v]) => v?.caducidad)
+              .map(([id, v]) => [id, { caducidad: v.caducidad, articulo: v.articulo || '' }])
+          );
+          setSucursalMaterialData(soloCaducidades(matData));
+          setSucursalMedicamentoData(soloCaducidades(medData));
           setBloqueado(false);
         }
       } else {
@@ -307,6 +344,21 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
     const allMedFilled = plantillaMedicamento.every(item => sucursalMedicamentoData[item.id]?.cantidadExistente);
     const todoCompleto = allMatFilled && allMedFilled;
 
+    // Normalizar: escribir explícitamente TODOS los artículos de la plantilla.
+    // Con setDoc(merge) los mapas se fusionan campo a campo; si no escribimos
+    // los vacíos, cantidades de meses anteriores "resucitarían" en Firestore.
+    // Se guarda también el nombre del artículo: es el respaldo que permite
+    // recuperar los datos si cambian los ids de la plantilla.
+    const buildData = (plantilla, local) => Object.fromEntries(
+      plantilla.map(item => [item.id, {
+        articulo: item.articulo || '',
+        cantidadExistente: local[item.id]?.cantidadExistente || '',
+        caducidad: local[item.id]?.caducidad || ''
+      }])
+    );
+    const materialData = buildData(plantillaMaterial, sucursalMaterialData);
+    const medicamentoData = buildData(plantillaMedicamento, sucursalMedicamentoData);
+
     try {
       const promises = [];
       if (esJefa) {
@@ -323,8 +375,10 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
         promises.push(
           setDoc(doc(db, 'bitacora_carro_rojo', sucursalActiva), {
             sucursal: sucursalActiva,
-            materialData: sucursalMaterialData,
-            medicamentoData: sucursalMedicamentoData,
+            materialData,
+            medicamentoData,
+            // Mes al que pertenece la captura (se escribe SIEMPRE, también en parciales)
+            mes: mesActual,
             mesBloqueado: todoCompleto ? mesActual : '',
             ultimaActualizacion: serverTimestamp(),
             actualizadoPor: user?.nombre || 'Desconocido',
@@ -335,8 +389,8 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
           addDoc(collection(db, 'bitacora_carro_rojo', sucursalActiva, 'historial'), {
             plantillaMaterial: plantillaMaterial,
             plantillaMedicamento: plantillaMedicamento,
-            materialData: sucursalMaterialData,
-            medicamentoData: sucursalMedicamentoData,
+            materialData,
+            medicamentoData,
             mes: mesActual,
             fecha: serverTimestamp(),
             actualizadoPor: user?.nombre || 'Desconocido',
@@ -353,8 +407,9 @@ const BitacoraCarroRojo = ({ embedded = false, sucursal: sucursalProp = '' }) =>
           ? `Bitácora de ${mesActual} completada y bloqueada`
           : 'Progreso guardado. Puedes seguir llenando después.');
       setEditMode(false);
-    } catch {
-      showToast('Error al guardar', 'error');
+    } catch (e) {
+      console.error('Error al guardar bitácora de carro rojo:', e);
+      showToast(`Error al guardar: ${e?.code || e?.message || 'desconocido'}`, 'error');
     }
     setSaving(false);
   };

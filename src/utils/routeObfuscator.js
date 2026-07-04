@@ -14,6 +14,7 @@ const SKIP_PREFIXES = ['/login', '/portal', '/compartido'];
 
 const shouldObfuscate = (pathname) => {
   if (pathname === '/' || pathname === '') return false;
+  if (pathname.startsWith('/app/')) return false; // ya está codificada
   return !SKIP_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 };
 

@@ -9,6 +9,7 @@ import {
 import { db } from '../../config/firebase';
 import { collection, doc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
+import { alignSucursalData } from '../../utils/carroRojoData';
 
 /* ── helpers ── */
 const cadDias = (c, base = new Date()) => c ? Math.ceil((new Date(c) - base) / 86400000) : null;
@@ -124,19 +125,27 @@ const CarroRojoJefatura = () => {
     return () => unsub();
   }, [openSuc]);
 
-  const merge = (pl, d) => pl.map(it => ({ ...it, cantidadExistente: d?.[it.id]?.cantidadExistente||'', caducidad: d?.[it.id]?.caducidad||'' }));
+  // alignSucursalData recupera por nombre de artículo los datos guardados bajo
+  // ids que ya no existen en la plantilla vigente (plantilla editada después).
+  const merge = (pl, d) => {
+    const aligned = alignSucursalData(pl, d || {});
+    return pl.map(it => ({ ...it, cantidadExistente: aligned[it.id]?.cantidadExistente||'', caducidad: aligned[it.id]?.caducidad||'' }));
+  };
   const mergeHist = (pl, d) => (pl || []).map(it => ({ ...it, cantidadExistente: d?.[it.id]?.cantidadExistente||'', caducidad: d?.[it.id]?.caducidad||'' }));
 
   const data = useMemo(() => {
     const list = sucursales.map(s => {
       const n = s.nombre || s.id;
       const d = sucData[n];
-      // Si el documento tiene mesBloqueado y es el mes actual → datos vigentes (pueden ser parciales)
-      // Si no coinciden → los datos son del mes pasado, tratar como sin datos
-      const esMesActual = !!d && d.mesBloqueado === mesActual;
-      // Aunque el documento sea del mes actual, si no tiene mesBloqueado (parcial) también mostrar datos
-      const tieneDatosActuales = esMesActual || (!d?.mesBloqueado && !!d && (d.materialData || d.medicamentoData));
-      const datosVigentes = (esMesActual || tieneDatosActuales) ? d : null;
+      // Datos vigentes = capturados en el mes en curso (parciales o completos).
+      // `mes` se escribe en cada guardado; `mesBloqueado` solo al completar.
+      // Docs antiguos sin `mes` ni `mesBloqueado` con datos se asumen del mes en curso.
+      const docMes = d ? (d.mes || d.mesBloqueado || '') : '';
+      const esMesActual = !!d && (
+        docMes === mesActual ||
+        (!docMes && !!(d.materialData || d.medicamentoData))
+      );
+      const datosVigentes = esMesActual ? d : null;
       const mat = merge(pMat, datosVigentes?.materialData);
       const med = merge(pMed, datosVigentes?.medicamentoData);
       const all = [...mat, ...med];
@@ -156,11 +165,9 @@ const CarroRojoJefatura = () => {
       const filled = all.filter(r => r.cantidadExistente).length;
       const coverage = all.length > 0 ? Math.round((filled / all.length) * 100) : 0;
 
-      // Determinar si está realmente completo (todos los campos llenos)
-      const completo = esMesActual && (
-        pMat.every(item => d?.materialData?.[item.id]?.cantidadExistente) &&
-        pMed.every(item => d?.medicamentoData?.[item.id]?.cantidadExistente)
-      );
+      // Determinar si está realmente completo (todos los campos llenos),
+      // usando las filas ya alineadas con la plantilla vigente
+      const completo = esMesActual && all.length > 0 && all.every(r => r.cantidadExistente);
 
       return {
         nombre: n,

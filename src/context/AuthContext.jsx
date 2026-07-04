@@ -35,20 +35,26 @@ export const AuthProvider = ({ children }) => {
       // ── El usuario autenticado llegó ──
       if (currentUser) {
         if (initialNullTimer) { clearTimeout(initialNullTimer); initialNullTimer = null; }
-        // Paso 1: usuario básico inmediato → RequireAuth no redirige
-        setUser(currentUser);
-        setLoading(false);
 
-        // Paso 2: enriquecer con perfil asíncrono de Firestore
+        // IMPORTANTE: loading permanece true hasta que llegue el perfil de
+        // Firestore (rol + permissions). Si liberamos loading con el usuario
+        // básico de Firebase Auth, PermissionRoute evalúa permisos sobre un
+        // usuario sin rol y redirige a /portal → /login (pérdida de ruta al
+        // recargar o al abrir orden de servicio en pestaña nueva).
         const userRef = doc(db, 'users', currentUser.uid);
         unsubscribeProfile = onSnapshot(
           userRef,
           (snap) => {
             const profileData = snap.exists() ? snap.data() : {};
             setUser({ ...currentUser, ...profileData });
+            setLoading(false);
           },
           (error) => {
             console.error('Error sincronizando perfil:', error);
+            // Si el perfil no se puede leer, liberar con el usuario básico
+            // para no dejar la app en blanco.
+            setUser(currentUser);
+            setLoading(false);
           }
         );
         return;

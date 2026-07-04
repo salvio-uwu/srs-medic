@@ -133,7 +133,42 @@ const OrdenServicioEnfermeria = () => {
         procedimientoFinalizadoPorNombre: user?.nombre || ''
       });
 
-      // Escribir en el expediente clínico del paciente
+      // Escribir en el expediente clínico del paciente.
+      // Los datos clínicos van anidados en `consulta.*` (la estructura que usan
+      // las consultas médicas): es lo que leen el timeline del expediente,
+      // el ECE y el PDF. Sin esta estructura el registro queda invisible.
+      const soloLlenos = (obj) => Object.fromEntries(
+        Object.entries(obj).filter(([, v]) => String(v ?? '').trim() !== '')
+      );
+      const pesoNum = Number.parseFloat(signos.peso);
+      const tallaNum = Number.parseFloat(signos.talla); // en cm
+      const imc = (Number.isFinite(pesoNum) && Number.isFinite(tallaNum) && tallaNum > 0)
+        ? (pesoNum / ((tallaNum / 100) ** 2)).toFixed(1)
+        : '';
+
+      const consultaEstructura = {
+        padecimiento: motivoClinico || cita.motivo || 'Servicio de enfermería',
+        exploracion: {
+          signos: soloLlenos({ ta: signos.ta, temp: signos.temp, fc: signos.fc, fr: signos.fr, spo2: signos.spo2, glucosa: signos.glucosa }),
+          antropometria: soloLlenos({ peso: signos.peso, talla: signos.talla, imc })
+        },
+        diagnostico: {
+          enfermedad_actual: '',
+          indicaciones: notasClinicas || '',
+          // Medicamentos/insumos administrados, en el formato de tratamiento
+          // que ya renderizan las vistas del expediente.
+          tratamiento_lista: insumos.map((i) => ({
+            nombre: i.nombre || '',
+            presentacion: [i.cantidad, i.unidad].filter(Boolean).join(' '),
+            dosis: [i.via ? `Vía ${i.via}` : '', i.hora ? `Hora: ${i.hora}` : '', i.nota || ''].filter(Boolean).join(' • ')
+          }))
+        },
+        procedimientos: {
+          seleccionados: procedimientos.map((p) => p.nombre),
+          notas_generales: observaciones || ''
+        }
+      };
+
       await addDoc(collection(db, 'historial_clinico'), {
         pacienteId: cita.pacienteId || '',
         pacienteNombre: cita.paciente || '',
@@ -144,6 +179,7 @@ const OrdenServicioEnfermeria = () => {
         citaId,
         tipoNota: 'Servicio de Enfermería',
         origenRegistro: 'enfermeria_orden_servicio',
+        consulta: consultaEstructura,
         motivoClinico,
         notasClinicas,
         codigoCompras: codigoCompras.trim(),

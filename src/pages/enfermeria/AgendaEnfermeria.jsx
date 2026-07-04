@@ -2679,42 +2679,58 @@ const handleGuardarCita = async (e) => {
                                     </div>
                                 </div>
 
-                                {/* ACCIONES RÁPIDAS */}
-                                {selectedCita.estado !== 'cancelada' && selectedCita.estado !== 'completada' && (
+                                {/* ACCIONES RÁPIDAS / SEGUIMIENTO POST-ATENCIÓN */}
+                                {selectedCita.estado !== 'cancelada' && (
                                     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                        {selectedCita.estado === 'completada' && (
+                                            <div style={{ padding: '12px 16px', borderBottom: '1px solid #a7f3d0', background: '#ecfdf5', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                <CheckCircle2 size={18} style={{ color: '#10b981', flexShrink: 0 }} />
+                                                <div>
+                                                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#065f46' }}>Atención completada</div>
+                                                    <div style={{ fontSize: '10px', color: '#059669', marginTop: '2px' }}>Puedes seguir trabajando con el expediente del paciente</div>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <Zap size={13} style={{ color: '#6366f1' }} /> Acciones rápidas
+                                            <Zap size={13} style={{ color: selectedCita.estado === 'completada' ? '#059669' : '#6366f1' }} />
+                                            {selectedCita.estado === 'completada' ? 'Seguimiento post-atención' : 'Acciones rápidas'}
                                         </div>
                                         <div style={{ padding: '12px' }}>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                                                <ActionBtn icon={<LogIn size={14}/>} label="Llegada" sub={selectedCita.llegadaRegistrada ? 'Confirmada' : 'Registrar'} done={selectedCita.llegadaRegistrada} loading={actionLoading === 'llegada'} onClick={handleRegistrarLlegada} disabled={selectedCita.llegadaRegistrada} color="emerald" />
-                                                <ActionBtn icon={<MessageSquare size={14}/>} label="WhatsApp" sub={selectedCita.recordatorioEnviado ? 'Enviado' : 'Enviar'} done={selectedCita.recordatorioEnviado} loading={actionLoading === 'whatsapp'} onClick={handleEnviarRecordatorio} disabled={selectedCita.recordatorioEnviado} color="green" />
-                                                <ActionBtn icon={<CalendarClock size={14}/>} label="Reprogramar" sub="Fecha/Hora" onClick={() => { setReprogramarData({ fecha: selectedCita.fecha || toInputDateValue(new Date()), hora: selectedCita.hora || '', horaFin: selectedCita.horaFin || '' }); setShowReprogramar(true); }} color="indigo" />
-                                                <ActionBtn icon={<Edit3 size={14}/>} label="Editar cita" sub="Modal completo" onClick={() => abrirModalEditarCita(selectedCita)} color="slate" />
+                                                {selectedCita.estado !== 'completada' && (
+                                                    <>
+                                                        <ActionBtn icon={<LogIn size={14}/>} label="Llegada" sub={selectedCita.llegadaRegistrada ? 'Confirmada' : 'Registrar'} done={selectedCita.llegadaRegistrada} loading={actionLoading === 'llegada'} onClick={handleRegistrarLlegada} disabled={selectedCita.llegadaRegistrada} color="emerald" />
+                                                        <ActionBtn icon={<MessageSquare size={14}/>} label="WhatsApp" sub={selectedCita.recordatorioEnviado ? 'Enviado' : 'Enviar'} done={selectedCita.recordatorioEnviado} loading={actionLoading === 'whatsapp'} onClick={handleEnviarRecordatorio} disabled={selectedCita.recordatorioEnviado} color="green" />
+                                                        <ActionBtn icon={<CalendarClock size={14}/>} label="Reprogramar" sub="Fecha/Hora" onClick={() => { setReprogramarData({ fecha: selectedCita.fecha || toInputDateValue(new Date()), hora: selectedCita.hora || '', horaFin: selectedCita.horaFin || '' }); setShowReprogramar(true); }} color="indigo" />
+                                                        <ActionBtn icon={<Edit3 size={14}/>} label="Editar cita" sub="Modal completo" onClick={() => abrirModalEditarCita(selectedCita)} color="slate" />
+                                                        <ActionBtn icon={<ArrowLeftRight size={14}/>} label="Reasignar" sub="Cambiar doctor" onClick={() => { setReasignarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); setShowReasignar(true); }} color="amber" />
+                                                        <ActionBtn icon={<Building size={14}/>} label="Consultorio" sub="Cambiar ubicación" onClick={() => { setCambiarConsultorioData({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' }); setShowCambiarConsultorio(true); }} color="slate" />
+                                                        {selectedCita.esCitaEnfermeria && (
+                                                            <ActionBtn icon={<CheckCircle2 size={14}/>} label="Finalizar" sub="Completar atención" onClick={handleFinalizarCita} loading={actionLoading === 'finalizar'} color="emerald" />
+                                                        )}
+                                                    </>
+                                                )}
                                                 {selectedCita.pacienteId && <ActionBtn icon={<FileText size={14}/>} label="Antecedentes" sub="Editar historial" onClick={handleEditarAntecedentes} color="blue" />}
                                                 {selectedCita.pacienteId && <ActionBtn icon={<ClipboardList size={14}/>} label="Documentos" sub="Generar plantilla" onClick={handleGenerarDocumento} color="orange" />}
                                                 {selectedCita.pacienteId && <ActionBtn icon={<Upload size={14}/>} label="Estudios" sub="Subir archivo" onClick={handleUploadEstudioClick} disabled={uploadingEstudio} loading={uploadingEstudio} color="teal" />}
-                                                <ActionBtn icon={<ArrowLeftRight size={14}/>} label="Reasignar" sub="Cambiar doctor" onClick={() => { setReasignarData({ doctorUid: '', doctorNombre: '', justificacion: '' }); setShowReasignar(true); }} color="amber" />
-                                                <ActionBtn icon={<Building size={14}/>} label="Consultorio" sub="Cambiar ubicación" onClick={() => { setCambiarConsultorioData({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' }); setShowCambiarConsultorio(true); }} color="slate" />
                                                 {selectedCita.pacienteId && <ActionBtn icon={<GitMerge size={14}/>} label="Unificar" sub="Fusionar duplicados" onClick={() => setShowUnificar(true)} color="violet" />}
                                                 {selectedCita.esCitaEnfermeria && (
-                                                    <ActionBtn icon={<CheckCircle2 size={14}/>} label="Finalizar" sub="Completar atención" onClick={handleFinalizarCita} loading={actionLoading === 'finalizar'} color="emerald" />
+                                                    <ActionBtn icon={<ClipboardList size={14}/>} label="Orden" sub="Ver / editar" onClick={() => window.open(`/enfermeria/orden-servicio?citaId=${selectedCita.id}`, '_blank')} color="emerald" />
+                                                )}
+                                                {selectedCita.estado === 'completada' && selectedCita.pacienteId && (
+                                                    <ActionBtn icon={<Activity size={14}/>} label="Signos" sub={selectedCita.signos_vitales ? 'Editar triage' : 'Registrar triage'} onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente, editMode: Boolean(selectedCita.signos_vitales) } })} color="amber" />
+                                                )}
+                                                {selectedCita.estado === 'completada' && (
+                                                    <ActionBtn icon={<Edit3 size={14}/>} label="Editar cita" sub="Corregir datos" onClick={() => abrirModalEditarCita(selectedCita)} color="slate" />
                                                 )}
                                             </div>
-                                            <button onClick={() => setShowCancelarConfirm(true)}
-                                                style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px', borderRadius: '6px', border: '1px solid #fecdd3', background: '#fff', color: '#f43f5e', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
-                                                <XCircle size={13} /> Cancelar esta cita
-                                            </button>
+                                            {selectedCita.estado !== 'completada' && (
+                                                <button onClick={() => setShowCancelarConfirm(true)}
+                                                    style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px', borderRadius: '6px', border: '1px solid #fecdd3', background: '#fff', color: '#f43f5e', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                                                    <XCircle size={13} /> Cancelar esta cita
+                                                </button>
+                                            )}
                                         </div>
-                                    </div>
-                                )}
-
-                                {/* COMPLETADA */}
-                                {selectedCita.estado === 'completada' && (
-                                    <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
-                                        <CheckCircle2 size={28} style={{ color: '#10b981', margin: '0 auto 8px' }} />
-                                        <div style={{ fontSize: '13px', fontWeight: 800, color: '#065f46' }}>Atención completada</div>
-                                        <div style={{ fontSize: '11px', color: '#059669', marginTop: '4px' }}>Esta cita ya fue finalizada</div>
                                     </div>
                                 )}
                             </div>

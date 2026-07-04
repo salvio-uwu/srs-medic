@@ -2805,6 +2805,7 @@ const ExpedienteClinico = () => {
             const docConsulta = snapDuplicados.docs.find((d) => {
               const data = d.data();
               return data.origenRegistro !== 'enfermeria_agenda'
+                && data.origenRegistro !== 'enfermeria_orden_servicio'
                 && !data.soloAntecedentes
                 && data.tipoNota !== 'Carga de Estudio';
             });
