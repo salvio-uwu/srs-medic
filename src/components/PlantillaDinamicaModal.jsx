@@ -1756,23 +1756,20 @@ const PlantillaDinamicaModal = ({
       let archivoPath = '';
       if (pacienteId) {
         try {
-          const printOutEl = document.querySelector('.tpl-print-root .tpl-print-page-out');
-          const captureEl = printOutEl || printPageRef.current;
-          if (captureEl) {
-            const prev = captureEl.style.cssText;
-            if (printOutEl) {
-              captureEl.style.cssText = `position:absolute;left:0;top:0;width:${finalPrintWidth}px;height:${finalPrintHeight}px;overflow:hidden;pointer-events:none;z-index:-1;opacity:0;`;
-            }
-            const _rFb = flattenSelectsInEl(captureEl);
+          const sourceEl = document.querySelector('.tpl-print-root .tpl-print-page-out');
+          if (sourceEl) {
+            const clone = sourceEl.cloneNode(true);
+            clone.style.cssText = `position:fixed;left:0;top:0;width:${finalPrintWidth}px;height:${finalPrintHeight}px;overflow:hidden;z-index:99999;opacity:0;pointer-events:none;`;
+            document.body.appendChild(clone);
+            const _rClone = flattenSelectsInEl(clone);
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
             const rawCanvas = await captureElementAsCanvas(
-              captureEl,
+              clone,
               2,
               { width: finalPrintWidth, height: finalPrintHeight }
             );
-            restoreSelectsInEl(_rFb);
-            if (printOutEl) {
-              captureEl.style.cssText = prev;
-            }
+            restoreSelectsInEl(_rClone);
+            document.body.removeChild(clone);
             const canvas = prepareCanvasForPdf(rawCanvas);
             if (!canvas)
               throw new Error('No fue posible capturar el documento en canvas.');
