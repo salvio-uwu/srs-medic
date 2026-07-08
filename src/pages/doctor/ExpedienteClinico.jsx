@@ -39,6 +39,7 @@ import { buildEnfermeriaPatientLogRecord } from '../../services/enfermeriaPatien
 import { getTipoCitaLabel } from '../../services/referenciaMedicaService';
 import AvatarPaciente from '../../components/AvatarPaciente';
 import { getPatientDisplayName } from '../../utils/patientName';
+import { calcularEdad, formatearEdadTexto } from '../../utils/patientAge';
 import PlantillaDinamicaModal from '../../components/PlantillaDinamicaModal';
 
 // historialmedico/ fue eliminado — glob deshabilitado
@@ -464,19 +465,6 @@ const formatIssuedTimeEsMx = (value = new Date()) => {
     minute: '2-digit',
     hour12: false
   });
-};
-
-const calculateAgeFromBirthdate = (birthDate) => {
-  if (!(birthDate instanceof Date) || Number.isNaN(birthDate.getTime())) return null;
-
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const hasBirthdayPassed =
-    today.getMonth() > birthDate.getMonth() ||
-    (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
-
-  if (!hasBirthdayPassed) age -= 1;
-  return age >= 0 ? age : null;
 };
 
 const buildPacienteRecipeId = (nombreCompleto, birthDate) => {
@@ -1673,13 +1661,12 @@ const ExpedienteClinico = () => {
 
           const fechaNacimientoDate = parseFirestoreDate(dataPx.fechaNacimiento);
           const fechaNacimientoIso = formatDateIso(fechaNacimientoDate);
-          const edadCalc = calculateAgeFromBirthdate(fechaNacimientoDate);
           const legacyId = getLegacyPatientIdFromDb(dataPx);
           const generatedId = buildPacienteRecipeId(nombreCompletoPx, fechaNacimientoDate);
 
           nuevosDatos.px_info = {
             ...nuevosDatos.px_info,
-            edad: Number.isInteger(edadCalc) ? `${edadCalc} años` : '--',
+            edad: formatearEdadTexto(fechaNacimientoDate),
             fecha_nacimiento: fechaNacimientoIso,
             id_receta: legacyId || generatedId,
             telefono: dataPx.telefonoMovil || '',
@@ -3396,14 +3383,7 @@ const ExpedienteClinico = () => {
     }
     const fechaNacimientoRaw = exp?.px_info?.fecha_nacimiento || pacienteData?.fechaNacimiento || pacienteData?.fecha_nacimiento || '';
     const fechaNacimientoDate = parseFirestoreDate(fechaNacimientoRaw);
-    const edadCalculada = (() => {
-      if (!fechaNacimientoDate) return '';
-      const hoy = new Date();
-      let years = hoy.getFullYear() - fechaNacimientoDate.getFullYear();
-      const monthDiff = hoy.getMonth() - fechaNacimientoDate.getMonth();
-      if (monthDiff < 0 || (monthDiff === 0 && hoy.getDate() < fechaNacimientoDate.getDate())) years -= 1;
-      return years > 0 ? String(years) : '';
-    })();
+    const edadCalculada = formatearEdadTexto(fechaNacimientoDate, '');
     const telefonoPaciente = exp?.px_info?.telefono
       || pacienteData?.telefonoMovil
       || pacienteData?.telefono
@@ -3693,8 +3673,8 @@ const ExpedienteClinico = () => {
                 {pacienteNombre || 'Cargando...'}
               </h1>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-px rounded border border-blue-100 uppercase tracking-wide">
-                  {expediente.px_info.edad || '--'}
+                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-px rounded border border-blue-100 tracking-wide normal-case">
+                  {formatearEdadTexto(pacienteData?.fechaNacimiento || expediente.px_info.fecha_nacimiento, expediente.px_info.edad || '--')}
                 </span>
                 {expediente.px_info.fecha_nacimiento && (() => {
                   const d = parseFirestoreDate(expediente.px_info.fecha_nacimiento);
@@ -4007,7 +3987,7 @@ const ExpedienteClinico = () => {
                     expediente={expediente}
                     updateCampo={updateCampo}
                     sexo={pacienteData?.sexo}
-                    edad={parseInt(expediente.px_info.edad)}
+                    edad={calcularEdad(pacienteData?.fechaNacimiento || expediente.px_info.fecha_nacimiento, 0)}
                     tempAlergia={tempAlergia}
                     setTempAlergia={setTempAlergia}
                     tempCirugia={tempCirugia}

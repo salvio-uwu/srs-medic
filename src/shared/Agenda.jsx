@@ -786,14 +786,14 @@ const STYLES = `
 
   /* ── CITA CARD ── */
   .cita-card {
-    flex: 1; padding: 16px; margin-bottom: 16px;
-    border-radius: 12px; border: 1px solid var(--slate-200);
+    flex: 1; margin-bottom: 16px;
+    border-radius: 14px; border: 1px solid var(--slate-200);
     background: white;
-    display: flex; justify-content: space-between; align-items: center;
-    cursor: default; transition: all .2s ease;
-    gap: 16px;
+    display: flex; flex-direction: column;
+    cursor: default; transition: all .22s ease;
+    overflow: hidden;
   }
-  .cita-card:hover { border-color: var(--slate-300); box-shadow: var(--shadow-sm); }
+  .cita-card:hover { border-color: var(--slate-300); box-shadow: var(--shadow-md); }
   .cita-card.cancelled {
     background: #fef2f2 !important; border-color: #fecaca !important;
     opacity: 0.55;
@@ -802,43 +802,108 @@ const STYLES = `
   .cita-card.cancelled .cita-name { text-decoration: line-through; color: var(--red-400); }
   .cita-card.cancelled .cita-actions { opacity: 0.3; pointer-events: none; }
   .cita-card.waiting {
-    background: var(--blue-50); border-color: var(--blue-200);
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    border-color: var(--blue-200);
   }
   .cita-card.waiting:hover { border-color: var(--blue-300); }
   .cita-card.done { background: var(--slate-50); border-style: solid; border-color: var(--slate-200); }
   .cita-card.overdue {
-    background: #fff7ed;
+    background: linear-gradient(180deg, #fffbf5 0%, #ffffff 100%);
     border-color: #fdba74;
   }
   .cita-card.overdue:hover {
     border-color: #fb923c;
-    box-shadow: 0 8px 18px rgba(251, 146, 60, 0.18);
+    box-shadow: 0 8px 18px rgba(251, 146, 60, 0.14);
   }
 
   /* ── SIGUIENTE PACIENTE ── */
   .cita-card.siguiente {
-    border: 2px solid var(--blue-500);
-    background: white;
-    box-shadow: 0 8px 24px rgba(0,119,182,0.1);
-    transform: scale(1.01);
+    border: 1px solid #c8e4f3;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(0, 119, 182, 0.09);
     position: relative;
     z-index: 10;
   }
-  .badge-siguiente {
-    position: absolute; top: -12px; left: 16px;
-    background: var(--blue-600); color: white;
-    font-size: 10px; font-weight: 800; padding: 4px 12px;
-    border-radius: 6px; text-transform: uppercase;
-    letter-spacing: 0.08em; display: flex; align-items: center; gap: 6px;
-    box-shadow: var(--shadow-sm);
+  .cita-turno-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--blue-700);
+    background: linear-gradient(135deg, #e8f4fc 0%, #f0f9ff 100%);
+    border: 1px solid #bce0ef;
+    padding: 4px 10px; border-radius: 8px;
+    width: fit-content;
   }
+  .turno-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--blue-500);
+    box-shadow: 0 0 0 3px rgba(41, 152, 198, 0.2);
+    animation: turno-dot-pulse 1.8s ease infinite;
+  }
+  @keyframes turno-dot-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(41, 152, 198, 0.2); }
+    50% { box-shadow: 0 0 0 6px rgba(41, 152, 198, 0.08); }
+  }
+
+  .cita-card-inner {
+    padding: 14px 16px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+
+  .cita-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .cita-card-identity { flex: 1; min-width: 0; }
 
   .cita-name {
     font-family: 'Sora', sans-serif;
-    font-size: 15px; font-weight: 700; color: var(--slate-900);
-    margin-bottom: 6px; line-height: 1.2;
+    font-size: 14px; font-weight: 700; color: var(--slate-900);
+    margin-bottom: 3px; line-height: 1.35;
+    letter-spacing: -0.01em;
+    text-transform: capitalize;
   }
+  .cita-card.siguiente .cita-name { font-size: 15px; color: var(--slate-900); }
   .cita-name.done-name { text-decoration: line-through; color: var(--slate-500); }
+
+  .cita-meta {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap; font-size: 11px; color: var(--slate-500); line-height: 1.4;
+  }
+  .cita-meta-item {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-weight: 500;
+  }
+  .cita-meta-dot { color: var(--slate-300); font-weight: 700; }
+
+  .cita-status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; border-radius: 99px;
+    font-size: 9px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .06em; flex-shrink: 0; border: 1px solid;
+    white-space: nowrap;
+  }
+  .cita-status-pill.pulse { animation: status-pulse 2s ease infinite; }
+
+  @keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .72; }
+  }
+
+  .cita-card-alerts {
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .cita-alert-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 600; padding: 3px 8px;
+    border-radius: 6px; border: 1px solid;
+  }
+  .cita-alert-chip.warn { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+  .cita-alert-chip.info { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+  .cita-alert-chip.ok { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
 
   .cita-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
@@ -859,14 +924,28 @@ const STYLES = `
 
   /* ── CITA ACTIONS ── */
   .cita-actions {
-    display: flex; align-items: center; gap: 6px;
-    opacity: 0; transition: opacity .18s;
-    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding-top: 11px;
+    border-top: 1px solid var(--slate-100);
+    opacity: 1; flex-shrink: 0;
   }
-  .cita-row:hover .cita-actions { opacity: 1; }
+  .cita-card.siguiente .cita-actions {
+    margin: 2px -16px -13px;
+    padding: 11px 16px 12px;
+    background: linear-gradient(180deg, #f8fcff 0%, #f4f9fd 100%);
+    border-top: 1px solid #e3f0f8;
+    border-radius: 0 0 13px 13px;
+  }
+  .cita-card:hover .cita-actions { opacity: 1; }
+
+  .cita-actions-main,
+  .cita-actions-side {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .cita-actions-side { margin-left: auto; }
 
   .act-btn {
-    width: 34px; height: 34px; border-radius: 8px;
+    width: 32px; height: 32px; border-radius: 8px;
     border: 1px solid var(--slate-200); background: white;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; color: var(--slate-500);
@@ -877,8 +956,8 @@ const STYLES = `
   .act-btn.red:hover    { color: var(--rose-500); border-color: #fecdd3; background: #fff1f2; }
 
   .act-pill {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 14px; border-radius: 8px;
+    display: flex; align-items: center; gap: 5px;
+    padding: 7px 12px; border-radius: 9px;
     font-size: 11px; font-weight: 700; cursor: pointer;
     border: 1px solid; transition: all .15s;
     white-space: nowrap;
@@ -888,8 +967,84 @@ const STYLES = `
     box-shadow: var(--shadow-sm);
   }
   .act-pill-blue:hover { background: var(--blue-700); }
+  .act-pill-ghost {
+    background: white; color: var(--slate-600); border-color: var(--slate-200);
+  }
+  .act-pill-ghost:hover { background: var(--slate-50); border-color: var(--slate-300); color: var(--slate-800); }
   .act-pill-rose { background: white; color: var(--rose-500); border-color: #fecdd3; }
   .act-pill-rose:hover { background: #fff1f2; }
+  .act-pill-green {
+    background: #059669; color: white; border-color: #059669;
+    box-shadow: var(--shadow-sm);
+  }
+  .act-pill-green:hover { background: #047857; }
+  .act-pill-green-soft {
+    background: #f0fdf4; color: #047857; border-color: #bbf7d0;
+  }
+  .act-pill-green-soft:hover { background: #dcfce7; border-color: #86efac; color: #065f46; }
+
+  /* ── MODAL FINALIZAR ── */
+  .finish-modal { max-width: 420px; padding: 0; overflow: hidden; }
+  .finish-modal-hdr {
+    padding: 22px 24px 18px;
+    background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+    border-bottom: 1px solid #dcfce7;
+  }
+  .finish-modal-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: #dcfce7; color: #059669;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 12px;
+  }
+  .finish-modal-title {
+    font-family: 'Sora', sans-serif; font-size: 17px; font-weight: 700;
+    color: var(--slate-900); margin-bottom: 4px;
+  }
+  .finish-modal-sub {
+    font-size: 12px; color: var(--slate-500); line-height: 1.45;
+  }
+  .finish-modal-body { padding: 20px 24px; }
+  .finish-modal-label {
+    font-size: 10px; font-weight: 800; color: var(--slate-500);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;
+  }
+  .finish-motivo-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+  .finish-motivo-chip {
+    padding: 7px 12px; border-radius: 99px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--slate-200); background: white; color: var(--slate-600);
+    cursor: pointer; transition: all .15s;
+  }
+  .finish-motivo-chip:hover { border-color: #86efac; background: #f0fdf4; color: #047857; }
+  .finish-motivo-chip.active {
+    border-color: #059669; background: #ecfdf5; color: #047857;
+    box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.12);
+  }
+  .finish-motivo-input {
+    width: 100%; background: var(--slate-50); border: 1px solid var(--slate-200);
+    border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--slate-700);
+    outline: none; resize: none; min-height: 72px; line-height: 1.45;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .finish-motivo-input:focus {
+    border-color: #86efac; box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1); background: white;
+  }
+  .finish-modal-footer {
+    display: flex; gap: 10px; padding: 0 24px 22px;
+  }
+  .finish-btn-cancel {
+    flex: 1; padding: 12px 0; border-radius: 11px; border: 1px solid var(--slate-200);
+    background: white; color: var(--slate-600); font-weight: 700; font-size: 13px;
+    cursor: pointer; transition: all .15s;
+  }
+  .finish-btn-cancel:hover { background: var(--slate-50); }
+  .finish-btn-confirm {
+    flex: 1.4; padding: 12px 0; border-radius: 11px; border: none;
+    background: #059669; color: white; font-weight: 700; font-size: 13px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px;
+    transition: all .15s; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
+  }
+  .finish-btn-confirm:hover:not(:disabled) { background: #047857; }
+  .finish-btn-confirm:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 
   /* ── RIGHT SIDEBAR: INVENTORY ── */
   .sidebar-right {
@@ -1508,8 +1663,22 @@ const STYLES = `
     }
     .cita-actions {
       width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .cita-actions-main,
+    .cita-actions-side {
+      width: 100%;
       justify-content: flex-start;
     }
+    .cita-actions-side { margin-left: 0; }
+    .cita-card-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .cita-status-pill { align-self: flex-start; }
     .detail-drawer {
       width: min(520px, 100vw);
     }
@@ -1796,6 +1965,14 @@ const Agenda = () => {
   const [editarCitaData, setEditarCitaData] = useState({ paciente: '', motivo: '', motivoId: '', tipoConsulta: '', doctorUid: '', doctorAsignado: '', notas: '' });
   const [showCancelarConfirm, setShowCancelarConfirm] = useState(false);
   const [cancelarMotivo, setCancelarMotivo] = useState('');
+  const [citaAFinalizar, setCitaAFinalizar] = useState(null);
+  const [finalizarMotivo, setFinalizarMotivo] = useState('');
+  const MOTIVOS_FINALIZACION = [
+    'Solo documentos o trámite',
+    'Consulta breve atendida',
+    'Estudio o resultado entregado',
+    'Paciente se retiró',
+  ];
   const [actionLoading, setActionLoading] = useState('');
   const [showUnificar, setShowUnificar] = useState(false);
   const [todosLosPacientes, setTodosLosPacientes] = useState([]);
@@ -2867,10 +3044,52 @@ const Agenda = () => {
     } catch (error) { showToast(error.message,"error"); }
   };
 
+  const finalizarCita = async (citaId, motivoFinalizacion) => {
+    if (!citaId) return;
+    const motivo = String(motivoFinalizacion || '').trim();
+    if (!motivo) {
+      showToast('Indica el motivo de finalización', 'warning');
+      return;
+    }
+    setActionLoading(`finalizar-${citaId}`);
+    try {
+      await updateDoc(doc(db, 'citas', citaId), {
+        estado: 'completada',
+        completadaAt: serverTimestamp(),
+        consultaFinalizadaAt: serverTimestamp(),
+        motivoFinalizacion: motivo,
+        finalizadoPor: user?.nombre || 'Médico',
+        finalizadoPorUid: user?.uid || '',
+        finalizadoDesde: 'agenda_medico',
+      });
+      if (selectedCita?.id === citaId) setSelectedCita(null);
+      cerrarFinalizarCita();
+      showToast('Visita finalizada correctamente', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Error al finalizar la visita', 'error');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const abrirFinalizarCita = (cita) => {
+    if (!cita?.id) return;
+    setCitaAFinalizar(cita);
+    setFinalizarMotivo('');
+  };
+
+  const cerrarFinalizarCita = () => {
+    setCitaAFinalizar(null);
+    setFinalizarMotivo('');
+  };
+
+  const confirmarFinalizarCita = () => finalizarCita(citaAFinalizar?.id, finalizarMotivo);
+
   const cambiarEstado = async (id, estado) => {
-    await updateDoc(doc(db,"citas",id), { estado });
+    if (estado === 'completada') return;
+    await updateDoc(doc(db, 'citas', id), { estado });
     if (estado === 'cancelada') setSelectedCita(null);
-    if (estado === 'completada') showToast("Consulta finalizada","success");
   };
 
   // ─── UTILIDAD ───
@@ -3450,6 +3669,17 @@ const Agenda = () => {
         : 'Todavía no hay carga suficiente en agenda para generar una lectura de cumplimiento.'
   ];
 
+  const renderEstadoIcon = (estadoKey, size = 11) => {
+    switch (estadoKey) {
+      case 'en_triage': return <Activity size={size}/>;
+      case 'esperando_consulta': return <Clock size={size}/>;
+      case 'en_consulta': return <Stethoscope size={size}/>;
+      case 'completada': return <CheckCircle size={size}/>;
+      case 'cancelada': return <XCircle size={size}/>;
+      default: return <Clock size={size}/>;
+    }
+  };
+
   /* ─────────────────────────────────────────────────────────────── */
   return (
     <>
@@ -3848,91 +4078,126 @@ const Agenda = () => {
                                       onDragOver={(e) => handleDragOverCard(e, cita.id, cita)}
                                       onDragLeave={handleDragLeaveCard}
                                       onDrop={(e) => handleDropOnCard(e, cita)}
-                                      style={dragOverCitaId === cita.id && !isCancelada ? { border: '2px solid #14b8a6', boxShadow: '0 0 0 4px rgba(20,184,166,0.15)', background: 'rgba(240,253,250,0.6)', transform: 'scale(1.02)', transition: 'all .15s ease' } : {}}
+                                      style={dragOverCitaId === cita.id && !isCancelada ? { border: '2px solid #14b8a6', boxShadow: '0 0 0 4px rgba(20,184,166,0.15)', background: 'rgba(240,253,250,0.6)', transform: 'scale(1.01)', transition: 'all .15s ease' } : {}}
                                     >
-                                      {isSiguiente && !isCancelada && (
-                                        <div className="badge-siguiente">
-                                          <Stethoscope size={12}/> Turno Actual
-                                        </div>
-                                      )}
-
-                                      <div>
-                                        <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>{pacientesNombres[cita.pacienteId] || cita.paciente}</div>
-                                        <div className="cita-tags">
-                                          <span className="tag tag-motivo">{cita.motivo}</span>
+                                      <div className="cita-card-inner">
+                                        {isSiguiente && !isCancelada && (
+                                          <div className="cita-turno-label">
+                                            <span className="turno-dot"/>
+                                            <Stethoscope size={11}/> Turno actual
+                                          </div>
+                                        )}
+                                        <div className="cita-card-header">
+                                          <div className="cita-card-identity">
+                                            <div className={`cita-name ${isDone || isCancelada ? 'done-name' : ''}`}>
+                                              {pacientesNombres[cita.pacienteId] || cita.paciente}
+                                            </div>
+                                            <div className="cita-meta">
+                                              <span className="cita-meta-item">{cita.motivo}</span>
+                                              {(() => {
+                                                const consultorioStr = cita.consultorioNombre
+                                                  || (typeof cita.consultorio === 'string' ? cita.consultorio : cita.consultorio?.nombre);
+                                                if (consultorioStr && consultorioStr.trim() !== '') {
+                                                  return (
+                                                    <>
+                                                      <span className="cita-meta-dot">·</span>
+                                                      <span className="cita-meta-item"><MapPin size={10}/> {consultorioStr}</span>
+                                                    </>
+                                                  );
+                                                }
+                                                return null;
+                                              })()}
+                                            </div>
+                                          </div>
                                           {(() => {
-                                            const consultorioStr = cita.consultorioNombre || 
-                                              (typeof cita.consultorio === 'string' ? cita.consultorio : cita.consultorio?.nombre);
-                                            if (consultorioStr && consultorioStr.trim() !== '') {
-                                              return (
-                                                <span className="tag tag-consultorio" style={{ background: 'var(--slate-50)', color: 'var(--slate-500)', border: '1px solid var(--slate-200)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                                  <MapPin size={10}/> {consultorioStr}
-                                                </span>
-                                              );
-                                            }
-                                            return null;
+                                            const estadoDetalle = getEstadoDetallado(cita);
+                                            return (
+                                              <span
+                                                className={`cita-status-pill${estadoDetalle.pulse ? ' pulse' : ''}`}
+                                                style={{
+                                                  background: estadoDetalle.bg,
+                                                  color: estadoDetalle.color,
+                                                  borderColor: estadoDetalle.border,
+                                                }}
+                                              >
+                                                {renderEstadoIcon(estadoDetalle.key)}
+                                                {estadoDetalle.label}
+                                              </span>
+                                            );
                                           })()}
-                                          {isCancelada && <span className="tag" style={{ background: 'var(--red-100)', color: 'var(--red-700)' }}><XCircle size={10}/> Cancelada</span>}
-                                          {slot.isCurrent && !isCancelada && <span className="tag tag-waiting"><Clock size={10}/> En horario</span>}
-                                          {slot.isPast && !isDone && !isCancelada && <span className="tag tag-pending"><AlertTriangle size={10}/> Reprogramar</span>}
-                                          {isVencida && !isDone && !isCancelada && <span className="tag tag-overdue"><AlertTriangle size={10}/> Vencida</span>}
-                                          {/* Estado detallado del paciente */}
-                                          {isEnTriage && !isCancelada && <span className="tag tag-triage"><Activity size={10}/> En triage</span>}
-                                          {isWaiting && !isCancelada && <span className="tag tag-en-espera"><Clock size={10}/> Esperando consulta</span>}
-                                          {isEnConsulta && !isCancelada && !isDone && <span className="tag tag-en-consulta"><Stethoscope size={10}/> En consulta</span>}
-                                          {cita.estado === 'pendiente' && !isEnTriage && !isDone && !isCancelada && <span className="tag tag-pending">Esperando triage</span>}
-                                          {cita.notificadoWhatsApp && !isCancelada && <span className="tag tag-done"><Send size={10}/> Notificado</span>}
-                                          {isDone && !isCancelada && <span className="tag tag-done"><Check size={10}/> Terminado</span>}
-                                          {cita.esTeleconsulta && <span className="tag tag-tele"><Video size={10}/> Teleconsulta</span>}
                                         </div>
-                                      </div>
 
-                                      <div className="cita-actions">
-                                        {!isCancelada && cita.pacienteTelefono && !isDone && !cita.notificadoWhatsApp && (
-                                          <button
-                                            className="act-btn green"
-                                            onClick={() => notificarPaciente(cita)}
-                                            disabled={notificandoCitaId === cita.id}
-                                            title="Notificar por WhatsApp"
-                                          >
-                                            {notificandoCitaId === cita.id ? <RefreshCw size={15} className="spin-icon"/> : <Send size={15}/>}
-                                          </button>
+                                        {(isVencida || cita.esTeleconsulta || cita.notificadoWhatsApp) && !isCancelada && !isDone && (
+                                          <div className="cita-card-alerts">
+                                            {isVencida && (
+                                              <span className="cita-alert-chip warn"><AlertTriangle size={10}/> Horario vencido</span>
+                                            )}
+                                            {cita.esTeleconsulta && (
+                                              <span className="cita-alert-chip info"><Video size={10}/> Teleconsulta</span>
+                                            )}
+                                            {cita.notificadoWhatsApp && (
+                                              <span className="cita-alert-chip ok"><Send size={10}/> Notificado</span>
+                                            )}
+                                          </div>
                                         )}
-                                        {!isCancelada && cita.pacienteTelefono && !isDone && cita.notificadoWhatsApp && (
-                                          <button className="act-btn" style={{color:'var(--green-600)',cursor:'default'}} title="Ya notificado">
-                                            <Check size={15}/>
-                                          </button>
-                                        )}
-                                        {!isDone && cita.estado !== 'pendiente' && !isCancelada && (
-                                          <button className="act-btn green" onClick={() => cambiarEstado(cita.id, 'completada')} title="Marcar finalizada">
-                                            <ShieldCheck size={15}/>
-                                          </button>
-                                        )}
-                                        {cita.estado === 'pendiente' && !isCancelada && (
-                                          <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
-                                            <AlertTriangle size={12}/> Urgencia
-                                          </button>
-                                        )}
-                                        {cita.estado !== 'pendiente' && !isCancelada && (
-                                          <button
-                                            className="act-pill act-pill-blue"
-                                            onClick={() => navigate('/doctor/expediente', {
-                                              state: {
-                                                pacienteId: cita.pacienteId,
-                                                citaId: cita.id,
-                                                pacienteNombre:
-                                                  cita.pacienteNombre
-                                                  || cita.paciente
-                                                  || [cita.nombre, cita.apellidoPaterno, cita.apellidoMaterno].filter(Boolean).join(' ').trim()
-                                              }
-                                            })}
-                                          >
-                                            {isDone ? 'Ver expediente' : 'Iniciar consulta'}
-                                          </button>
-                                        )}
-                                        <button className="act-pill" style={{background:'white',color:'var(--blue-700)',border:'1px solid var(--blue-200)'}} onClick={() => setSelectedCita(cita)}>
-                                          {isCancelada ? 'Detalles' : isDone ? 'Ver' : cita.estado === 'pendiente' ? 'Ver' : 'Detalles'}
-                                        </button>
+
+                                        <div className="cita-actions">
+                                          <div className="cita-actions-main">
+                                            {cita.estado !== 'pendiente' && !isCancelada && (
+                                              <button
+                                                className="act-pill act-pill-blue"
+                                                onClick={() => navigate('/doctor/expediente', {
+                                                  state: {
+                                                    pacienteId: cita.pacienteId,
+                                                    citaId: cita.id,
+                                                    pacienteNombre:
+                                                      cita.pacienteNombre
+                                                      || cita.paciente
+                                                      || [cita.nombre, cita.apellidoPaterno, cita.apellidoMaterno].filter(Boolean).join(' ').trim()
+                                                  }
+                                                })}
+                                              >
+                                                <Stethoscope size={12}/>
+                                                {isDone ? 'Ver expediente' : 'Iniciar consulta'}
+                                              </button>
+                                            )}
+                                            {!isDone && !isCancelada && (
+                                              <button
+                                                className="act-pill act-pill-green-soft"
+                                                onClick={() => abrirFinalizarCita(cita)}
+                                                title="Finalizar visita"
+                                              >
+                                                <CheckCircle size={12}/>
+                                                Finalizar
+                                              </button>
+                                            )}
+                                            {cita.estado === 'pendiente' && !isCancelada && (
+                                              <button className="act-pill act-pill-rose" onClick={() => setCitaUrgencia(cita)}>
+                                                <AlertTriangle size={12}/> Urgencia
+                                              </button>
+                                            )}
+                                          </div>
+                                          <div className="cita-actions-side">
+                                            {!isCancelada && cita.pacienteTelefono && !isDone && !cita.notificadoWhatsApp && (
+                                              <button
+                                                className="act-btn green"
+                                                onClick={() => notificarPaciente(cita)}
+                                                disabled={notificandoCitaId === cita.id}
+                                                title="Notificar por WhatsApp"
+                                              >
+                                                {notificandoCitaId === cita.id ? <RefreshCw size={14} className="spin-icon"/> : <Send size={14}/>}
+                                              </button>
+                                            )}
+                                            {!isCancelada && cita.pacienteTelefono && !isDone && cita.notificadoWhatsApp && (
+                                              <button className="act-btn" style={{ color: 'var(--emerald-500)', cursor: 'default' }} title="Ya notificado">
+                                                <Check size={14}/>
+                                              </button>
+                                            )}
+                                            <button className="act-pill act-pill-ghost" onClick={() => setSelectedCita(cita)}>
+                                              {isCancelada ? 'Detalles' : isDone ? 'Ver' : 'Detalles'}
+                                            </button>
+                                          </div>
+                                        </div>
                                       </div>
                                     </div>
                                   );
@@ -4398,9 +4663,12 @@ const Agenda = () => {
                 </div>
 
                 <div className="drawer-footer">
-                  {selectedCita.estado !== 'completada' && selectedCita.estado !== 'pendiente' && (
-                    <button className="btn-finish" onClick={() => { cambiarEstado(selectedCita.id,'completada'); setSelectedCita(null); }}>
-                      Finalizar consulta
+                  {selectedCita.estado !== 'completada' && (
+                    <button
+                      className="btn-finish"
+                      onClick={() => abrirFinalizarCita(selectedCita)}
+                    >
+                      Finalizar visita
                     </button>
                   )}
                   {/* Cancelar cita */}
@@ -4532,6 +4800,63 @@ const Agenda = () => {
                 style={{ width: '100%', marginTop: 16, padding: '12px 0', background: '#4f46e5', color: 'white', borderRadius: 10, fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (actionLoading === 'editarCita' || !editarCitaData.paciente.trim()) ? 0.6 : 1 }}>
                 {actionLoading === 'editarCita' ? <><RefreshCw size={14} className="spin-icon"/> Guardando...</> : 'Guardar cambios'}
               </button>
+            </div>
+          </div>
+        )}
+
+        {citaAFinalizar && (
+          <div className="modal-overlay" onClick={cerrarFinalizarCita}>
+            <div className="modal-box finish-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="finish-modal-hdr">
+                <div className="finish-modal-icon"><CheckCircle size={22}/></div>
+                <div className="finish-modal-title">Finalizar visita</div>
+                <div className="finish-modal-sub">
+                  Confirma que la atención de{' '}
+                  <strong>
+                    {citaAFinalizar.pacienteNombre
+                      || citaAFinalizar.paciente
+                      || pacientesNombres[citaAFinalizar.pacienteId]
+                      || 'este paciente'}
+                  </strong>{' '}
+                  ha concluido. El turno quedará cerrado en todo el sistema.
+                </div>
+              </div>
+              <div className="finish-modal-body">
+                <div className="finish-modal-label">Motivo de finalización</div>
+                <div className="finish-motivo-chips">
+                  {MOTIVOS_FINALIZACION.map((motivo) => (
+                    <button
+                      key={motivo}
+                      type="button"
+                      className={`finish-motivo-chip${finalizarMotivo === motivo ? ' active' : ''}`}
+                      onClick={() => setFinalizarMotivo(motivo)}
+                    >
+                      {motivo}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  className="finish-motivo-input"
+                  value={finalizarMotivo}
+                  onChange={(e) => setFinalizarMotivo(e.target.value)}
+                  placeholder="Describe brevemente por qué finalizas esta visita..."
+                />
+              </div>
+              <div className="finish-modal-footer">
+                <button type="button" className="finish-btn-cancel" onClick={cerrarFinalizarCita}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="finish-btn-confirm"
+                  onClick={confirmarFinalizarCita}
+                  disabled={!finalizarMotivo.trim() || actionLoading === `finalizar-${citaAFinalizar.id}`}
+                >
+                  {actionLoading === `finalizar-${citaAFinalizar.id}`
+                    ? <><RefreshCw size={14} className="spin-icon"/> Finalizando...</>
+                    : <><CheckCircle size={14}/> Confirmar finalización</>}
+                </button>
+              </div>
             </div>
           </div>
         )}
