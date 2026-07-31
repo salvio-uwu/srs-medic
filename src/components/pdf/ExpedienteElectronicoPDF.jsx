@@ -85,6 +85,7 @@ const styles = StyleSheet.create({
   docCardName: { fontFamily: 'Helvetica-Bold', fontSize: 9 },
   docCardMeta: { fontSize: 7, color: '#64748b', marginTop: 1.5 },
   docCardBody: { borderLeftWidth: 1, borderColor: '#cbd5e1', paddingVertical: 6, paddingLeft: 8, paddingRight: 8 },
+  docPageImage: { width: '100%', marginTop: 4, marginBottom: 6, objectFit: 'contain' },
   // Bloques de contenido formateado dentro del documento
   docH1: { fontFamily: 'Helvetica-Bold', fontSize: 11, marginTop: 3, marginBottom: 3 },
   docH2: { fontFamily: 'Helvetica-Bold', fontSize: 10, marginTop: 3, marginBottom: 2.5 },
@@ -237,6 +238,7 @@ const DocExpedido = ({ doc, num }) => {
     formatHoraEvento(doc?.generadoAt)
   ].filter(Boolean).join('  ·  ');
 
+  const pageImages = Array.isArray(doc?.pageImages) ? doc.pageImages : [];
   const bloques = Array.isArray(doc?.contentBlocks) ? doc.contentBlocks : [];
 
   return (
@@ -246,9 +248,13 @@ const DocExpedido = ({ doc, num }) => {
         {meta ? <Text style={styles.docCardMeta}>{meta}</Text> : null}
       </View>
       <View style={styles.docCardBody}>
-        {bloques.length > 0
-          ? bloques.map((b, i) => <DocBlock key={i} block={b} />)
-          : <Parrafo value={doc?.resolvedContent} style={styles.docPara} />}
+        {pageImages.length > 0
+          ? pageImages.map((src, i) => (
+            <Image key={i} src={src} style={styles.docPageImage} />
+          ))
+          : bloques.length > 0
+            ? bloques.map((b, i) => <DocBlock key={i} block={b} />)
+            : <Parrafo value={doc?.resolvedContent} style={styles.docPara} />}
       </View>
     </View>
   );
@@ -695,13 +701,12 @@ const ExpedienteElectronicoPDF = ({
             const procs = c.procedimientos.seleccionados
               .map((p) => (typeof p === 'string' ? p : (p?.nombre || p?.procedimiento || p?.descripcion || '')))
               .filter(Boolean);
-            // Documentos expedidos con contenido de plantilla resuelto. Se omiten
-            // los que no tienen contenido (p. ej. receta de formato clínico que
-            // solo duplica el Plan terapéutico o adjuntos sin plantilla).
+            // Documentos expedidos: preferir PDF original (pageImages) o plantilla resuelta.
             const docsExpedidos = [
               ...(Array.isArray(c.recetasGeneradas) ? c.recetasGeneradas : []),
               ...(Array.isArray(c.documentosGenerados) ? c.documentosGenerados : [])
-            ].filter((d) => (Array.isArray(d?.contentBlocks) && d.contentBlocks.length > 0)
+            ].filter((d) => (Array.isArray(d?.pageImages) && d.pageImages.length > 0)
+              || (Array.isArray(d?.contentBlocks) && d.contentBlocks.length > 0)
               || String(limpiar(d?.resolvedContent, '')).trim());
 
             const metaTexto = [

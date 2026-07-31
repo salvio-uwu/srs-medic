@@ -7,8 +7,8 @@ import PatientSkeletonRow from '../../components/PatientSkeletonRow';
 import { db } from "../../config/firebase";
 import { deleteDoc, doc } from 'firebase/firestore';
 import { searchPatients } from '../../services/patientSearchService';
-import { useNavigate } from 'react-router-dom';
-import { goBackOr } from '../../utils/navigation';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { goBackOr, resolvePacientesBackPath } from '../../utils/navigation';
 import { getPatientDisplayName } from '../../utils/patientName';
 import { calcularEdad } from '../../utils/patientAge';
 import ModalPaciente from "../../components/ModalPaciente";
@@ -17,7 +17,9 @@ import useIsMobile from '../../hooks/useIsMobile';
 
 const Pacientes = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
+  const backPath = resolvePacientesBackPath(location.state?.from);
 
   const [pacienteExpediente, setPacienteExpediente] = useState(null);
   const [pacientes, setPacientes] = useState([]);
@@ -114,7 +116,7 @@ const Pacientes = () => {
         {/* ─── HEADER ─── */}
         <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button onClick={() => goBackOr(navigate, '/agenda')} style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', cursor: 'pointer', flexShrink: 0 }}>
+            <button onClick={() => goBackOr(navigate, backPath)} style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', cursor: 'pointer', flexShrink: 0 }}>
               <ArrowLeft size={16} />
             </button>
             <User size={18} style={{ color: '#111', flexShrink: 0 }} />

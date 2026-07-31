@@ -1,0 +1,16 @@
+---
+description: Convenciones React/JSX del proyecto
+globs: src/**/*.{js,jsx}
+alwaysApply: false
+---
+
+# React
+
+- JavaScript + JSX únicamente (sin TypeScript por ahora)
+- **No reactivar StrictMode** en `main.jsx` (bug Firestore "INTERNAL ASSERTION FAILED")
+- Estado global: `AuthContext`, `SessionLocationContext`; resto con `useState` local
+- Firestore en componentes vía SDK directo; lógica reutilizable en `src/services/`
+- Rutas protegidas: `PermissionRoute` + `hasPermission` en `App.jsx`
+- Estilos: Tailwind + estilos inline/CSS variables coexisten — no unificar sin pedirlo
+- Sin code splitting (`React.lazy`) — no asumir lazy loading existente
+- Imports estáticos; no introducir lazy sin solicitud explícita

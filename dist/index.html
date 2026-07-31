@@ -2,7 +2,10 @@
 <html lang="en" translate="no">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/logo_azul.png" />
+    <link rel="icon" href="/favicon.ico?v=2" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png?v=2" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Centro Medico Santa Cruz</title>
     <script>
@@ -23,12 +26,11 @@
           if (now - last < COOLDOWN) return;
           sessionStorage.setItem(KEY, String(now));
           reloading = true;
-          // Hard reload: ignora caché de subrecursos (CSS/JS)
-          try { window.location.reload(true); } catch (_) {
-            window.location.replace(
-              window.location.href.split('?')[0].split('#')[0]
-            );
-          }
+          // Bust de caché: reload(true) ya no funciona en Chrome/Safari.
+          // Forzamos un GET fresco del index.html con query única.
+          var base = window.location.href.split('?')[0].split('#')[0];
+          var hash = window.location.hash || '';
+          window.location.replace(base + '?_r=' + now + hash);
         }
 
         // 1) LINK (CSS) o SCRIPT (JS) que fallan con 404 tras un deploy
@@ -46,8 +48,8 @@
         });
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-Crb2-qjM.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CQ77e3hf.css">
+    <script type="module" crossorigin src="/assets/index-RVD-RUz8.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-5j50NYuK.css">
   </head>
   <body>
     <div id="root"></div>

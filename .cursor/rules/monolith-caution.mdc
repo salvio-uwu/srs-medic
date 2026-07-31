@@ -1,0 +1,21 @@
+---
+description: Cautela en archivos monolíticos críticos
+globs: src/shared/Agenda.jsx,src/pages/doctor/ExpedienteClinico.jsx,src/pages/admin/CatalogosGlobales.jsx,src/components/PlantillaDinamicaModal.jsx,src/App.jsx
+alwaysApply: false
+---
+
+# Archivos monolíticos
+
+Estos archivos concentran lógica crítica (citas, WhatsApp, SOAP, PDFs, permisos, rutas):
+
+- `src/shared/Agenda.jsx` (~4700 líneas)
+- `src/pages/doctor/ExpedienteClinico.jsx` (~4200 líneas)
+- `src/pages/admin/CatalogosGlobales.jsx`
+- `src/components/PlantillaDinamicaModal.jsx`
+- `src/App.jsx` (rutas + chat + pánico + versión)
+
+## Reglas
+- Cambios mínimos y localizados al bug/feature pedido
+- No extraer componentes ni refactorizar estructura salvo solicitud explícita
+- Si el cambio supera ~50 líneas, proponer plan antes de ejecutar
+- Verificar efectos en: permisos, WhatsApp, PDFs, `onSnapshot`, citas

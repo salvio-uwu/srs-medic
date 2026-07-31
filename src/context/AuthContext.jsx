@@ -1,8 +1,24 @@
 // src/context/AuthContext.jsx
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, signInWithEmailAndPassword } from 'firebase/auth'; 
-import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'; 
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, signOut, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import {
+  IDLE_ACTIVITY_THROTTLE_MS,
+  IDLE_CHECK_MS,
+  IDLE_LIMIT_MS,
+  LOGOUT_REASON_KEY,
+  clearLastActivity,
+  getLastActivity,
+  isIdleExpired,
+  markLogoutReason,
+  setLastActivity,
+} from '../utils/sessionIdle';
+import {
+  registrarEntrada,
+  registrarSalida,
+  touchActividad,
+} from '../services/asistenciaService';
 
 const AuthContext = createContext();
 
@@ -12,12 +28,24 @@ export const useAuth = () => {
   return context;
 };
 
+// Perfil listo para evaluar permisos (rol o lista explícita de permisos)
+export const isProfileHydrated = (user) => {
+  if (!user) return false;
+  if (user.rol) return true;
+  if (Array.isArray(user.permissionList) && user.permissionList.length > 0) return true;
+  if (user.permissions && Object.keys(user.permissions).length > 0) return true;
+  return false;
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const userRef = useRef(null);
+  userRef.current = user;
 
   const login = async (email, password) => {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    setLastActivity(userCredential.user.uid);
     return userCredential.user;
   };
 
@@ -25,6 +53,9 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let unsubscribeProfile = null;
     let initialNullTimer = null;
+    // Cache en memoria: onAuthStateChanged puede re-emitir el usuario (refresco de token)
+    let lastProfile = null;
+    let lastProfileUid = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       if (unsubscribeProfile) {
@@ -32,40 +63,63 @@ export const AuthProvider = ({ children }) => {
         unsubscribeProfile = null;
       }
 
-      // ── El usuario autenticado llegó ──
       if (currentUser) {
-        if (initialNullTimer) { clearTimeout(initialNullTimer); initialNullTimer = null; }
-        // Paso 1: usuario básico inmediato → RequireAuth no redirige
-        setUser(currentUser);
-        setLoading(false);
+        if (initialNullTimer) {
+          clearTimeout(initialNullTimer);
+          initialNullTimer = null;
+        }
 
-        // Paso 2: enriquecer con perfil asíncrono de Firestore
-        const userRef = doc(db, 'users', currentUser.uid);
+        // Sesión expirada por inactividad mientras la pestaña/laptop estaba dormida
+        if (isIdleExpired(currentUser.uid)) {
+          markLogoutReason('idle');
+          clearLastActivity(currentUser.uid);
+          signOut(auth).catch(() => {});
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        if (!getLastActivity(currentUser.uid)) {
+          setLastActivity(currentUser.uid);
+        }
+
+        const cachedProfile = lastProfileUid === currentUser.uid ? lastProfile : null;
+        setUser(cachedProfile ? { ...currentUser, ...cachedProfile } : currentUser);
+
+        if (cachedProfile && isProfileHydrated({ ...currentUser, ...cachedProfile })) {
+          setLoading(false);
+        }
+
+        const userDocRef = doc(db, 'users', currentUser.uid);
         unsubscribeProfile = onSnapshot(
-          userRef,
+          userDocRef,
           (snap) => {
             const profileData = snap.exists() ? snap.data() : {};
+            lastProfile = profileData;
+            lastProfileUid = currentUser.uid;
             setUser({ ...currentUser, ...profileData });
+            setLoading(false);
           },
           (error) => {
             console.error('Error sincronizando perfil:', error);
+            if (lastProfile && lastProfileUid === currentUser.uid) {
+              setUser({ ...currentUser, ...lastProfile });
+              setLoading(false);
+            }
           }
         );
         return;
       }
 
-      // ── onAuthStateChanged disparó null ──
-      // En producción, Firebase puede disparar null antes de restaurar
-      // la sesión del IndexedDB. Si aceptamos ese null inmediatamente,
-      // RequireAuth redirige a /login y se pierde la ruta actual.
-      // Damos 2.5 segundos de gracia. Si en ese lapso llega el usuario,
-      // se cancela el null. Si no, es un logout genuino.
+      // Firebase puede emitir null antes de restaurar sesión desde IndexedDB (pestaña nueva)
       if (!initialNullTimer) {
         initialNullTimer = setTimeout(() => {
           initialNullTimer = null;
+          lastProfile = null;
+          lastProfileUid = null;
           setUser(null);
           setLoading(false);
-        }, 2500);
+        }, 5000);
       }
     });
 
@@ -76,40 +130,98 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // --- 2. LOGOUT CON LIMPIEZA DE ESTADO ---
-  const logout = async () => {
-    if (user && user.uid) {
-      try {
-        await setDoc(doc(db, 'users', user.uid), {
-          isOnline: false,
-          statusOperativo: 'offline', 
-          lastSeen: new Date().toISOString(),
-          // Limpiar ubicación de sesión para forzar re-selección al próximo login
-          sessionSucursalId: '',
-          sessionSucursalNombre: '',
-          sessionConsultorioId: '',
-          sessionConsultorioNombre: '',
-          // Limpiar también campos legacy para evitar que datos viejos persistan
-          sucursalActual: '',
-          sucursalActualId: '',
-          consultorioActualId: '',
-          consultorioActual: '',
-          consultorioId: '',
-          consultorio: '',
-          consultorioUbicacion: '',
-          consultorioRecurrenteId: '',
-          consultorioRecurrente: ''
-        }, { merge: true });
-      } catch (error) {
+  const logout = useCallback(async () => {
+    const current = userRef.current;
+    if (current?.uid) {
+      clearLastActivity(current.uid);
+      const motivo = (() => {
+        try {
+          return sessionStorage.getItem(LOGOUT_REASON_KEY) || 'logout';
+        } catch {
+          return 'logout';
+        }
+      })();
+      await registrarSalida(current, motivo).catch((error) => {
+        console.error('Error registrando salida de asistencia:', error);
+      });
+      setDoc(doc(db, 'users', current.uid), {
+        isOnline: false,
+        statusOperativo: 'offline',
+        lastSeen: new Date().toISOString(),
+        sessionSucursalId: '',
+        sessionSucursalNombre: '',
+        sessionConsultorioId: '',
+        sessionConsultorioNombre: '',
+        sucursalActual: '',
+        sucursalActualId: '',
+        consultorioActualId: '',
+        consultorioActual: '',
+        consultorioId: '',
+        consultorio: '',
+        consultorioUbicacion: '',
+        consultorioRecurrenteId: '',
+        consultorioRecurrente: ''
+      }, { merge: true }).catch((error) => {
         console.error('Error en logout:', error);
-      }
+      });
     }
     await signOut(auth);
     setUser(null);
-  };
+  }, []);
 
-  // --- 3. NUEVA FUNCIÓN: CONTROL DE ESTADO OPERATIVO ---
-  // Esta función permite al médico o enfermera cambiar su estado (Ocupado, Comida, etc.)
+  // Cierre por inactividad (pestaña ignorada / laptop apagada al despertar)
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+
+    let lastTouchWrite = 0;
+    let loggingOut = false;
+
+    const touch = () => {
+      const now = Date.now();
+      if (now - lastTouchWrite < IDLE_ACTIVITY_THROTTLE_MS) return;
+      lastTouchWrite = now;
+      setLastActivity(uid, now);
+    };
+
+    const expireIfNeeded = async () => {
+      if (loggingOut) return;
+      if (!isIdleExpired(uid, IDLE_LIMIT_MS)) return;
+      loggingOut = true;
+      markLogoutReason('idle');
+      try {
+        await logout();
+      } catch {
+        loggingOut = false;
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') expireIfNeeded();
+    };
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'click'];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, touch, { passive: true, capture: true });
+    });
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', expireIfNeeded);
+    window.addEventListener('pageshow', expireIfNeeded);
+
+    const interval = setInterval(expireIfNeeded, IDLE_CHECK_MS);
+    expireIfNeeded();
+
+    return () => {
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, touch, { capture: true });
+      });
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', expireIfNeeded);
+      window.removeEventListener('pageshow', expireIfNeeded);
+      clearInterval(interval);
+    };
+  }, [user?.uid, logout]);
+
   const cambiarEstadoOperativo = async (estado, datosExtra = {}) => {
     if (!user?.uid) return;
 
@@ -127,44 +239,54 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // --- EFECTO 2: SISTEMA DE PRESENCIA (Heartbeat) ---
   const hasSetLastLogin = useRef(false);
+  // Boolean estable: NO depender de user.permissions / permissionList (objetos/arrays
+  // nuevos en cada onSnapshot del perfil → re-disparaban setDoc y generaban loop).
+  const profileHydrated = isProfileHydrated(user);
 
   useEffect(() => {
     let interval;
+    const uid = user?.uid;
 
-    if (user?.uid) {
+    if (uid && profileHydrated) {
       const reportarPresencia = async () => {
         try {
-          const payload = { 
+          const payload = {
             lastSeen: new Date().toISOString(),
             isOnline: true,
           };
-          // Escribir lastLogin solo en el primer latido de la sesión
-          if (!hasSetLastLogin.current) {
+          const esNuevaSesion = !hasSetLastLogin.current;
+          if (esNuevaSesion) {
             payload.lastLogin = serverTimestamp();
             hasSetLastLogin.current = true;
           }
-          await setDoc(doc(db, 'users', user.uid), payload, { merge: true });
-        } catch (e) {
-          console.log('Heartbeat skip'); 
+          await setDoc(doc(db, 'users', uid), payload, { merge: true });
+
+          const perfil = userRef.current || { uid };
+          if (esNuevaSesion) {
+            await registrarEntrada(perfil).catch(() => {});
+          } else {
+            await touchActividad(perfil).catch(() => {});
+          }
+        } catch {
+          // Red caída o QUIC: no afectar auth
         }
       };
 
       reportarPresencia();
       interval = setInterval(reportarPresencia, 2 * 60 * 1000);
     } else {
-      hasSetLastLogin.current = false; // resetear al desloguear
+      hasSetLastLogin.current = false;
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [user?.uid]);
+  }, [user?.uid, profileHydrated]);
 
   return (
     <AuthContext.Provider value={{ user, login, logout, loading, cambiarEstadoOperativo }}>
-      {!loading && children} 
+      {!loading && children}
     </AuthContext.Provider>
   );
 };

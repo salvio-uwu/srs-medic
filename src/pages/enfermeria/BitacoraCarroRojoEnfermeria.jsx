@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Save, Loader2, Printer, ShieldAlert, Package, Pill,
-  AlertCircle, CheckCircle2, TrendingUp, AlertTriangle
+  AlertCircle, CheckCircle2, MapPin
 } from 'lucide-react';
 import { db } from '../../config/firebase';
 import {
@@ -61,6 +60,24 @@ const getStockStatus = (existir, existente) => {
   return { color: 'bg-emerald-50 text-emerald-700', pct };
 };
 
+/** Datos del doc pertenecen al mes en curso (incluye progreso parcial). */
+const esPeriodoActualDoc = (d, mesActual) => {
+  if (!d) return false;
+  if (d.mesActivo === mesActual || d.mesBloqueado === mesActual) return true;
+  // Legacy: guardados parciales sin mesActivo (mesBloqueado vacío) → vigentes
+  const tieneDatos = !!(d.materialData && Object.keys(d.materialData).length)
+    || !!(d.medicamentoData && Object.keys(d.medicamentoData).length);
+  return !d.mesActivo && !d.mesBloqueado && tieneDatos;
+};
+
+const estaCompletoYBloqueado = (d, mesActual, pMat, pMed) => {
+  if (!d || d.mesBloqueado !== mesActual) return false;
+  // Evitar falso bloqueo mientras la plantilla aún no carga ([].every === true)
+  if (!pMat.length && !pMed.length) return false;
+  return pMat.every(item => d.materialData?.[item.id]?.cantidadExistente)
+    && pMed.every(item => d.medicamentoData?.[item.id]?.cantidadExistente);
+};
+
 const Toast = ({ msg, type, onClose }) => (
   <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl border backdrop-blur-sm text-sm font-bold max-w-[92vw] ${
     type === 'error'   ? 'bg-red-50/95 border-red-200 text-red-700 shadow-red-500/10' :
@@ -80,14 +97,14 @@ const generarFormatoImpresion = ({ sucursal, materialRows, medicamentoRows, usua
   const mesActual = new Date().toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }).toUpperCase();
   const horaGen = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
   const buildSectionRows = (sectionTitle, rows) => {
-    let html = `<tr><td class="sep" colspan="4"></td></tr><tr><td class="st" colspan="4"><b>${sectionTitle}</b></td></tr><tr><td class="h">No.</td><td class="h" style="text-align:left">Artículo</td><td class="h">Cantidad</td><td class="h">Caducidad</td></tr>`;
+    let html = `<tr><td class="sep" colspan="5"></td></tr><tr><td class="st" colspan="5"><b>${sectionTitle}</b></td></tr><tr><td class="h">No.</td><td class="h" style="text-align:left">Artículo</td><td class="h">A existir</td><td class="h">Existente</td><td class="h">Caducidad</td></tr>`;
     rows.forEach((row, i) => {
       const cad = row.caducidad ? row.caducidad.split('-').reverse().join('/') : '';
-      html += `<tr><td class="c n">${i + 1}</td><td class="c a">${row.articulo}</td><td class="c v">${row.cantidadExistir || ''}</td><td class="c v">${cad}</td></tr>`;
+      html += `<tr><td class="c n">${i + 1}</td><td class="c a">${row.articulo}</td><td class="c v">${row.cantidadExistir || ''}</td><td class="c v">${row.cantidadExistente || ''}</td><td class="c v">${cad}</td></tr>`;
     });
     return html;
   };
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Botiquín de Urgencias — ${sucursal}</title><style>@page{size:letter;margin:0}*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Times New Roman',Times,serif;color:#000;font-size:7.5pt;line-height:1.15;padding:10mm 14mm 8mm 14mm}h1{font-size:10pt;font-weight:bold;text-align:center;text-transform:uppercase;margin-bottom:3pt}.mes{text-align:center;font-size:8.5pt;font-weight:bold;margin-bottom:6pt}.mes u{text-decoration:underline}.info{font-size:7.5pt;margin-bottom:5pt;display:flex;justify-content:space-between}.info b{margin-right:2pt}table.m{width:100%;border-collapse:collapse;font-size:7.5pt}table.m .sep{height:5pt;border:none}table.m .st{text-align:center;font-size:8pt;padding:2pt 0;border:0.5pt solid #000}table.m .h{border:0.5pt solid #000;padding:1.5pt 3pt;font-weight:bold;text-align:center;font-size:7pt}table.m .c{border:0.5pt solid #000;padding:1.2pt 3pt}table.m .c.n{text-align:center;width:20pt}table.m .c.a{text-align:left}table.m .c.v{text-align:center;width:52pt}.firmas{margin-top:18pt;display:flex;justify-content:space-between;padding:0 6pt}.fb{text-align:center;width:30%}.fb .fl{border-top:0.5pt solid #000;margin-top:28pt;padding-top:2pt;font-size:7pt;font-weight:bold}.fb .fr{font-size:6pt;font-style:italic}.foot{text-align:center;margin-top:6pt;font-size:5.5pt;color:#666;border-top:0.3pt solid #bbb;padding-top:2pt}.pa{position:fixed;bottom:16px;right:16px;z-index:100}.pa button{padding:10px 22px;border:none;border-radius:4px;font:bold 12px system-ui,sans-serif;cursor:pointer;background:#000;color:#fff}.pa button:hover{background:#333}@media print{.pa{display:none!important}}</style></head><body><h1>Material de Curación y Medicamentos para el Botiquín de Urgencias</h1><div class="mes">MES: <u>${mesActual}</u></div><div class="info"><span><b>Sucursal:</b> ${sucursal || ''}</span><span><b>Fecha:</b> ${fechaHoy}</span><span><b>Responsable:</b> ${usuario || ''}</span></div><table class="m">${buildSectionRows('Material de curación', materialRows)}${buildSectionRows('Medicamentos', medicamentoRows)}</table><div class="firmas"><div class="fb"><div class="fl">Responsable de Carro Rojo</div><div class="fr">Enfermería</div></div><div class="fb"><div class="fl">Jefa de Enfermería</div><div class="fr">Supervisión y Validación</div></div><div class="fb"><div class="fl">Dirección Médica</div><div class="fr">Vo. Bo.</div></div></div><div class="foot">Generado el ${fechaHoy} a las ${horaGen} — ${sucursal || ''} — Uso interno</div><div class="pa"><button onclick="window.print()">Imprimir</button></div></body></html>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Botiquín de Urgencias — ${sucursal}</title><style>@page{size:letter;margin:0}*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Times New Roman',Times,serif;color:#000;font-size:7.5pt;line-height:1.15;padding:10mm 14mm 8mm 14mm}h1{font-size:10pt;font-weight:bold;text-align:center;text-transform:uppercase;margin-bottom:3pt}.mes{text-align:center;font-size:8.5pt;font-weight:bold;margin-bottom:6pt}.mes u{text-decoration:underline}.info{font-size:7.5pt;margin-bottom:5pt;display:flex;justify-content:space-between}.info b{margin-right:2pt}table.m{width:100%;border-collapse:collapse;font-size:7.5pt}table.m .sep{height:5pt;border:none}table.m .st{text-align:center;font-size:8pt;padding:2pt 0;border:0.5pt solid #000}table.m .h{border:0.5pt solid #000;padding:1.5pt 3pt;font-weight:bold;text-align:center;font-size:7pt}table.m .c{border:0.5pt solid #000;padding:1.2pt 3pt}table.m .c.n{text-align:center;width:18pt}table.m .c.a{text-align:left}table.m .c.v{text-align:center;width:48pt}.firmas{margin-top:18pt;display:flex;justify-content:space-between;padding:0 6pt}.fb{text-align:center;width:30%}.fb .fl{border-top:0.5pt solid #000;margin-top:28pt;padding-top:2pt;font-size:7pt;font-weight:bold}.fb .fr{font-size:6pt;font-style:italic}.foot{text-align:center;margin-top:6pt;font-size:5.5pt;color:#666;border-top:0.3pt solid #bbb;padding-top:2pt}.pa{position:fixed;bottom:16px;right:16px;z-index:100}.pa button{padding:10px 22px;border:none;border-radius:4px;font:bold 12px system-ui,sans-serif;cursor:pointer;background:#000;color:#fff}.pa button:hover{background:#333}@media print{.pa{display:none!important}}</style></head><body><h1>Material de Curación y Medicamentos para el Botiquín de Urgencias</h1><div class="mes">MES: <u>${mesActual}</u></div><div class="info"><span><b>Sucursal:</b> ${sucursal || ''}</span><span><b>Fecha:</b> ${fechaHoy}</span><span><b>Responsable:</b> ${usuario || ''}</span></div><table class="m">${buildSectionRows('Material de curación', materialRows)}${buildSectionRows('Medicamentos', medicamentoRows)}</table><div class="firmas"><div class="fb"><div class="fl">Responsable de Carro Rojo</div><div class="fr">Enfermería</div></div><div class="fb"><div class="fl">Jefa de Enfermería</div><div class="fr">Supervisión y Validación</div></div><div class="fb"><div class="fl">Dirección Médica</div><div class="fr">Vo. Bo.</div></div></div><div class="foot">Generado el ${fechaHoy} a las ${horaGen} — ${sucursal || ''} — Uso interno</div><div class="pa"><button onclick="window.print()">Imprimir</button></div></body></html>`;
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -100,7 +117,6 @@ const generarFormatoImpresion = ({ sucursal, materialRows, medicamentoRows, usua
 const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp = '' }) => {
   const { user } = useAuth();
   const { sessionSucursal } = useSessionLocation();
-  const navigate = useNavigate();
 
   const mesActual = useMemo(() => new Date().toLocaleDateString('en-CA').slice(0, 7), []); // "2026-06"
 
@@ -163,19 +179,12 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
     const unsub = onSnapshot(doc(db, 'bitacora_carro_rojo', sucursalActiva), (snap) => {
       if (snap.exists()) {
         const d = snap.data();
-        const docMes = d.mesBloqueado || '';
-        const matData = d.materialData || {};
-        const medData = d.medicamentoData || {};
-        setSucursalMaterialData(matData);
-        setSucursalMedicamentoData(medData);
-
-        // Solo bloquear si el mes coincide Y todos los artículos de la plantilla tienen cantidadExistente
-        if (docMes === mesActual) {
-          const allMatFilled = plantillaMaterial.every(item => matData[item.id]?.cantidadExistente);
-          const allMedFilled = plantillaMedicamento.every(item => medData[item.id]?.cantidadExistente);
-          setBloqueado(allMatFilled && allMedFilled);
+        if (esPeriodoActualDoc(d, mesActual)) {
+          setSucursalMaterialData(d.materialData || {});
+          setSucursalMedicamentoData(d.medicamentoData || {});
+          setBloqueado(estaCompletoYBloqueado(d, mesActual, plantillaMaterial, plantillaMedicamento));
         } else {
-          // Mes distinto → reiniciar campos para nuevo mes, historial ya preservado
+          // Mes anterior (ya cerrado u obsoleto) → UI limpia para el mes nuevo; historial intacto
           setSucursalMaterialData({});
           setSucursalMedicamentoData({});
           setBloqueado(false);
@@ -242,7 +251,8 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
           sucursal: sucursalActiva,
           materialData: sucursalMaterialData,
           medicamentoData: sucursalMedicamentoData,
-          // Solo marcar como bloqueado si todo está completo
+          // Siempre anclar el periodo; mesBloqueado solo al completar (antes '' borraba la UI al recargar)
+          mesActivo: mesActual,
           mesBloqueado: todoCompleto ? mesActual : '',
           ultimaActualizacion: serverTimestamp(),
           actualizadoPor: user?.nombre || 'Desconocido',
@@ -281,32 +291,24 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
   };
 
   const rootLayoutClass = embedded
-    ? 'flex flex-col flex-1 min-h-0'
-    : 'min-h-screen bg-slate-50/50 flex flex-col';
+    ? 'flex flex-col flex-1 min-h-0 bg-[#f8f9fa] text-slate-700'
+    : 'min-h-full bg-[#f8f9fa] text-slate-700 flex flex-col';
 
   /* ═══════════════════════════════════════════════════════════════
      RENDER TABLE (simplificada: sin edición de plantilla)
      ═══════════════════════════════════════════════════════════════ */
-  const renderTable = (title, icon, rows, tabla, accent) => {
+  const renderTable = (title, icon, rows, tabla) => {
     const IconComp = icon;
-    const gradients = {
-      rose: { header: 'from-rose-500 to-pink-600', shadow: 'shadow-rose-500/15' },
-      blue: { header: 'from-blue-500 to-indigo-600', shadow: 'shadow-blue-500/15' },
-    };
-    const g = gradients[accent] || gradients.blue;
 
     return (
-      <div className={`bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-sm hover:shadow-md ${g.shadow} transition-all`}>
-        {/* Header */}
-        <div className={`bg-gradient-to-r ${g.header} px-4 sm:px-5 py-3.5 flex items-center justify-between`}>
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-white/15 rounded-xl flex items-center justify-center backdrop-blur-sm">
-              <IconComp size={16} className="text-white" />
-            </div>
-            <div>
-              <h3 className="text-white font-bold text-[13px] sm:text-[14px] tracking-wide uppercase">{title}</h3>
-              <p className="text-white/50 text-[10px] font-bold">{rows.length} artículos</p>
-            </div>
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-500">
+            <IconComp size={15} />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-[12px] font-bold text-slate-900 uppercase tracking-[0.06em] truncate">{title}</h3>
+            <p className="text-[11px] text-slate-500">{rows.length} artículos</p>
           </div>
         </div>
 
@@ -314,15 +316,15 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200">
-                <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-[5%]">#</th>
-                <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-[30%]">Artículo</th>
-                <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[15%]">A Existir</th>
-                <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[15%]">
+              <tr className="bg-white border-b border-slate-200">
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 w-[5%]">#</th>
+                <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 w-[30%]">Artículo</th>
+                <th className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 w-[15%]">A existir</th>
+                <th className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 w-[15%]">
                   Existente
-                  <span className="block text-[8px] text-blue-400 font-bold mt-0.5 normal-case tracking-normal">{sucursalActiva || 'sucursal'}</span>
+                  <span className="block text-[8px] text-slate-400 font-semibold mt-0.5 normal-case tracking-normal">{sucursalActiva || 'sucursal'}</span>
                 </th>
-                <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 w-[20%]">Caducidad</th>
+                <th className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 w-[20%]">Caducidad</th>
               </tr>
             </thead>
             <tbody>
@@ -330,49 +332,46 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
                 const stock = getStockStatus(row.cantidadExistir, row.cantidadExistente);
                 const cad = getCadStatus(row.caducidad);
                 return (
-                  <tr key={row.id} className={`border-b border-slate-100/80 transition-colors ${
-                    cad.level >= 3 ? 'bg-red-50/30' : cad.level >= 2 ? 'bg-amber-50/20' : idx % 2 === 1 ? 'bg-slate-50/30' : ''
-                  } hover:bg-slate-50/60`}>
-                    <td className="px-4 py-2.5 text-[12px] font-bold text-slate-300 tabular-nums">{idx + 1}</td>
+                  <tr key={row.id} className={`border-b border-slate-50 transition-colors ${
+                    cad.level >= 3 ? 'bg-red-50/40' : cad.level >= 2 ? 'bg-amber-50/30' : idx % 2 === 1 ? 'bg-slate-50/40' : 'bg-white'
+                  } hover:bg-slate-50`}>
+                    <td className="px-4 py-2.5 text-[12px] font-semibold text-slate-300 tabular-nums">{idx + 1}</td>
                     <td className="px-4 py-2.5">
                       <span className="text-[13px] font-semibold text-slate-800">{row.articulo}</span>
                     </td>
-                    {/* "A Existir" → solo lectura, es la plantilla definida por jefatura */}
                     <td className="px-3 py-2.5">
-                      <span className="block text-center font-bold text-slate-600 bg-violet-50/40 border border-violet-200 rounded-xl py-2 text-[13px]">
+                      <span className="block text-center font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 text-[13px] tabular-nums">
                         {row.cantidadExistir || '—'}
                       </span>
                     </td>
-                    {/* "Existente" → editable solo si no está bloqueado */}
                     <td className="px-3 py-2.5">
                       {bloqueado ? (
-                        <span className={`block text-center font-bold rounded-xl py-2 text-[13px] ${stock.color || 'text-slate-700'}`}>
+                        <span className={`block text-center font-bold rounded-md py-2 text-[13px] tabular-nums ${stock.color || 'text-slate-700'}`}>
                           {row.cantidadExistente || '—'}
                         </span>
                       ) : (
                         <input type="text" inputMode="decimal" value={row.cantidadExistente}
                           onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
-                          className={`w-full px-3 py-2 border rounded-xl text-[13px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
+                          className={`w-full px-3 py-2 border rounded-md text-[13px] font-bold text-center outline-none focus:border-slate-400 transition-colors ${
                             stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200'
                           }`}
                           placeholder="—" />
                       )}
                     </td>
-                    {/* "Caducidad" → editable solo si no está bloqueado */}
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-2 justify-center">
                         {bloqueado ? (
-                          <span className={`block text-center font-bold rounded-xl py-2 px-3 text-[12px] border ${cad.color || 'text-slate-700 bg-slate-50 border-slate-100'}`}>
+                          <span className={`block text-center font-bold rounded-md py-2 px-3 text-[12px] border ${cad.color || 'text-slate-700 bg-slate-50 border-slate-200'}`}>
                             {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
                           </span>
                         ) : (
                           <input type="date" value={row.caducidad}
                             onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 transition-all ${
+                            className={`w-full px-3 py-2 border rounded-md text-[12px] font-bold text-center outline-none focus:border-slate-400 transition-colors ${
                               cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
                             }`} />
                         )}
-                        {cad.label && <span className={`text-[9px] font-black shrink-0 ${cad.level >= 3 ? 'text-red-500' : cad.level >= 2 ? 'text-amber-500' : cad.level >= 1 ? 'text-amber-400' : 'text-emerald-400'}`}>{cad.label}</span>}
+                        {cad.label && <span className={`text-[9px] font-bold shrink-0 ${cad.level >= 3 ? 'text-rose-600' : cad.level >= 2 ? 'text-amber-600' : cad.level >= 1 ? 'text-amber-500' : 'text-emerald-600'}`}>{cad.label}</span>}
                       </div>
                     </td>
                   </tr>
@@ -383,56 +382,56 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
         </div>
 
         {/* ── Mobile cards (<md) ── */}
-        <div className="md:hidden divide-y divide-slate-100/80">
+        <div className="md:hidden divide-y divide-slate-100">
           {rows.map((row, idx) => {
             const stock = getStockStatus(row.cantidadExistir, row.cantidadExistente);
             const cad = getCadStatus(row.caducidad);
             return (
-              <div key={row.id} className={`px-4 py-3.5 ${cad.level >= 3 ? 'bg-red-50/30' : cad.level >= 2 ? 'bg-amber-50/20' : idx % 2 === 1 ? 'bg-slate-50/30' : ''}`}>
+              <div key={row.id} className={`px-4 py-3.5 ${cad.level >= 3 ? 'bg-red-50/40' : cad.level >= 2 ? 'bg-amber-50/30' : idx % 2 === 1 ? 'bg-slate-50/40' : 'bg-white'}`}>
                 <div className="flex items-start justify-between gap-2 mb-2.5">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
-                    <span className="text-[10px] font-bold text-slate-300 mt-1 shrink-0 tabular-nums w-5">{idx + 1}</span>
-                    <p className="text-[13px] font-bold text-slate-800 leading-snug flex-1">{row.articulo}</p>
+                    <span className="text-[10px] font-semibold text-slate-300 mt-1 shrink-0 tabular-nums w-5">{idx + 1}</span>
+                    <p className="text-[13px] font-semibold text-slate-800 leading-snug flex-1">{row.articulo}</p>
                   </div>
                   {cad.label && cad.level >= 2 && (
-                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 ${
-                      cad.level >= 3 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${
+                      cad.level >= 3 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-amber-50 text-amber-600 border border-amber-200'
                     }`}>{cad.label}</span>
                   )}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 ml-7">
                   <div>
-                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">A Existir</span>
-                    <span className="block text-center font-bold text-[12px] text-slate-600 bg-violet-50/40 border border-violet-200/80 rounded-xl py-2">
+                    <span className="text-[8px] font-bold uppercase tracking-[0.08em] text-slate-400 block mb-1">A existir</span>
+                    <span className="block text-center font-bold text-[12px] text-slate-700 bg-slate-50 border border-slate-200 rounded-md py-2 tabular-nums">
                       {row.cantidadExistir || '—'}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Existente</span>
+                    <span className="text-[8px] font-bold uppercase tracking-[0.08em] text-slate-400 block mb-1">Existente</span>
                     {bloqueado ? (
-                      <span className={`block text-center font-bold text-[12px] rounded-xl py-2 ${stock.color || 'text-slate-600 bg-slate-50'}`}>
+                      <span className={`block text-center font-bold text-[12px] rounded-md py-2 tabular-nums ${stock.color || 'text-slate-600 bg-slate-50'}`}>
                         {row.cantidadExistente || '—'}
                       </span>
                     ) : (
                       <input type="text" inputMode="decimal" value={row.cantidadExistente}
                         onChange={(e) => updateSucursalData(tabla, row.id, 'cantidadExistente', e.target.value.replace(/[^0-9.,]/g, ''))}
-                        className={`w-full px-2 py-2 border rounded-xl text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
+                        className={`w-full px-2 py-2 border rounded-md text-[12px] font-bold text-center outline-none focus:border-slate-400 ${
                           stock.color ? stock.color + ' border-transparent' : 'bg-white border-slate-200 text-slate-800'
                         }`}
                         placeholder="—" />
                     )}
                   </div>
                   <div>
-                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400/80 block mb-1">Caducidad</span>
+                    <span className="text-[8px] font-bold uppercase tracking-[0.08em] text-slate-400 block mb-1">Caducidad</span>
                     {bloqueado ? (
-                      <span className={`block font-bold text-[11px] rounded-xl py-2 text-center border ${cad.color || 'text-slate-600 bg-slate-50 border-slate-100'}`}>
+                      <span className={`block font-bold text-[11px] rounded-md py-2 text-center border ${cad.color || 'text-slate-600 bg-slate-50 border-slate-200'}`}>
                         {row.caducidad ? row.caducidad.split('-').reverse().join('/') : '—'}
                       </span>
                     ) : (
                       <input type="date" value={row.caducidad}
                         onChange={(e) => updateSucursalData(tabla, row.id, 'caducidad', e.target.value)}
-                        className={`w-full px-1 py-2 border rounded-xl text-[10px] font-bold text-center outline-none focus:ring-2 focus:ring-blue-100 ${
+                        className={`w-full px-1 py-2 border rounded-md text-[10px] font-bold text-center outline-none focus:border-slate-400 ${
                           cad.color ? cad.color : 'bg-white border-slate-200 text-slate-800'
                         }`} />
                     )}
@@ -456,112 +455,89 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
       <div className={rootLayoutClass}>
         {/* ── HEADER ── */}
         {embedded ? (
-          <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/80 px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 sticky top-0 z-20">
-            <div className="flex items-center gap-2 text-[12px] font-bold text-slate-500 min-w-0">
-              <ShieldAlert size={15} className={bloqueado ? 'text-slate-300' : 'text-rose-500'} />
+          <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 sticky top-0 z-20">
+            <div className="flex items-center gap-2 text-[12px] font-semibold text-slate-600 min-w-0">
+              <ShieldAlert size={15} className={bloqueado ? 'text-slate-300' : 'text-slate-700'} />
               <span className="truncate">{sucursalActiva || 'Cargando sucursal...'}</span>
             </div>
             {bloqueado && (
-              <span className="shrink-0 text-[10px] font-black px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
                 {mesActual} · Enviado
               </span>
             )}
           </div>
         ) : (
-          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shrink-0">
-            <div className="px-3 sm:px-5 lg:px-6 py-2.5 sm:py-3 flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-sm shrink-0 ${
-                bloqueado ? 'bg-gradient-to-br from-slate-400 to-slate-500 shadow-slate-400/20' : 'bg-gradient-to-br from-red-500 to-rose-600 shadow-red-500/20'
-              }`}>
-                <ShieldAlert size={17} className="text-white"/>
+          <div className="p-3 sm:p-4">
+            <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-lg px-3 sm:px-5 py-3">
+              <div className="flex items-end justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em]">Enfermería</p>
+                  <h1 className="text-[18px] sm:text-[22px] font-bold text-slate-900 leading-tight truncate" style={{ fontFamily: 'Sora, system-ui, sans-serif' }}>
+                    Bitácora carro rojo
+                  </h1>
+                  <p className="text-[12px] text-slate-500 mt-0.5 flex items-center gap-1.5 truncate">
+                    <MapPin size={12} className="text-slate-400 shrink-0" />
+                    {sucursalActiva || 'Sin sucursal asignada'}
+                    {bloqueado && (
+                      <>
+                        <span className="text-slate-300">·</span>
+                        <span className="text-emerald-700 font-semibold">{mesActual} bloqueado</span>
+                      </>
+                    )}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h1 className="text-[14px] sm:text-[16px] font-black text-slate-800 truncate leading-tight">
-                  Bitácora Carro Rojo
-                </h1>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                  {sucursalActiva || 'Sin sucursal asignada'}
-                  {bloqueado && <span className="ml-1.5 text-emerald-500">· {mesActual} BLOQUEADO</span>}
-                </p>
-              </div>
-            </div>
-          </header>
+            </header>
+          </div>
         )}
 
         {/* ── CONTENIDO ── */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 overflow-y-auto ${embedded ? '' : 'px-3 sm:px-4 pb-4'}`}>
           {loading ? (
             <div className="flex flex-col items-center justify-center py-32 gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-rose-500 to-red-600 flex items-center justify-center shadow-lg shadow-rose-500/20 animate-pulse">
-                <ShieldAlert size={20} className="text-white"/>
-              </div>
-              <Loader2 size={18} className="text-slate-300 animate-spin"/>
-              <p className="text-[13px] text-slate-400 font-medium">Cargando bitácora...</p>
+              <Loader2 size={18} className="text-slate-400 animate-spin"/>
+              <p className="text-[13px] text-slate-500 font-medium">Cargando bitácora...</p>
             </div>
           ) : !sucursalActiva ? (
             <div className="flex flex-col items-center justify-center py-32 gap-3 px-4">
-              <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center">
-                <ShieldAlert size={28} className="text-slate-300"/>
+              <div className="w-14 h-14 rounded-lg bg-white border border-slate-200 flex items-center justify-center">
+                <ShieldAlert size={22} className="text-slate-300"/>
               </div>
-              <p className="text-[14px] font-bold text-slate-500 text-center">No se detectó una sucursal asignada</p>
-              <p className="text-[12px] text-slate-400 text-center max-w-sm">
+              <p className="text-[14px] font-bold text-slate-700 text-center">No se detectó una sucursal asignada</p>
+              <p className="text-[12px] text-slate-500 text-center max-w-sm">
                 Contacta a tu jefa de enfermería para que te asigne una sucursal en el sistema.
               </p>
             </div>
           ) : (
-            <div className="max-w-6xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 space-y-3 sm:space-y-4">
-              {/* ── Stats inline ── */}
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                <span className="inline-flex items-center gap-1 text-slate-500">
-                  <TrendingUp size={12}/> {stats.pct}% completado
-                </span>
-                <span className="text-slate-200">|</span>
-                <span className="inline-flex items-center gap-1 text-slate-500">
-                  <CheckCircle2 size={12} className="text-emerald-500"/> {stats.filled}/{stats.total}
-                </span>
-                {stats.warnings > 0 && <>
-                  <span className="text-slate-200">|</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-200">
-                    <AlertTriangle size={11}/> {stats.warnings} alertas
-                  </span>
-                </>}
-                {stats.expired > 0 && <>
-                  <span className="text-slate-200">|</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200">
-                    <AlertCircle size={11}/> {stats.expired} vencidos
-                  </span>
-                </>}
-              </div>
-
-              {/* ── Tables ── */}
-              {renderTable('Material de Curación', Package, materialRows, 'material', 'rose')}
-              {renderTable('Medicamentos', Pill, medicamentoRows, 'medicamento', 'blue')}
+            <div className="max-w-6xl mx-auto space-y-4">
+              {renderTable('Material de curación', Package, materialRows, 'material')}
+              {renderTable('Medicamentos', Pill, medicamentoRows, 'medicamento')}
             </div>
           )}
         </div>
 
-        {/* ── FOOTER SAVE BAR (sticky bottom) ── */}
+        {/* ── FOOTER SAVE BAR ── */}
         {!loading && sucursalActiva && (
-          <div className="shrink-0 border-t border-slate-200 bg-white px-3 sm:px-6 py-1.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-4 sticky bottom-0 z-20">
-            <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400 min-w-0">
+          <div className="shrink-0 border-t border-slate-200 bg-white/90 backdrop-blur-md px-3 sm:px-6 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-4 sticky bottom-0 z-20">
+            <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 min-w-0">
               <span className="truncate">{sucursalActiva}</span>
-              <span className="text-slate-200">·</span>
+              <span className="text-slate-300">·</span>
               <span className="tabular-nums">{stats.filled}/{stats.total}</span>
               {bloqueado && (
-                <span className="ml-1 text-[10px] font-black text-emerald-500 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                <span className="ml-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
                   {mesActual}
                 </span>
               )}
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
               <button onClick={handlePrint}
-                className="px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-lg border border-slate-200 text-[10px] sm:text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors">
-                <Printer size={14} className="sm:hidden"/>
+                className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                <Printer size={13} />
                 <span className="hidden sm:inline">Imprimir</span>
               </button>
               <button onClick={handleGuardar} disabled={saving || bloqueado}
-                className={`px-4 sm:px-7 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm disabled:opacity-50 transition-all active:scale-[0.97] ${
-                  bloqueado ? 'bg-emerald-600 text-white cursor-not-allowed' : 'bg-slate-900 hover:bg-black text-white'
+                className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-semibold text-[11px] sm:text-[12px] disabled:opacity-50 transition-colors ${
+                  bloqueado ? 'bg-emerald-600 text-white cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 text-white'
                 }`}>
                 {bloqueado ? <CheckCircle2 size={14} /> : saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
                 {bloqueado ? `Completado (${mesActual})` : saving ? 'Guardando...' : `Guardar (${stats.filled}/${stats.total})`}

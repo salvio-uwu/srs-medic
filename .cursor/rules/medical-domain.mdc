@@ -1,0 +1,30 @@
+---
+description: Contexto de dominio SRS-Medic — siempre activo
+alwaysApply: true
+---
+
+# Dominio SRS-Medic
+
+ERP clínico México. UI en español. Permisos: `hasPermission(user, permissionId, fallbackRoles)` en `src/services/permissionService.js`. Admin siempre accede a `admin.*`.
+
+## Colecciones Firestore
+- Clínico: `pacientes`, `historial_clinico`, `citas`, `consultas`, `estudios_previos`
+- Enfermería: `triage_enfermeria`, `notas_enfermeria`, `ordenes_enfermeria`, `registros_krit`, `caducidades_almacen`
+- Catálogos: `catalogo_medicamentos`, `catalogo_estudios`, `catalogo_consultorios`, `catalogo_sucursales`, `catalogo_plantillas_documentos`
+- Ops: `users`, `inventario` | Chat: `canales`, `chats_privados`, `panic_alerts` | SSA: `ssa_cuestionario`, `ssa_auditorias`
+
+## Permisos clave
+`admin.dashboard`, `admin.usuarios`, `admin.monitor`, `admin.catalogos`, `doctor.agenda`, `shared.agenda`, `shared.pacientes`, `enfermeria.dashboard`, `enfermeria.jefatura`, `rh.dashboard`, `intendencia.registro`
+
+## Expediente
+`pacientes` → SOAP en `historial_clinico` (`pacienteId`) → PDF (`src/components/pdf/`, `limpiar()` en `expedienteElectronico.js`) → share (`expedienteShareService.js`)
+
+## Cloud Functions (frontend)
+`askGemini`, `enviarWhatsAppNotificacion`, `enviarEncuestaWhatsApp`, `generarBoletinMedicoSeguro`, `analizarBitacora`
+No conectadas: `analizarMedicamento`, `crearSesionMeet`
+
+## Archivos críticos (cambios mínimos)
+`Agenda.jsx`, `ExpedienteClinico.jsx`, `CatalogosGlobales.jsx`, `PlantillaDinamicaModal.jsx`, `App.jsx`
+
+## Servicios
+`permissionService`, `patientSearchService`, `patientMergeService`, `expedienteShareService`, `documentStorageService`, `clinicalAuditService`

@@ -1,318 +1,590 @@
-// src/pages/admin/DashboardAdmin.jsx
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getCountFromServer, getDocs } from 'firebase/firestore'; 
-import { db } from '../../config/firebase'; 
-import { useAuth } from '../../context/AuthContext';
-import { LogOut, Activity, Calendar as CalIcon, Users, Package, AlertTriangle, UserPlus, Pill, TrendingUp, ArrowRight } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity, AlertTriangle, BarChart2, Briefcase, Calendar,
+  DollarSign, HeartPulse, MapPin, Package, Percent,
+  Sparkles, TrendingUp, Users
+} from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip as RechartsTip
+} from 'recharts';
+import { db } from '../../config/firebase';
+import { isUserOnline, getConnectedMinutes, fmtMinutes } from '../../hooks/useMonitorData';
+import useIsMobile from '../../hooks/useIsMobile';
 
-const DashboardAdmin = () => {
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
-  
+/* ─── CSS ─────────────────────────────────────────────────────────────────── */
+
+const STYLES = `
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+  .rh-fade-up { animation: rhFadeUp .55s cubic-bezier(.16,1,.3,1) both; }
+  .rh-fade-up:nth-child(1) { animation-delay: 0s; }
+  .rh-fade-up:nth-child(2) { animation-delay: .06s; }
+  .rh-fade-up:nth-child(3) { animation-delay: .12s; }
+  .rh-fade-up:nth-child(4) { animation-delay: .18s; }
+  .rh-fade-up:nth-child(5) { animation-delay: .24s; }
+  .rh-fade-up:nth-child(6) { animation-delay: .30s; }
+
+  @keyframes rhFadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes rhPulseGreen  { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,.35); } 50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } }
+  @keyframes rhPulseRed    { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); }  50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
+  @keyframes rhPulseBlue   { 0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,.35); } 50% { box-shadow: 0 0 0 6px rgba(59,130,246,0); } }
+  @keyframes rhPulseAmber  { 0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,.35); } 50% { box-shadow: 0 0 0 6px rgba(245,158,11,0); } }
+
+  .rh-dot-green  { animation: rhPulseGreen 2s infinite; background: #10b981; }
+  .rh-dot-red    { animation: rhPulseRed   2s infinite; background: #ef4444; }
+  .rh-dot-blue   { animation: rhPulseBlue  2s infinite; background: #3b82f6; }
+  .rh-dot-amber  { animation: rhPulseAmber 2s infinite; background: #f59e0b; }
+  .rh-dot-slate  { background: #cbd5e1; }
+
+  .rh-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+  .rh-scrollbar::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 99px; }
+
+  @keyframes rhSpin { to { transform: rotate(360deg); } }
+`;
+
+/* ─── Constantes ───────────────────────────────────────────────────────────── */
+
+const toDateInput = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const hoyDateDefault = toDateInput(new Date());
+
+const normalizeText = (t = '') => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+const EST_REALIZADAS = new Set(['completada', 'realizada', 'atendida', 'finalizada']);
+const EST_CANCELADAS = new Set(['cancelada', 'no_asistio']);
+
+const parseDateSafe = (v) => {
+  if (!v) return null;
+  if (v?.toDate) return v.toDate();
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const fmtMXN = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', minimumFractionDigits: 0 }).format(n || 0);
+
+const fmtDT = (v) => {
+  const d = parseDateSafe(v);
+  if (!d) return '—';
+  return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
+};
+
+const getHour = (cita) => {
+  const d = cita?.fechaCita?.toDate ? cita.fechaCita.toDate() : parseDateSafe(cita?.fechaCita || cita?.fechaHora || cita?.fecha);
+  if (!d) return null;
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const timeS = (mins) => {
+  if (mins < 2) return 'Ahora';
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+};
+
+const ROLES_MEDICOS = new Set(['medico', 'doctor']);
+const PORCENTAJE_HONORARIOS = 0.30;
+
+const CustomTip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 11, color: '#111' }}>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: 3, background: p.color, flexShrink: 0 }} />
+          <span>{p.name}: <strong style={{ color: '#111' }}>{typeof p.value === 'number' && p.dataKey === 'ingresos' ? fmtMXN(p.value) : p.value}</strong></span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const MiniBar = ({ pct, color, height = 4 }) => (
+  <div style={{ flex: 1, height, borderRadius: 99, background: '#f3f4f6', overflow: 'hidden' }}>
+    <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 99, background: color, transition: 'width .6s ease' }} />
+  </div>
+);
+
+const ScoreBadge = ({ score }) => {
+  const color = score >= 70 ? '#059669' : score >= 40 ? '#d97706' : '#dc2626';
+  const bg = score >= 70 ? '#ecfdf5' : score >= 40 ? '#fffbeb' : '#fef2f2';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700, background: bg, color, border: `1px solid ${color}20` }}>
+      {score}%
+    </span>
+  );
+};
+
+/* ─── Componente ───────────────────────────────────────────────────────────── */
+
+const DashboardRH = () => {
+  const isMobile = useIsMobile();
+
+  const [users, setUsers] = useState([]);
+  const [citas, setCitas] = useState([]);
+  const [inventario, setInventario] = useState([]);
+  const [bitacoras, setBitacoras] = useState([]);
+  const [catalogoSucursales, setCatalogoSucursales] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    pacientesHoy: 0,
-    personalActivo: 0,
-    inventarioTotal: 0,
-    alertasInventario: []
-  });
 
-  const [fechaActual, setFechaActual] = useState('');
+  const [selectedDate, setSelectedDate] = useState(hoyDateDefault);
 
   useEffect(() => {
-    const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    setFechaActual(new Date().toLocaleDateString('es-MX', opciones));
-
-    const auditarSistema = async () => {
-      try {
-        setLoading(true);
-        
-        // 1. Pacientes Atendidos Hoy
-        const hoy = new Date().toLocaleDateString('en-CA'); 
-        const qConsultas = query(collection(db, "consultas"), where("fechaBusqueda", "==", hoy));
-        const snapConsultas = await getCountFromServer(qConsultas);
-        
-        // 2. Personal Activo en Tiempo Real
-        const qUsers = query(collection(db, "users"), where("isOnline", "==", true));
-        const snapUsers = await getCountFromServer(qUsers);
-
-        // 3. Auditoría de Inventario (Total de unidades y Alertas de Stock)
-        const snapInv = await getDocs(collection(db, "inventario"));
-        let totalUnidades = 0;
-        let alertas = [];
-
-        snapInv.forEach(doc => {
-          const data = doc.data();
-          const stock = parseInt(data.stock) || 0;
-          const minimo = parseInt(data.stockMinimo) || 5; // Asumimos 5 si no hay mínimo configurado
-          
-          totalUnidades += stock;
-
-          if (stock <= minimo) {
-            alertas.push({
-              id: doc.id,
-              nombre: data.nombre || data.medicamento || 'Medicamento',
-              stock: stock,
-              sucursal: data.sucursal || 'General'
-            });
-          }
-        });
-
-        // Ordenamos las alertas para que los de menor stock salgan primero
-        alertas.sort((a, b) => a.stock - b.stock);
-
-        setStats({
-          pacientesHoy: snapConsultas.data().count,
-          personalActivo: snapUsers.data().count,
-          inventarioTotal: totalUnidades,
-          alertasInventario: alertas.slice(0, 5) // Mostramos solo top 5 alertas
-        });
-
-      } catch (error) {
-        console.error("Error auditando base de datos:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    auditarSistema();
+    const uns = [
+      onSnapshot(collection(db, 'users'), (s) => { setUsers(s.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }, () => setLoading(false)),
+      onSnapshot(collection(db, 'citas'), (s) => { setCitas(s.docs.map((d) => ({ id: d.id, ...d.data() }))); }, () => {}),
+      onSnapshot(collection(db, 'inventario'), (s) => { setInventario(s.docs.map((d) => ({ id: d.id, ...d.data() }))); }, () => {}),
+      onSnapshot(collection(db, 'bitacorasLimpieza'), (s) => { setBitacoras(s.docs.map((d) => ({ id: d.id, ...d.data() }))); }, () => {}),
+      onSnapshot(collection(db, 'catalogo_sucursales'), (s) => { setCatalogoSucursales(s.docs.map((d) => ({ id: d.id, ...d.data() }))); }, () => {}),
+    ];
+    return () => uns.forEach((u) => u());
   }, []);
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      navigate('/');
-    } catch (error) {
-      console.error("Error al salir", error);
-    }
-  };
+  /* ── Citas del día ── */
+  const citasDia = useMemo(() => {
+    return citas.filter((c) => {
+      const d = c?.fechaCita?.toDate ? c.fechaCita.toDate() : parseDateSafe(c?.fechaCita || c?.fechaHora || c?.fecha);
+      if (!d) return false;
+      return toDateInput(d) === selectedDate;
+    });
+  }, [citas, selectedDate]);
 
-  const firstName = user?.nombre?.split(' ')[0] || 'Administrador';
+  /* ── Personal ── */
+  const personal = useMemo(() => users.filter((u) => {
+    const r = normalizeText(u.rol || '');
+    if (r === 'admin_maestro') return false;
+    return true;
+  }), [users]);
+
+  const medicos = useMemo(() => personal.filter((u) => {
+    const r = normalizeText(u.rol || '');
+    return ROLES_MEDICOS.has(r);
+  }), [personal]);
+
+  const rolesBreakdown = useMemo(() => {
+    const map = {};
+    personal.forEach((u) => {
+      const role = u.rol || 'sin rol';
+      map[role] = (map[role] || 0) + 1;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  }, [personal]);
+
+  const onlineCount = useMemo(() => personal.filter((u) => isUserOnline(u)).length, [personal]);
+
+  /* ── Productividad médica ── */
+  const prodMedicos = useMemo(() => {
+    const map = new Map();
+    citasDia.forEach((c) => {
+      const id = c.doctorId || 'sin-id';
+      if (!map.has(id)) map.set(id, { id, nombre: c.doctorNombre || 'Sin asignar', citas: 0, realizadas: 0, ingresos: 0, sucursal: c.sucursal || '' });
+      const r = map.get(id);
+      r.citas++;
+      if (EST_REALIZADAS.has(normalizeText(c.estado))) r.realizadas++;
+      r.ingresos += Number(c.motivoPrecioSnapshot ?? c.motivoPrecio ?? 0);
+    });
+    medicos.forEach((m) => {
+      if (map.has(m.id)) {
+        const r = map.get(m.id);
+        r.online = isUserOnline(m);
+        r.nombre = m.nombre || r.nombre;
+      } else if (isUserOnline(m)) {
+        map.set(m.id, { id: m.id, nombre: m.nombre || 'Sin nombre', citas: 0, realizadas: 0, ingresos: 0, sucursal: m.sucursal || '', online: true });
+      }
+    });
+    return Array.from(map.values())
+      .map((r) => {
+        const tasa = r.citas > 0 ? Math.round((r.realizadas * 100) / r.citas) : null;
+        const honorarios = Math.round(r.ingresos * PORCENTAJE_HONORARIOS);
+        return { ...r, tasa, honorarios };
+      })
+      .sort((a, b) => b.ingresos - a.ingresos);
+  }, [citasDia, medicos]);
+
+  /* ── Ingresos por sucursal ── */
+  const ingresosPorSuc = useMemo(() => {
+    const map = {};
+    citasDia.forEach((c) => {
+      const s = c.sucursal || 'Sin sucursal';
+      map[s] = (map[s] || 0) + Number(c.motivoPrecioSnapshot ?? c.motivoPrecio ?? 0);
+    });
+    return Object.entries(map).map(([name, ingresos]) => ({ name, ingresos })).sort((a, b) => b.ingresos - a.ingresos);
+  }, [citasDia]);
+
+  /* ── KPIs ── */
+  const kpis = useMemo(() => {
+    const totalCitas = citasDia.length;
+    const realizadas = citasDia.filter((c) => EST_REALIZADAS.has(normalizeText(c.estado))).length;
+    const tasa = totalCitas > 0 ? Math.round((realizadas * 100) / totalCitas) : 0;
+    const ingresos = citasDia.reduce((s, c) => s + Number(c.motivoPrecioSnapshot ?? c.motivoPrecio ?? 0), 0);
+    const prom = realizadas > 0 ? ingresos / realizadas : 0;
+    const nomina = Math.round(ingresos * PORCENTAJE_HONORARIOS);
+    const utilidad = ingresos - nomina;
+
+    let valorInv = 0;
+    const criticos = [];
+    inventario.forEach((item) => {
+      const stock = Number(item.stock) || 0;
+      const costo = Number(item.costo || item.precio) || 0;
+      const min = Number(item.stockMinimo || item.minimo) || 10;
+      valorInv += stock * costo;
+      if (stock <= min) criticos.push({ id: item.id, nombre: item.nombre || item.medicamento || 'Insumo', stock, minimo: min, costo, sucursal: item.sucursal || 'General' });
+    });
+
+    const bitacorasDia = bitacoras.filter((b) => {
+      const d = parseDateSafe(b.fecha);
+      return d ? toDateInput(d) === selectedDate : false;
+    });
+
+    return {
+      totalCitas, realizadas, tasa, ingresos, prom, nomina, utilidad,
+      valorInv, criticos: criticos.length, criticosItems: criticos,
+      personalTotal: personal.length, online: onlineCount,
+      medicosActivos: prodMedicos.filter((m) => m.online).length,
+      bitacorasCount: bitacorasDia.length,
+      sinEvidencia: bitacorasDia.filter((b) => !b.fotoUrl).length,
+    };
+  }, [citasDia, personal, onlineCount, inventario, bitacoras, selectedDate, prodMedicos]);
+
+  /* ── Charts data ── */
+  const COLORS = ['#111', '#374151', '#6b7280', '#9ca3af', '#d1d5db', '#e5e7eb', '#f3f4f6'];
+
+  const estadoCitasChart = useMemo(() => {
+    const map = {};
+    citasDia.forEach((c) => {
+      const e = c.estado || 'pendiente';
+      map[e] = (map[e] || 0) + 1;
+    });
+    return Object.entries(map).map(([name, value], i) => ({
+      name, value,
+      color: i === 0 ? '#111' : i === 1 ? '#6b7280' : i === 2 ? '#9ca3af' : '#d1d5db',
+    }));
+  }, [citasDia]);
+
+  const ingresosAcum = useMemo(() => {
+    const sorted = [...ingresosPorSuc].sort((a, b) => b.ingresos - a.ingresos);
+    return sorted.map((s) => ({ name: s.name, ingresos: s.ingresos }));
+  }, [ingresosPorSuc]);
+
+  const labelDate = useMemo(() => {
+    try { return new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); }
+    catch { return selectedDate; }
+  }, [selectedDate]);
+
+  /* ── Render ── */
+  if (loading && users.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 12 }}>
+        <div style={{ width: 24, height: 24, borderRadius: '50%', border: '3px solid #e5e7eb', borderTopColor: '#9ca3af', animation: 'rhSpin .8s linear infinite' }} />
+        <span style={{ fontSize: 13, color: '#9ca3af' }}>Cargando panel de Recursos Humanos...</span>
+      </div>
+    );
+  }
 
   return (
     <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
-        .font-jakarta { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
-        .font-inter { font-family: 'Inter', system-ui, sans-serif; }
-        
-        .fade-up { animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; transform: translateY(20px); }
-        .delay-1 { animation-delay: 0.1s; }
-        .delay-2 { animation-delay: 0.2s; }
-        
-        @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-        
-        .glass-card {
-          background: #ffffff;
-          border-radius: 20px;
-          box-shadow: 0 10px 30px -10px rgba(15,23,42,0.05), 0 0 0 1px rgba(15,23,42,0.03);
-          transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .action-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 20px 40px -10px rgba(15,23,42,0.08), 0 0 0 1px rgba(15,23,42,0.05);
-        }
+      <style>{STYLES}</style>
+      <div style={{ maxWidth: 1360, margin: '0 auto', padding: isMobile ? '16px 12px 48px' : '28px 24px 48px', fontFamily: 'Inter, Sora, system-ui, sans-serif' }}>
 
-        .stripe-bg {
-          background-image: repeating-linear-gradient(-45deg, transparent, transparent 18px, rgba(15,23,42,0.015) 18px, rgba(15,23,42,0.015) 19px);
-        }
-      `}</style>
-
-      <div className="min-h-screen bg-[#f4f7f9] font-inter pb-10">
-        
-        {/* --- NAVBAR SUPERIOR ELEGANTE --- */}
-        <nav className="bg-white/80 backdrop-blur-xl border-b border-[#e2e8f0] sticky top-0 z-20 px-8 py-4 flex justify-between items-center shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)]">
-          <div className="flex items-center gap-4">
-             <div className="w-10 h-10 bg-[#0f172a] rounded-xl flex items-center justify-center text-white shadow-md">
-               <Activity size={20} />
-             </div>
-             <div>
-               <h1 className="font-jakarta font-extrabold text-[#0f172a] text-lg leading-tight tracking-tight">SRS Médico</h1>
-               <p className="text-[10px] text-[#64748b] font-bold tracking-widest uppercase">Dirección General</p>
-             </div>
-          </div>
-          
-          <div className="flex items-center gap-6">
-             <div className="text-right hidden md:block">
-                <p className="text-[13px] font-bold text-[#0f172a]">{user?.nombre || 'Administrador'}</p>
-                <p className="text-[11px] text-[#64748b] font-medium">{user?.email}</p>
-             </div>
-             <button onClick={handleLogout} className="p-2 text-[#94a3b8] hover:text-[#e11d48] hover:bg-[#fff1f2] rounded-xl transition-all" title="Cerrar Sesión Segura">
-               <LogOut size={18} />
-             </button>
-          </div>
-        </nav>
-
-        <main className="max-w-[1400px] mx-auto p-6 md:p-10 space-y-8">
-          
-          {/* --- HEADER --- */}
-          <div className="fade-up flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-            <div>
-              <h2 className="font-jakarta text-3xl font-extrabold text-[#0f172a] tracking-tight mb-2">
-                Hola, {firstName}
-              </h2>
-              <p className="text-[14px] text-[#64748b] font-medium">
-                Panel de control maestro. Conectado a la red hospitalaria en tiempo real.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-[#64748b] bg-white px-5 py-2.5 rounded-full border border-[#e2e8f0] shadow-sm text-[12px] font-bold capitalize tracking-wide">
-              <CalIcon size={16} />
-              {fechaActual}
-            </div>
-          </div>
-
-          {/* --- KPIs PRINCIPALES (DATOS REALES) --- */}
-          <div className="fade-up delay-1 grid grid-cols-1 md:grid-cols-4 gap-5">
-             
-             <div className="glass-card stripe-bg p-6 relative overflow-hidden group">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="text-[#64748b] group-hover:text-blue-600 transition-colors"><Users size={22} /></div>
-                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md uppercase tracking-wider">Hoy</span>
-                </div>
-                <h3 className="font-jakarta text-4xl font-extrabold text-[#0f172a]">{loading ? '--' : stats.pacientesHoy}</h3>
-                <p className="text-[12px] text-[#64748b] font-medium mt-1">Pacientes atendidos</p>
-             </div>
-
-             <div className="glass-card stripe-bg p-6 relative overflow-hidden group">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="text-[#64748b] group-hover:text-emerald-500 transition-colors"><Activity size={22} /></div>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-600 uppercase tracking-wider">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> En Vivo
-                  </div>
-                </div>
-                <h3 className="font-jakarta text-4xl font-extrabold text-[#0f172a]">{loading ? '--' : stats.personalActivo}</h3>
-                <p className="text-[12px] text-[#64748b] font-medium mt-1">Personal conectado</p>
-             </div>
-
-             <div className="glass-card stripe-bg p-6 relative overflow-hidden group">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="text-[#64748b] group-hover:text-purple-600 transition-colors"><Package size={22} /></div>
-                </div>
-                <h3 className="font-jakarta text-4xl font-extrabold text-[#0f172a]">{loading ? '--' : stats.inventarioTotal.toLocaleString()}</h3>
-                <p className="text-[12px] text-[#64748b] font-medium mt-1">Unidades en farmacia</p>
-             </div>
-
-             <div className={`glass-card p-6 relative overflow-hidden group ${stats.alertasInventario.length > 0 ? 'border-b-4 border-[#e11d48]' : ''}`}>
-                <div className="flex justify-between items-start mb-4">
-                  <div className={`${stats.alertasInventario.length > 0 ? 'text-[#e11d48]' : 'text-[#64748b]'}`}><AlertTriangle size={22} /></div>
-                  {stats.alertasInventario.length > 0 && (
-                    <span className="text-[10px] font-bold text-[#e11d48] bg-[#fff1f2] px-2.5 py-1 rounded-md uppercase tracking-wider animate-pulse">Revisar</span>
-                  )}
-                </div>
-                <h3 className={`font-jakarta text-4xl font-extrabold ${stats.alertasInventario.length > 0 ? 'text-[#e11d48]' : 'text-[#0f172a]'}`}>
-                  {loading ? '--' : stats.alertasInventario.length}
-                </h3>
-                <p className="text-[12px] text-[#64748b] font-medium mt-1">Focos rojos de stock</p>
-             </div>
-
-          </div>
-
-          {/* --- PANELES DIVIDIDOS --- */}
-          <div className="fade-up delay-2 grid grid-cols-1 lg:grid-cols-3 gap-8">
-            
-            {/* ACCIONES RÁPIDAS (Izquierda) */}
-            <div className="lg:col-span-2 space-y-6">
-               <h3 className="font-jakarta text-lg font-bold text-[#0f172a]">Gestión Hospitalaria</h3>
-               
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <button onClick={() => navigate('/admin/usuarios')} className="glass-card action-card p-6 text-left flex items-start gap-5 border border-transparent hover:border-[#cbd5e1] group">
-                    <div className="bg-[#f1f5f9] text-[#475569] p-3.5 rounded-2xl group-hover:bg-[#0f172a] group-hover:text-white transition-colors">
-                      <UserPlus size={22} />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-jakarta font-bold text-[#0f172a] text-[15px] mb-1 flex justify-between items-center">
-                        Directorio Médico <ArrowRight size={14} className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-[#64748b]"/>
-                      </h4>
-                      <p className="text-[12px] text-[#64748b] leading-relaxed">Administración de credenciales, roles y altas de personal.</p>
-                    </div>
-                  </button>
-
-                  <button onClick={() => navigate('/admin/inventario')} className="glass-card action-card p-6 text-left flex items-start gap-5 border border-transparent hover:border-[#cbd5e1] group">
-                    <div className="bg-[#f1f5f9] text-[#475569] p-3.5 rounded-2xl group-hover:bg-[#0f172a] group-hover:text-white transition-colors">
-                      <Pill size={22} />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-jakarta font-bold text-[#0f172a] text-[15px] mb-1 flex justify-between items-center">
-                        Inventario Maestro <ArrowRight size={14} className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-[#64748b]"/>
-                      </h4>
-                      <p className="text-[12px] text-[#64748b] leading-relaxed">Control de almacén, entradas, salidas y catálogo.</p>
-                    </div>
-                  </button>
-
-                  <button onClick={() => navigate('/admin/monitor')} className="glass-card action-card p-6 text-left flex items-start gap-5 border border-transparent hover:border-[#cbd5e1] group">
-                    <div className="bg-[#f1f5f9] text-[#475569] p-3.5 rounded-2xl group-hover:bg-[#0f172a] group-hover:text-white transition-colors">
-                      <TrendingUp size={22} />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-jakarta font-bold text-[#0f172a] text-[15px] mb-1 flex justify-between items-center">
-                        Monitor de Productividad <ArrowRight size={14} className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-[#64748b]"/>
-                      </h4>
-                      <p className="text-[12px] text-[#64748b] leading-relaxed">Radar en vivo de ingresos, atenciones y tiempos.</p>
-                    </div>
-                  </button>
-
-                  <button onClick={() => navigate('/admin/reportes')} className="glass-card action-card p-6 text-left flex items-start gap-5 border border-transparent hover:border-[#cbd5e1] group">
-                    <div className="bg-[#f1f5f9] text-[#475569] p-3.5 rounded-2xl group-hover:bg-[#0f172a] group-hover:text-white transition-colors">
-                      <Activity size={22} />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-jakarta font-bold text-[#0f172a] text-[15px] mb-1 flex justify-between items-center">
-                        Inteligencia de Negocios <ArrowRight size={14} className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-[#64748b]"/>
-                      </h4>
-                      <p className="text-[12px] text-[#64748b] leading-relaxed">Reportes financieros, gráficas y análisis de datos.</p>
-                    </div>
-                  </button>
-               </div>
-            </div>
-
-            {/* CENTRO DE ALERTAS REAL (Derecha) */}
-            <div className="glass-card overflow-hidden h-fit flex flex-col">
-              <div className="p-6 border-b border-[#e2e8f0] bg-[#f8fafc]">
-                <h3 className="font-jakarta font-bold text-[#0f172a] flex items-center gap-2">
-                  <AlertTriangle size={16} className={stats.alertasInventario.length > 0 ? 'text-[#e11d48]' : 'text-[#64748b]'} />
-                  Focos Rojos Farmacia
-                </h3>
-                <p className="text-[11px] text-[#64748b] mt-1 font-medium tracking-wide">MEDICAMENTOS EN STOCK CRÍTICO</p>
+        {/* ── HERO ── */}
+        <div className="rh-fade-up" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <Briefcase size={22} style={{ color: '#dc2626', flexShrink: 0 }} />
+              <div>
+                <h1 style={{ fontFamily: 'Sora, sans-serif', fontSize: 20, fontWeight: 700, color: '#111', margin: 0, lineHeight: 1.2 }}>Dashboard de Recursos Humanos</h1>
+                <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Auditoría integral de personal, finanzas y operación · {labelDate}</p>
               </div>
-              
-              <div className="flex-1">
-                {loading ? (
-                  <div className="p-8 text-center text-[12px] text-[#64748b] font-medium">Auditando base de datos...</div>
-                ) : stats.alertasInventario.length === 0 ? (
-                  <div className="p-8 text-center text-[12px] text-emerald-600 font-bold bg-emerald-50/30">
-                    El inventario se encuentra estable.
-                  </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 6 }}>
+            <Calendar size={14} style={{ color: '#6b7280' }} />
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}
+              style={{ border: 'none', outline: 'none', fontSize: 13, fontWeight: 600, color: '#111', background: 'transparent', fontFamily: 'Sora, sans-serif' }} />
+          </div>
+        </div>
+
+        {/* ── KPI METRIC STRIP ── */}
+        <div style={{ display: 'flex', gap: 1, background: '#e5e7eb', borderRadius: 12, overflow: 'hidden', marginBottom: 20, overflowX: 'auto' }} className="rh-scrollbar">
+          {[
+            { icon: DollarSign, label: 'Ingresos del día', value: fmtMXN(kpis.ingresos), sub: `${kpis.realizadas} consultas · ${fmtMXN(kpis.prom)} prom.`, accent: kpis.ingresos > 10000 ? '#059669' : kpis.ingresos > 0 ? '#d97706' : '#9ca3af' },
+            { icon: Percent, label: 'Nómina estimada', value: fmtMXN(kpis.nomina), sub: `30% honorarios · ${kpis.medicosActivos} médicos`, accent: '#6d28d9' },
+            { icon: TrendingUp, label: 'Utilidad bruta', value: fmtMXN(kpis.utilidad), sub: 'Ingresos − nómina', accent: kpis.utilidad > 0 ? '#059669' : '#dc2626' },
+            { icon: Users, label: 'Personal', value: `${kpis.online}/${kpis.personalTotal}`, sub: `${rolesBreakdown.length} roles · ${kpis.medicosActivos} médicos`, accent: kpis.online === kpis.personalTotal ? '#059669' : kpis.online > kpis.personalTotal * 0.5 ? '#d97706' : '#dc2626' },
+            { icon: Activity, label: 'Citas del día', value: kpis.totalCitas, sub: `${kpis.realizadas} realizadas · ${kpis.tasa}% cierre`, accent: kpis.tasa >= 70 ? '#059669' : kpis.tasa >= 40 ? '#d97706' : '#dc2626' },
+            { icon: Package, label: 'Inventario crítico', value: kpis.criticos, sub: `${fmtMXN(kpis.valorInv)} total`, accent: kpis.criticos === 0 ? '#059669' : kpis.criticos <= 3 ? '#d97706' : '#dc2626' },
+          ].map((m, i) => (
+            <div key={i} className="rh-fade-up" style={{ flex: '1 1 0', minWidth: 140, background: '#fff', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <m.icon size={13} style={{ color: m.accent, flexShrink: 0 }} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap' }}>{m.label}</span>
+              </div>
+              <span style={{ fontSize: 22, fontWeight: 800, color: '#111', lineHeight: 1, fontFamily: 'Sora, sans-serif', fontVariantNumeric: 'tabular-nums' }}>{m.value}</span>
+              <span style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.3 }}>{m.sub}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* ── CHARTS ── */}
+        {!loading && (
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+            {/* Distribución de personal */}
+            <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 12, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Users size={13} style={{ color: '#6b7280' }} /> Personal por rol
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                {rolesBreakdown.length === 0 ? (
+                  <div style={{ height: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d1d5db', fontSize: 13 }}>Sin datos</div>
                 ) : (
-                  stats.alertasInventario.map((item) => (
-                    <div key={item.id} className="p-4 hover:bg-[#f8fafc] border-b border-[#f1f5f9] last:border-0 transition-colors">
-                       <div className="flex justify-between items-start mb-1">
-                         <h5 className="font-bold text-[#0f172a] text-[13px]">{item.nombre}</h5>
-                         <span className="bg-[#fff1f2] text-[#e11d48] text-[9px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border border-[#ffe4e6]">
-                           {item.stock === 0 ? 'Agotado' : 'Crítico'}
-                         </span>
-                       </div>
-                       <p className="text-[11px] text-[#64748b] font-medium">
-                         Sucursal: {item.sucursal} <span className="mx-1">•</span> Quedan: {item.stock} pzas
-                       </p>
+                  <>
+                    <ResponsiveContainer width="100%" height={150}>
+                      <PieChart>
+                        <Pie data={rolesBreakdown} cx="50%" cy="50%" innerRadius={42} outerRadius={62} dataKey="value" paddingAngle={1} strokeWidth={0}>
+                          {rolesBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <RechartsTip content={<CustomTip />} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', marginTop: 4 }}>
+                      {rolesBreakdown.map((d, i) => (
+                        <span key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#6b7280' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS[i % COLORS.length], flexShrink: 0 }} />
+                          {d.name} <span style={{ fontWeight: 700, color: '#111' }}>{d.value}</span>
+                        </span>
+                      ))}
                     </div>
-                  ))
+                  </>
                 )}
               </div>
-              
-              <div className="p-4 border-t border-[#e2e8f0] bg-[#f8fafc]">
-                 <button onClick={() => navigate('/admin/inventario')} className="w-full py-2 bg-white border border-[#cbd5e1] rounded-xl text-[12px] font-bold text-[#0f172a] hover:bg-[#0f172a] hover:text-white transition-colors shadow-sm">
-                   Reabastecer Inventario
-                 </button>
+            </div>
+
+            {/* Ingresos por sucursal */}
+            <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 12, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <BarChart2 size={13} style={{ color: '#6b7280' }} /> Ingresos por sucursal
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                {ingresosAcum.length === 0 ? (
+                  <div style={{ height: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d1d5db', fontSize: 13 }}>Sin ingresos</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={150}>
+                    <BarChart data={ingresosAcum}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                      <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+                      <RechartsTip content={<CustomTip />} />
+                      <Bar dataKey="ingresos" radius={[4, 4, 0, 0]}>
+                        {ingresosAcum.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
+            {/* Tasa de cierre */}
+            <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 12, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Activity size={13} style={{ color: '#6b7280' }} /> Estado de citas
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                {estadoCitasChart.length === 0 ? (
+                  <div style={{ height: 150, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d1d5db', fontSize: 13 }}>Sin citas</div>
+                ) : (
+                  <>
+                    <div style={{ position: 'relative', width: '100%', height: 120, minWidth: 0, minHeight: 120 }}>
+                      <ResponsiveContainer width="100%" height={120} minWidth={0} minHeight={120}>
+                        <PieChart>
+                          <Pie data={estadoCitasChart} cx="50%" cy="50%" innerRadius={38} outerRadius={52} dataKey="value" paddingAngle={1} strokeWidth={0}>
+                            {estadoCitasChart.map((d, i) => <Cell key={i} fill={d.color} />)}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: '#111' }}>{kpis.tasa}%</div>
+                          <div style={{ fontSize: 9, color: '#9ca3af' }}>cierre</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px' }}>
+                      {estadoCitasChart.map((d) => (
+                        <span key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#6b7280' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+                          {d.name} <span style={{ fontWeight: 700, color: '#111' }}>{d.value}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </main>
+        )}
+
+        {/* ── TABLAS (2 columnas) ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14, marginBottom: 20 }}>
+
+          {/* Productividad médica */}
+          <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 12, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><HeartPulse size={13} style={{ color: '#6b7280' }} /> Productividad Médica</span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>{prodMedicos.length} médicos</span>
+            </div>
+            <div style={{ overflowX: 'auto' }} className="rh-scrollbar">
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
+                <thead>
+                  <tr style={{ background: '#fafafa' }}>
+                    {['Médico', 'Citas', '% Cierre', 'Ingresos', 'Honorarios'].map((h) => (
+                      <th key={h} style={{ textAlign: 'left', padding: '7px 12px', fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {prodMedicos.length === 0 && (
+                    <tr><td colSpan={5} style={{ padding: '32px 0', textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>Sin datos de productividad hoy</td></tr>
+                  )}
+                  {prodMedicos.map((m) => (
+                    <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '8px 12px' }}>
+                        <div style={{ fontWeight: 600, color: '#111', fontSize: 12 }}>{m.nombre}</div>
+                        {m.sucursal && <div style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}><MapPin size={9} /> {m.sucursal}</div>}
+                      </td>
+                      <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600, color: '#111' }}>
+                        {m.citas > 0 ? `${m.realizadas}/${m.citas}` : '—'}
+                      </td>
+                      <td style={{ padding: '8px 12px' }}>
+                        {m.tasa !== null ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <MiniBar pct={m.tasa} color={m.tasa >= 70 ? '#10b981' : m.tasa >= 40 ? '#f59e0b' : '#ef4444'} />
+                            <ScoreBadge score={m.tasa} />
+                          </div>
+                        ) : <span style={{ color: '#9ca3af', fontSize: 11 }}>—</span>}
+                      </td>
+                      <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600, color: '#111', fontVariantNumeric: 'tabular-nums' }}>{fmtMXN(m.ingresos)}</td>
+                      <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600, color: m.honorarios > 0 ? '#6d28d9' : '#9ca3af', fontVariantNumeric: 'tabular-nums' }}>{fmtMXN(m.honorarios)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Personal operativo completo */}
+          <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: 12, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Users size={13} style={{ color: '#6b7280' }} /> Personal Operativo</span>
+              <span style={{ fontSize: 10, color: '#9ca3af' }}>{personal.length} registrados · {onlineCount} online</span>
+            </div>
+            <div style={{ overflowX: 'auto', maxHeight: 360, overflowY: 'auto' }} className="rh-scrollbar">
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
+                <thead>
+                  <tr style={{ background: '#fafafa' }}>
+                    {['Nombre', 'Rol', 'Sucursal', 'Estado', 'Conectado'].map((h) => (
+                      <th key={h} style={{ textAlign: 'left', padding: '7px 12px', fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {personal.sort((a, b) => (isUserOnline(b) ? 1 : 0) - (isUserOnline(a) ? 1 : 0)).map((u) => {
+                    const online = isUserOnline(u);
+                    const mins = getConnectedMinutes(u);
+                    const status = u.statusOperativo || '';
+                    return (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '7px 12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0 }} className={online ? 'rh-dot-green' : 'rh-dot-slate'} />
+                            <span style={{ fontWeight: 600, color: '#111', fontSize: 12 }}>{u.nombre || 'Sin nombre'}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, color: '#4b5563' }}>
+                          {u.rol ? u.rol.charAt(0).toUpperCase() + u.rol.slice(1) : '—'}
+                          {status && <span style={{ marginLeft: 4, fontSize: 9, color: '#9ca3af' }}>({status})</span>}
+                        </td>
+                        <td style={{ padding: '7px 12px', fontSize: 11, color: '#6b7280' }}>
+                          {u.sucursal || u.asignacionRecurrente || '—'}
+                        </td>
+                        <td style={{ padding: '7px 12px' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: online ? '#059669' : '#9ca3af' }}>
+                            {online ? 'Online' : 'Offline'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '7px 12px', fontSize: 11, color: '#6b7280', fontVariantNumeric: 'tabular-nums' }}>
+                          {online ? mins > 0 ? fmtMinutes(mins) : '—' : timeS(u.lastSeen ? Math.floor((Date.now() - new Date(u.lastSeen).getTime()) / 60000) : null) || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* ── INVENTARIO CRÍTICO ── */}
+        {kpis.criticosItems.length > 0 && (
+          <div className="rh-fade-up" style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #fecaca', background: '#fef2f2', fontSize: 12, fontWeight: 700, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={13} /> Inventario Crítico ({kpis.criticosItems.length} items)
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {kpis.criticosItems.map((item) => {
+                const ratio = Math.min(100, Math.round((item.stock / item.minimo) * 100));
+                const barColor = item.stock === 0 ? '#ef4444' : '#f59e0b';
+                return (
+                  <div key={item.id} style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid #f3f4f6', justifyContent: 'space-between' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#111' }}>{item.nombre}</div>
+                      <div style={{ fontSize: 10, color: '#9ca3af' }}>{item.sucursal}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                        <div style={{ flex: 1, height: 4, borderRadius: 99, background: '#fee2e2', overflow: 'hidden' }}>
+                          <div style={{ width: `${ratio}%`, height: '100%', borderRadius: 99, background: barColor, transition: 'width .6s' }} />
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', whiteSpace: 'nowrap' }}>{ratio}% min</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: item.stock === 0 ? '#dc2626' : '#d97706', fontVariantNumeric: 'tabular-nums' }}>{item.stock}</div>
+                      <div style={{ fontSize: 10, color: '#9ca3af' }}>{fmtMXN(item.stock * item.costo)} · min {item.minimo}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── FOOTER ── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <span style={{ fontSize: 10, color: '#9ca3af', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Sparkles size={11} />
+            Datos en tiempo real · Panel unificado de Recursos Humanos
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#9ca3af' }}>
+            <span>{personal.length} empleados</span>
+            <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#d1d5db' }} />
+            <span>{fmtMXN(kpis.valorInv)} inventario</span>
+            <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#d1d5db' }} />
+            <span>{ingresosPorSuc.length} sucursales</span>
+          </div>
+        </div>
+
       </div>
     </>
   );
 };
 
-export default DashboardAdmin;
+export default DashboardRH;

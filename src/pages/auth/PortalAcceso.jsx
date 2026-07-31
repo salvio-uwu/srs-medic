@@ -527,7 +527,7 @@ const getRoleConfig = (rol) => {
             {/* Selector de ubicación */}
             {catalogosReady && (
               <div style={{ marginBottom: 16 }}>
-                <LocationSelector accentColor={config.color} />
+                <LocationSelector accentColor={config.color} required />
               </div>
             )}
 

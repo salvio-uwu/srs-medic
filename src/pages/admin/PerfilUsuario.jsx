@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { db, storage, auth } from '../../config/firebase';
 import {
   doc, updateDoc, collection, query, where, orderBy,
@@ -79,6 +79,8 @@ const formatLastSeen = (value) => {
 const PerfilUsuario = () => {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const backTo = location.state?.from || '/admin/usuarios';
   const isMobile = useIsMobile();
 
   const [userData, setUserData] = useState(null);
@@ -216,7 +218,7 @@ const PerfilUsuario = () => {
     setTimeout(() => { window.print(); }, 400);
   };
 
-  const handleBack = () => navigate('/admin/usuarios');
+  const handleBack = () => navigate(backTo);
 
   const TABS = [
     { key: 'info', label: 'Informacion', icon: User },
@@ -242,7 +244,9 @@ const PerfilUsuario = () => {
       <div style={{ maxWidth: 1024, margin: '0 auto', padding: isMobile ? '20px 16px 40px' : '32px 28px 48px', textAlign: 'center' }}>
         <User size={36} style={{ color: '#d1d5db', marginBottom: 16 }} />
         <p style={{ fontSize: 15, fontWeight: 600, color: '#4b5563', margin: 0 }}>Usuario no encontrado</p>
-        <button onClick={handleBack} style={{ marginTop: 16, border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 18px', fontSize: 12, fontWeight: 600, color: '#4b5563', background: '#fff', cursor: 'pointer' }}>Volver al directorio</button>
+        <button onClick={handleBack} style={{ marginTop: 16, border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 18px', fontSize: 12, fontWeight: 600, color: '#4b5563', background: '#fff', cursor: 'pointer' }}>
+          {backTo.includes('supervision') ? 'Volver a Supervisión' : 'Volver al directorio'}
+        </button>
       </div>
     );
   }

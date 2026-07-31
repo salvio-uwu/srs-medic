@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Save, User, Activity, ArrowLeft, Thermometer, Heart, 
-  Wind, CheckCircle, AlertCircle, XCircle, FlaskConical, Trash2, Plus, Stethoscope
+  Save, Activity, ArrowLeft, CheckCircle, XCircle, FlaskConical, Plus, Stethoscope
 } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
 import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
@@ -16,7 +15,7 @@ const Triage = () => {
 
   // --- ESTADOS ---
   const [signos, setSignos] = useState({
-    peso: '', talla: '', temp: '', fc: '', fr: '', ta: '', spo2: '', imc: ''
+    peso: '', talla: '', temp: '', fc: '', fr: '', ta: '', spo2: '', glucosa: '', imc: ''
   });
 
   // Alergias estructuradas (igual que expediente clínico)
@@ -247,290 +246,579 @@ const Triage = () => {
     setShowKeyboard(true);
   };
 
-  const inputBase = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50 transition-all placeholder:text-slate-300";
+  const inputBase = {
+    width: '100%',
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 6,
+    padding: '10px 12px',
+    fontSize: 13,
+    fontWeight: 500,
+    color: '#111',
+    outline: 'none',
+    fontFamily: 'inherit',
+  };
 
-  /* ── Bloque reutilizable: cabecera de sección ── */
-  const sectionBg = { blue: 'bg-blue-50', rose: 'bg-rose-50' };
-  const SectionHeader = ({ icon, title, color = 'blue', right }) => (
-    <div className="flex items-center justify-between mb-3">
-      <div className="flex items-center gap-2">
-        <div className={`w-7 h-7 rounded-lg ${sectionBg[color] || 'bg-blue-50'} flex items-center justify-center`}>
-          {icon}
-        </div>
-        <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">{title}</span>
-      </div>
-      {right}
-    </div>
-  );
-
-  /* ── Bloque reutilizable: checkbox "negados" ── */
   const NegadosToggle = ({ checked, onChange, label }) => (
-    <div
+    <button
+      type="button"
       onClick={() => onChange(!checked)}
-      className="flex items-center gap-2.5 cursor-pointer bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-3 select-none active:scale-[0.98] transition-transform"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        width: '100%',
+        cursor: 'pointer',
+        background: checked ? '#fafafa' : '#fff',
+        border: `1px solid ${checked ? '#111' : '#e5e7eb'}`,
+        borderRadius: 6,
+        padding: '10px 12px',
+        marginBottom: 12,
+        textAlign: 'left',
+        fontFamily: 'inherit',
+      }}
     >
-      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all shrink-0 ${checked ? 'bg-amber-500 border-amber-500' : 'border-slate-300 bg-white'}`}>
-        {checked && <CheckCircle size={13} className="text-white" strokeWidth={3}/>}
+      <div style={{
+        width: 18,
+        height: 18,
+        borderRadius: 4,
+        border: `1.5px solid ${checked ? '#111' : '#d1d5db'}`,
+        background: checked ? '#111' : '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}>
+        {checked && <CheckCircle size={11} color="#fff" strokeWidth={3} />}
       </div>
       <div>
-        <span className="text-xs font-bold text-amber-800">Preguntados y negados</span>
-        <span className="text-[10px] text-amber-600 block leading-tight">{label}</span>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#111' }}>Preguntados y negados</div>
+        <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.3 }}>{label}</div>
       </div>
-    </div>
+    </button>
   );
 
-  /* ── Bloque reutilizable: chip eliminable ── */
-  const chipColors = {
-    rose: 'bg-rose-50 border-rose-100 text-rose-300 hover:bg-rose-100 hover:text-rose-600',
-    blue: 'bg-blue-50 border-blue-100 text-blue-300 hover:bg-blue-100 hover:text-blue-600',
+  const Chip = ({ text, onRemove }) => (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      background: '#fafafa',
+      border: '1px solid #e5e7eb',
+      borderRadius: 6,
+      padding: '4px 6px 4px 10px',
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#374151',
+    }}>
+      {text}
+      <button
+        type="button"
+        onClick={onRemove}
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 4,
+          border: 'none',
+          background: 'transparent',
+          color: '#9ca3af',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+        }}
+      >
+        <XCircle size={13} />
+      </button>
+    </span>
+  );
+
+  const vitales = [
+    { label: 'Peso', unit: 'kg', key: 'peso', ph: '0.0' },
+    { label: 'Talla', unit: 'm', key: 'talla', ph: '1.70' },
+    { label: 'Temp.', unit: '°C', key: 'temp', ph: '36.5' },
+    { label: 'T/A', unit: 'mmHg', key: 'ta', ph: '120/80' },
+    { label: 'F.C.', unit: 'lpm', key: 'fc', ph: '80' },
+    { label: 'F.R.', unit: 'rpm', key: 'fr', ph: '18' },
+    { label: 'Sat. O₂', unit: '%', key: 'spo2', ph: '98' },
+    { label: 'Glucosa', unit: 'mg/dL', key: 'glucosa', ph: '100' },
+    { label: 'IMC', unit: '', key: 'imc', ph: '—', readOnly: true },
+  ];
+
+  const cardStyle = {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    overflow: 'hidden',
   };
-  const Chip = ({ text, onRemove, color = 'rose' }) => {
-    const c = chipColors[color] || chipColors.rose;
-    const [bg, border, ...btnClasses] = c.split(' ');
-    return (
-      <div className={`inline-flex items-center gap-1.5 ${bg} border ${border} rounded-full pl-3 pr-1.5 py-1`}>
-        <span className="text-xs font-semibold text-slate-700">{text}</span>
-        <button onClick={onRemove} className={`w-5 h-5 rounded-full flex items-center justify-center ${btnClasses.join(' ')} transition-all`}>
-          <XCircle size={13}/>
-        </button>
-      </div>
-    );
+
+  const cardHeaderStyle = {
+    padding: '12px 16px',
+    borderBottom: '1px solid #e5e7eb',
+    background: '#fafafa',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
   };
 
   return (
-    <div className="min-h-[100dvh] bg-slate-50 flex flex-col font-sans">
-
-      {/* ═══════════ HEADER ═══════════ */}
-      <header className="shrink-0 bg-white border-b border-slate-100 px-4 sm:px-6 py-3 flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="p-2 -ml-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition-colors active:scale-95">
-          <ArrowLeft size={20}/>
+    <div style={{
+      maxWidth: 1280,
+      margin: '0 auto',
+      padding: '20px 16px 48px',
+      paddingBottom: kbHeight ? kbHeight + 48 : undefined,
+      minHeight: '100%',
+    }}>
+      {/* ── CABECERA ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              marginBottom: 6,
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#6b7280',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            <ArrowLeft size={12} /> Volver
+          </button>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif', margin: 0 }}>
+            Triage
+          </h1>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
+            Captura de signos vitales, alergias y padecimientos
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={guardarTriage}
+          disabled={loading}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            background: loading ? '#9ca3af' : '#111',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            padding: '10px 18px',
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          {loading ? (
+            <>
+              <span style={{
+                width: 14,
+                height: 14,
+                border: '2px solid rgba(255,255,255,0.3)',
+                borderTopColor: '#fff',
+                borderRadius: '50%',
+                display: 'inline-block',
+                animation: 'spin 0.7s linear infinite',
+              }} />
+              Guardando...
+            </>
+          ) : (
+            <><Save size={14} /> {editMode ? 'Guardar cambios' : 'Finalizar triage'}</>
+          )}
         </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-base sm:text-lg font-bold text-slate-800 leading-tight truncate">Triage Enfermería</h1>
-          <p className="text-[9px] font-bold text-blue-500 uppercase tracking-widest">Captura de signos</p>
-        </div>
-      </header>
-
-      {/* ═══════════ BARRA PACIENTE ═══════════ */}
-      <div className="shrink-0 bg-gradient-to-r from-blue-50 via-white to-blue-50 border-b border-slate-100 px-4 sm:px-6 py-3 flex items-center gap-3">
-        <AvatarPaciente sexo={pacienteMeta.sexo} fechaNacimiento={pacienteMeta.fechaNacimiento} size="sm" className="shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Paciente</p>
-          <p className="text-sm font-bold text-slate-800 truncate">{pacienteNombreFinal || 'Sin paciente seleccionado'}</p>
-        </div>
       </div>
 
-      {/* BARRA DE ERROR */}
       {errorMsg && (
-        <div className="shrink-0 bg-red-50 px-4 sm:px-6 py-2.5 border-b border-red-100 flex items-center gap-2">
-          <XCircle size={16} className="text-red-500 shrink-0" />
-          <p className="text-xs font-semibold text-red-600 flex-1">{errorMsg}</p>
-          <button onClick={() => setErrorMsg('')} className="text-red-400 hover:text-red-700 font-bold text-[10px] shrink-0">CERRAR</button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          marginBottom: 16,
+          padding: '10px 14px',
+          background: '#fff',
+          border: '1px solid #fecaca',
+          borderRadius: 8,
+        }}>
+          <XCircle size={16} color="#dc2626" style={{ flexShrink: 0 }} />
+          <p style={{ flex: 1, margin: 0, fontSize: 13, fontWeight: 600, color: '#dc2626' }}>{errorMsg}</p>
+          <button
+            type="button"
+            onClick={() => setErrorMsg('')}
+            style={{ border: 'none', background: 'transparent', fontSize: 11, fontWeight: 700, color: '#9ca3af', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Cerrar
+          </button>
         </div>
       )}
 
-      {/* ═══════════ CONTENIDO PRINCIPAL ═══════════ */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 space-y-4" style={{ paddingBottom: kbHeight ? kbHeight + 16 : undefined }}>
-
-          {/* ── SIGNOS VITALES ── */}
-          <section>
-            <SectionHeader
-              icon={<Activity size={15} className="text-blue-500"/>}
-              title="Exploración Física"
-            />
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-              {[
-                { label: 'Peso', unit: 'kg', key: 'peso', ph: '0.0', icon: null },
-                { label: 'Talla', unit: 'm', key: 'talla', ph: '1.70', icon: null },
-                { label: 'Temp.', unit: '°C', key: 'temp', ph: '36.5', icon: <Thermometer size={13} className="text-rose-400"/> },
-                { label: 'T/A', unit: 'mmHg', key: 'ta', ph: '120/80', icon: <Heart size={13} className="text-rose-400"/> },
-                { label: 'F.C.', unit: 'lpm', key: 'fc', ph: '80', icon: <Activity size={13} className="text-blue-400"/> },
-                { label: 'F.R.', unit: 'rpm', key: 'fr', ph: '18', icon: <Wind size={13} className="text-blue-400"/> },
-                { label: 'Sat. O₂', unit: '%', key: 'spo2', ph: '98', icon: null },
-                { label: 'IMC', unit: '', key: 'imc', ph: '—', readOnly: true },
-              ].map(f => (
-                <div key={f.key} className={`bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 flex flex-col items-center ${f.readOnly ? 'bg-slate-50/80' : ''}`}>
-                  <div className="w-full flex items-center justify-between mb-2">
-                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wide">{f.label}</span>
-                    {f.icon}
-                  </div>
-                  <input
-                    type="text"
-                    inputMode="none"
-                    readOnly={f.readOnly}
-                    placeholder={f.ph}
-                    value={signos[f.key]}
-                    onFocus={() => handleFieldFocus(f.key)}
-                    onChange={e => setSignos({ ...signos, [f.key]: e.target.value })}
-                    className={`w-full text-center text-xl sm:text-2xl font-bold outline-none bg-transparent ${f.readOnly ? 'text-slate-400' : 'text-slate-800'} placeholder:text-slate-200`}
-                  />
-                  {f.unit && <span className="text-[9px] text-slate-400 font-medium mt-0.5">{f.unit}</span>}
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* ── GRID: ALERGIAS + ENFERMEDADES (2 cols en tablet+) ── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-            {/* ── ALERGIAS ── */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col">
-              <div className="p-4 pb-0">
-                <SectionHeader
-                  icon={<FlaskConical size={15} className="text-rose-500"/>}
-                  title="Alergias"
-                  color="rose"
-                />
-                <NegadosToggle
-                  checked={alergias.preguntados_y_negados}
-                  onChange={v => setAlergias(prev => ({ ...prev, preguntados_y_negados: v }))}
-                  label="El paciente niega cualquier alergia"
-                />
-              </div>
-
-              {!alergias.preguntados_y_negados && (
-                <div className="px-4 pb-4 flex flex-col gap-3 flex-1">
-                  {/* Toggle Categoría / Sustancia */}
-                  <div className="flex bg-slate-100 rounded-xl p-1 self-start">
-                    <button
-                      onClick={() => setAlergias(prev => ({ ...prev, buscar_sustancia: false }))}
-                      className={`px-3.5 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!alergias.buscar_sustancia ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'}`}
-                    >Categoría</button>
-                    <button
-                      onClick={() => setAlergias(prev => ({ ...prev, buscar_sustancia: true }))}
-                      className={`px-3.5 py-1.5 rounded-lg text-[11px] font-bold transition-all ${alergias.buscar_sustancia ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'}`}
-                    >Sustancia</button>
-                  </div>
-
-                  {/* Input + Agregar */}
-                  <div className="flex gap-2">
-                    {!alergias.buscar_sustancia ? (
-                      <select className={`${inputBase} flex-1`} value={tempAlergia} onChange={e => setTempAlergia(e.target.value)}>
-                        <option value="">Seleccionar categoría...</option>
-                        {CATS_ALERGIAS.map(c => <option key={c}>{c}</option>)}
-                      </select>
-                    ) : (
-                      <input className={`${inputBase} flex-1`} placeholder="Nombre de sustancia..." value={tempAlergia} onChange={e => setTempAlergia(e.target.value)} />
-                    )}
-                    <button
-                      onClick={() => { if (tempAlergia.trim()) { setAlergias(prev => ({ ...prev, lista: [...prev.lista, { sustancia: tempAlergia.trim() }] })); setTempAlergia(''); } }}
-                      className="shrink-0 h-[46px] w-[46px] bg-rose-500 text-white rounded-xl flex items-center justify-center hover:bg-rose-600 active:scale-95 transition-all shadow-sm"
-                    ><Plus size={18}/></button>
-                  </div>
-
-                  {/* Lista Chips */}
-                  <div className="flex flex-wrap gap-1.5 min-h-[32px]">
-                    {alergias.lista.map((a, i) => (
-                      <Chip key={i} text={a.sustancia} color="rose" onRemove={() => setAlergias(prev => ({ ...prev, lista: prev.lista.filter((_, idx) => idx !== i) }))} />
-                    ))}
-                    {alergias.lista.length === 0 && (
-                      <span className="text-[11px] text-slate-300 font-medium py-1">Sin alergias registradas</span>
-                    )}
-                  </div>
-
-                  {/* Otros */}
-                  <textarea
-                    value={alergias.otros}
-                    onChange={e => setAlergias(prev => ({ ...prev, otros: e.target.value }))}
-                    className={`${inputBase} h-16 resize-none text-xs`}
-                    placeholder="Otras alergias no listadas..."
-                  />
-                </div>
-              )}
-            </section>
-
-            {/* ── ENFERMEDADES ── */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col">
-              <div className="p-4 pb-0">
-                <SectionHeader
-                  icon={<Stethoscope size={15} className="text-blue-500"/>}
-                  title="Enfermedades"
-                />
-                <NegadosToggle
-                  checked={enfermedades.preguntados_y_negados}
-                  onChange={v => setEnfermedades(prev => ({ ...prev, preguntados_y_negados: v }))}
-                  label="El paciente niega padecer alguna enfermedad"
-                />
-              </div>
-
-              {!enfermedades.preguntados_y_negados && (
-                <div className="px-4 pb-4 flex flex-col gap-3 flex-1">
-                  {/* Input + Agregar */}
-                  <div className="flex gap-2">
-                    <select className={`${inputBase} flex-1`} value={tempEnfermedad} onChange={e => setTempEnfermedad(e.target.value)}>
-                      <option value="">Seleccionar enfermedad...</option>
-                      {ENFERMEDADES_COMUNES.filter(e => !enfermedades.lista.includes(e)).map(e => <option key={e}>{e}</option>)}
-                    </select>
-                    <button
-                      onClick={() => { if (tempEnfermedad.trim()) { setEnfermedades(prev => ({ ...prev, lista: [...prev.lista, tempEnfermedad.trim()] })); setTempEnfermedad(''); } }}
-                      className="shrink-0 h-[46px] w-[46px] bg-blue-500 text-white rounded-xl flex items-center justify-center hover:bg-blue-600 active:scale-95 transition-all shadow-sm"
-                    ><Plus size={18}/></button>
-                  </div>
-
-                  {/* Lista Chips */}
-                  <div className="flex flex-wrap gap-1.5 min-h-[32px]">
-                    {enfermedades.lista.map((enf, i) => (
-                      <Chip key={i} text={enf} color="blue" onRemove={() => setEnfermedades(prev => ({ ...prev, lista: prev.lista.filter((_, idx) => idx !== i) }))} />
-                    ))}
-                    {enfermedades.lista.length === 0 && (
-                      <span className="text-[11px] text-slate-300 font-medium py-1">Sin enfermedades registradas</span>
-                    )}
-                  </div>
-
-                  {/* Otros */}
-                  <textarea
-                    value={enfermedades.otros}
-                    onChange={e => setEnfermedades(prev => ({ ...prev, otros: e.target.value }))}
-                    className={`${inputBase} h-16 resize-none text-xs`}
-                    placeholder="Otras enfermedades o padecimientos..."
-                  />
-                </div>
-              )}
-            </section>
-
+      {/* ── PACIENTE ── */}
+      <div style={{ ...cardStyle, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+        <AvatarPaciente sexo={pacienteMeta.sexo} fechaNacimiento={pacienteMeta.fechaNacimiento} size="sm" className="shrink-0" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Paciente
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pacienteNombreFinal || 'Sin paciente seleccionado'}
           </div>
         </div>
-      </main>
+      </div>
 
-      {/* ═══════════ FOOTER FIJO ═══════════ */}
-      <footer className="shrink-0 bg-white border-t border-slate-100 px-4 sm:px-6 py-3 flex justify-end">
-        <button
-          onClick={guardarTriage}
-          disabled={loading}
-          className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 hover:bg-blue-700 active:scale-[0.97] transition-all flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none w-full sm:w-auto justify-center"
+      {/* ── SIGNOS VITALES ── */}
+      <div style={{ ...cardStyle, marginBottom: 16 }}>
+        <div style={cardHeaderStyle}>
+          <Activity size={15} color="#6b7280" />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#111' }}>Exploración física</div>
+            <div style={{ fontSize: 11, color: '#9ca3af' }}>Signos vitales y antropometría</div>
+          </div>
+        </div>
+        <div
+          className="triage-vitales-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+            gap: 8,
+            padding: 12,
+          }}
         >
-          {loading ? (
-            <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Guardando...</span>
-          ) : (
-            <><Save size={16}/> {editMode ? 'Guardar Cambios' : 'Finalizar Triage'}</>
-          )}
-        </button>
-      </footer>
+          {vitales.map((f) => {
+            const isActive = activeField === f.key;
+            return (
+              <label
+                key={f.key}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  margin: 0,
+                  cursor: f.readOnly ? 'default' : 'text',
+                }}
+              >
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: '#9ca3af',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 4,
+                }}>
+                  {f.label}
+                  {f.unit ? <span style={{ fontWeight: 600, color: '#d1d5db' }}>{f.unit}</span> : null}
+                </span>
+                <input
+                  type="text"
+                  inputMode="none"
+                  readOnly={f.readOnly}
+                  placeholder={f.ph}
+                  value={signos[f.key]}
+                  onFocus={() => handleFieldFocus(f.key)}
+                  onChange={(e) => setSignos({ ...signos, [f.key]: e.target.value })}
+                  style={{
+                    width: '100%',
+                    height: 36,
+                    padding: '0 10px',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: f.readOnly ? '#6b7280' : '#111',
+                    background: f.readOnly ? '#fafafa' : '#fff',
+                    border: `1px solid ${isActive ? '#111' : '#e5e7eb'}`,
+                    borderRadius: 6,
+                    outline: 'none',
+                    fontFamily: 'Sora, system-ui, sans-serif',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </label>
+            );
+          })}
+        </div>
+        <style>{`
+          @media (max-width: 900px) {
+            .triage-vitales-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+          }
+          @media (max-width: 520px) {
+            .triage-vitales-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          }
+        `}</style>
+      </div>
 
-      {/* ═══════════ MODAL ÉXITO ═══════════ */}
-      {showSuccess && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => navigate('/enfermeria/dashboard')}></div>
-          <div className="relative bg-white rounded-2xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl">
-            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-5">
-              <CheckCircle size={32} strokeWidth={2.5} />
+      {/* ── ALERGIAS + ENFERMEDADES ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+        {/* Alergias */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <FlaskConical size={15} color="#6b7280" />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#111' }}>Alergias</div>
+              <div style={{ fontSize: 11, color: '#9ca3af' }}>Sustancias y categorías</div>
             </div>
-            <h2 className="text-xl font-bold text-slate-800">¡Listo!</h2>
-            <p className="text-sm text-slate-500 font-medium mb-6 mt-2">
+          </div>
+          <div style={{ padding: 16 }}>
+            <NegadosToggle
+              checked={alergias.preguntados_y_negados}
+              onChange={(v) => setAlergias((prev) => ({ ...prev, preguntados_y_negados: v }))}
+              label="El paciente niega cualquier alergia"
+            />
+
+            {!alergias.preguntados_y_negados && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'inline-flex', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', padding: 3, alignSelf: 'flex-start' }}>
+                  <button
+                    type="button"
+                    onClick={() => setAlergias((prev) => ({ ...prev, buscar_sustancia: false }))}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      border: 'none',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      color: !alergias.buscar_sustancia ? '#fff' : '#4b5563',
+                      background: !alergias.buscar_sustancia ? '#111' : 'transparent',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    Categoría
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAlergias((prev) => ({ ...prev, buscar_sustancia: true }))}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      border: 'none',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      color: alergias.buscar_sustancia ? '#fff' : '#4b5563',
+                      background: alergias.buscar_sustancia ? '#111' : 'transparent',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    Sustancia
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {!alergias.buscar_sustancia ? (
+                    <select
+                      style={{ ...inputBase, flex: 1 }}
+                      value={tempAlergia}
+                      onChange={(e) => setTempAlergia(e.target.value)}
+                    >
+                      <option value="">Seleccionar categoría...</option>
+                      {CATS_ALERGIAS.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      style={{ ...inputBase, flex: 1 }}
+                      placeholder="Nombre de sustancia..."
+                      value={tempAlergia}
+                      onChange={(e) => setTempAlergia(e.target.value)}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (tempAlergia.trim()) {
+                        setAlergias((prev) => ({ ...prev, lista: [...prev.lista, { sustancia: tempAlergia.trim() }] }));
+                        setTempAlergia('');
+                      }
+                    }}
+                    style={{
+                      width: 42,
+                      height: 42,
+                      flexShrink: 0,
+                      background: '#111',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 28 }}>
+                  {alergias.lista.map((a, i) => (
+                    <Chip
+                      key={i}
+                      text={a.sustancia}
+                      onRemove={() => setAlergias((prev) => ({ ...prev, lista: prev.lista.filter((_, idx) => idx !== i) }))}
+                    />
+                  ))}
+                  {alergias.lista.length === 0 && (
+                    <span style={{ fontSize: 12, color: '#d1d5db', fontWeight: 500 }}>Sin alergias registradas</span>
+                  )}
+                </div>
+
+                <textarea
+                  value={alergias.otros}
+                  onChange={(e) => setAlergias((prev) => ({ ...prev, otros: e.target.value }))}
+                  style={{ ...inputBase, height: 64, resize: 'none', fontSize: 12 }}
+                  placeholder="Otras alergias no listadas..."
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Enfermedades */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <Stethoscope size={15} color="#6b7280" />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#111' }}>Enfermedades</div>
+              <div style={{ fontSize: 11, color: '#9ca3af' }}>Padecimientos del paciente</div>
+            </div>
+          </div>
+          <div style={{ padding: 16 }}>
+            <NegadosToggle
+              checked={enfermedades.preguntados_y_negados}
+              onChange={(v) => setEnfermedades((prev) => ({ ...prev, preguntados_y_negados: v }))}
+              label="El paciente niega padecer alguna enfermedad"
+            />
+
+            {!enfermedades.preguntados_y_negados && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select
+                    style={{ ...inputBase, flex: 1 }}
+                    value={tempEnfermedad}
+                    onChange={(e) => setTempEnfermedad(e.target.value)}
+                  >
+                    <option value="">Seleccionar enfermedad...</option>
+                    {ENFERMEDADES_COMUNES.filter((e) => !enfermedades.lista.includes(e)).map((e) => (
+                      <option key={e}>{e}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (tempEnfermedad.trim()) {
+                        setEnfermedades((prev) => ({ ...prev, lista: [...prev.lista, tempEnfermedad.trim()] }));
+                        setTempEnfermedad('');
+                      }
+                    }}
+                    style={{
+                      width: 42,
+                      height: 42,
+                      flexShrink: 0,
+                      background: '#111',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 28 }}>
+                  {enfermedades.lista.map((enf, i) => (
+                    <Chip
+                      key={i}
+                      text={enf}
+                      onRemove={() => setEnfermedades((prev) => ({ ...prev, lista: prev.lista.filter((_, idx) => idx !== i) }))}
+                    />
+                  ))}
+                  {enfermedades.lista.length === 0 && (
+                    <span style={{ fontSize: 12, color: '#d1d5db', fontWeight: 500 }}>Sin enfermedades registradas</span>
+                  )}
+                </div>
+
+                <textarea
+                  value={enfermedades.otros}
+                  onChange={(e) => setEnfermedades((prev) => ({ ...prev, otros: e.target.value }))}
+                  style={{ ...inputBase, height: 64, resize: 'none', fontSize: 12 }}
+                  placeholder="Otras enfermedades o padecimientos..."
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── MODAL ÉXITO ── */}
+      {showSuccess && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div
+            onClick={() => navigate('/enfermeria/dashboard')}
+            style={{ position: 'absolute', inset: 0, background: 'rgba(15, 23, 42, 0.4)' }}
+          />
+          <div style={{
+            position: 'relative',
+            background: '#fff',
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: 28,
+            maxWidth: 360,
+            width: '100%',
+            textAlign: 'center',
+          }}>
+            <div style={{
+              width: 52,
+              height: 52,
+              background: '#f0fdf4',
+              color: '#16a34a',
+              borderRadius: 8,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
+            }}>
+              <CheckCircle size={26} strokeWidth={2.5} />
+            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif', margin: 0 }}>
+              Listo
+            </h2>
+            <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 20px' }}>
               {editMode ? 'Triage actualizado correctamente.' : 'Información registrada correctamente.'}
             </p>
             <button
+              type="button"
               onClick={() => navigate('/enfermeria/dashboard')}
-              className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-[0.97] transition-all"
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                background: '#111',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
             >
-              Volver al Dashboard
+              Volver a la agenda
             </button>
           </div>
         </div>
       )}
 
-      {/* ═══════════ TECLADO VIRTUAL ═══════════ */}
       <VirtualKeyboard
         visible={showKeyboard}
         onClose={() => { setShowKeyboard(false); setActiveField(null); setKbHeight(0); }}
@@ -538,6 +826,8 @@ const Triage = () => {
         onKeyPress={handleKeyPress}
         onHeightChange={setKbHeight}
       />
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };

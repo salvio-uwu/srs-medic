@@ -35,6 +35,7 @@ import {
   parseDocumentHtmlToBlocks,
   buildTemplateContext
 } from '../utils/expedienteElectronico';
+import { enrichConsultasWithIssuedPdfImages } from '../utils/pdfPageImages';
 
 // ─── Sub-componentes ────────────────────────────────────────────────────────
 
@@ -519,16 +520,22 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
     return () => { cancelled = true; };
   }, [pacienteId]);
 
-  const pdfDocument = useMemo(() => (
+  const buildExpedientePdfElement = (consultasData, qrDataUrl = '') => (
     <ExpedienteElectronicoPDF
       paciente={bulletproofSanitize(pxDoc)}
       antecedentes={bulletproofSanitize(antecedentes)}
-      consultas={bulletproofSanitize(consultas)}
+      consultas={bulletproofSanitize(consultasData)}
       pxInfo={bulletproofSanitize(pxInfo)}
       generadoPor={generadoPor}
       folio={folio}
+      qrDataUrl={qrDataUrl}
     />
-  ), [pxDoc, antecedentes, consultas, pxInfo, generadoPor, folio]);
+  );
+
+  const renderExpedientePdfBlob = async (qrDataUrl = '') => {
+    const consultasConPdf = await enrichConsultasWithIssuedPdfImages(consultas);
+    return pdf(buildExpedientePdfElement(consultasConPdf, qrDataUrl)).toBlob();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -537,7 +544,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
       if (previewUrl) return;
       setPreviewLoading(true);
       try {
-        const blob = await pdf(pdfDocument).toBlob();
+        const blob = await renderExpedientePdfBlob();
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
         if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -551,7 +558,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
     };
     build();
     return () => { cancelled = true; };
-  }, [panel, loading, pdfDocument, previewUrl]);
+  }, [panel, loading, consultas, previewUrl, pxDoc, antecedentes, pxInfo, generadoPor, folio]);
 
   useEffect(() => {
     if (previewUrlRef.current) {
@@ -568,7 +575,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
   const descargarPdf = async () => {
     setDownloading(true);
     try {
-      const blob = await pdf(pdfDocument).toBlob();
+      const blob = await renderExpedientePdfBlob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -597,19 +604,7 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
         errorCorrectionLevel: 'M'
       });
 
-      const pdfConQR = (
-        <ExpedienteElectronicoPDF
-          paciente={bulletproofSanitize(pxDoc)}
-          antecedentes={bulletproofSanitize(antecedentes)}
-          consultas={bulletproofSanitize(consultas)}
-          pxInfo={bulletproofSanitize(pxInfo)}
-          generadoPor={generadoPor}
-          folio={folio}
-          qrDataUrl={qrDataUrl}
-        />
-      );
-
-      const blob = await pdf(pdfConQR).toBlob();
+      const blob = await renderExpedientePdfBlob(qrDataUrl);
       setSharePdfBlob(blob);
       setShareToken(token);
       setShareUrl(shareUrl);
@@ -621,8 +616,22 @@ const ExpedienteElectronicoModal = ({ paciente, onClose }) => {
   };
 
   const editarExpediente = () => {
-    navigate('/expediente-electronico', {
-      state: { pacienteId, pacienteNombre: nombre, openedFrom: 'admin_pacientes' }
+    const rol = String(user?.rol || '').toLowerCase();
+    const esEnfermeria = ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'].includes(rol);
+    const esMedico = ['medico', 'doctor'].includes(rol);
+    const path = esEnfermeria
+      ? '/enfermeria/expediente'
+      : esMedico
+        ? '/doctor/expediente'
+        : '/expediente-electronico';
+
+    navigate(path, {
+      state: {
+        pacienteId,
+        pacienteNombre: nombre,
+        openedFrom: esEnfermeria ? 'enfermeria_directorio' : 'admin_pacientes',
+        from: '/pacientes',
+      },
     });
   };
 

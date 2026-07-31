@@ -1,21 +1,21 @@
 // src/pages/enfermeria/DashboardJefaEnfermeria.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Thermometer, Droplet, Droplets,
-  CheckCircle2, Search, LogOut,
+  CheckCircle2, Search,
   Printer, Clock, Sparkles, X, Package, ShieldAlert,
   ChevronDown, Activity, Calendar,
-  ChevronRight, Clipboard, Shield, MapPin, LayoutDashboard,
-  ClipboardList, Stethoscope, Plus, Zap, Filter, Eye, ChevronUp, Gauge, CalendarX
+  Clipboard, Shield, MapPin, LayoutDashboard,
+  ClipboardList, Stethoscope, Plus, Filter, Eye, ChevronUp, ChevronRight, Gauge, CalendarX
 } from 'lucide-react';
 import { db } from '../../config/firebase';
-import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc, updateDoc, addDoc, serverTimestamp, increment } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import logoImg from '../../assets/logo_azul.png';
 import FiltroBitacorasJefaturaModal from '../../components/FiltroBitacorasJefaturaModal';
 import CatalogoPedidoManager from '../../components/CatalogoPedidoManager';
-import BitacoraCarroRojo from './BitacoraCarroRojo';
+import TraspasoSucursalModal from '../../components/TraspasoSucursalModal';
 import CarroRojoJefatura from './CarroRojoJefatura';
 import AlmacenJefatura from './AlmacenJefatura';
 import KritJefatura from './KritJefatura';
@@ -62,16 +62,6 @@ const VIEW_META = {
   alertas:      { label: 'Centro de Alertas',  icon: AlertTriangle,   color: 'rose'   },
 };
 
-const COLOR_MAP = {
-  blue:   { pill:'bg-blue-50 text-blue-600',     dot:'bg-blue-500',   active:'bg-blue-50 text-blue-700 border border-blue-200 shadow-sm', mobileActive:'text-blue-600 bg-blue-50' },
-  cyan:   { pill:'bg-cyan-50 text-cyan-600',     dot:'bg-cyan-500',   active:'bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-sm', mobileActive:'text-cyan-600 bg-cyan-50' },
-  teal:   { pill:'bg-teal-50 text-teal-600',     dot:'bg-teal-500',   active:'bg-teal-50 text-teal-700 border border-teal-200 shadow-sm', mobileActive:'text-teal-600 bg-teal-50' },
-  violet: { pill:'bg-violet-50 text-violet-600', dot:'bg-violet-500', active:'bg-violet-50 text-violet-700 border border-violet-200 shadow-sm', mobileActive:'text-violet-600 bg-violet-50' },
-  indigo: { pill:'bg-indigo-50 text-indigo-600', dot:'bg-indigo-500', active:'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm', mobileActive:'text-indigo-600 bg-indigo-50' },
-  amber:  { pill:'bg-amber-50 text-amber-600',   dot:'bg-amber-500',  active:'bg-amber-50 text-amber-700 border border-amber-200 shadow-sm', mobileActive:'text-amber-600 bg-amber-50' },
-  rose:   { pill:'bg-rose-50 text-rose-600',     dot:'bg-rose-500',   active:'bg-rose-50 text-rose-700 border border-rose-200 shadow-sm', mobileActive:'text-rose-600 bg-rose-50' },
-};
-
 const Badge = ({ children, variant = 'default' }) => {
   const styles = {
     default:    'bg-slate-50 text-slate-600 border border-slate-200',
@@ -90,37 +80,59 @@ const Check = ({ ok }) => ok
   ? <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-teal-50 text-teal-600 border border-teal-100 font-black text-xs shadow-sm">✓</span>
   : <span className="text-slate-300 font-bold">—</span>;
 
-const StatusWidget = ({ title, done, time }) => (
-  <div className={`p-4 rounded-2xl border transition-all h-full flex flex-col justify-center ${done ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white border-rose-200 shadow-sm'}`}>
-    <div className="flex justify-between items-start mb-2">
-      <span className={`text-[10px] font-black uppercase tracking-widest ${done ? 'text-emerald-600' : 'text-rose-500'}`}>{title}</span>
-      {done ? <CheckCircle2 size={16} className="text-emerald-500"/> : <AlertTriangle size={16} className="text-rose-500 animate-pulse"/>}
-    </div>
-    <p className={`text-sm font-bold ${done ? 'text-emerald-800' : 'text-slate-700'}`}>{done ? 'Completado' : 'Pendiente'}</p>
-    <p className={`text-[10px] mt-1 font-bold ${done ? 'text-emerald-600' : 'text-slate-400'}`}>Requisito: {time}</p>
-  </div>
-);
+const sumCantidadFarmacia = (regs = []) =>
+  regs.reduce((acc, r) => acc + (Number(r?.detalles?.cantidad) || 0), 0);
+
+const normalizeMovimientoArea = (area = '') => {
+  const a = String(area || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  if (a.startsWith('recepcion')) return 'Recepción';
+  if (a.startsWith('entrada')) return 'Entrada';
+  if (a.startsWith('salida')) return 'Salida';
+  return String(area || '').trim();
+};
+
+/** Resolves approval: only explicit jefatura decision counts as approved/rejected. */
+const resolveEstadoAprobacion = (reg) => {
+  if (reg?.estadoAprobacion === 'aprobado' || reg?.estadoAprobacion === 'rechazado') {
+    return reg.estadoAprobacion;
+  }
+  return 'pendiente';
+};
+
+const readCriterio = (det = {}, key, legacyKeys = []) => {
+  if (typeof det[key] === 'boolean') return det[key];
+  for (const k of legacyKeys) {
+    if (typeof det[k] === 'boolean') return det[k];
+  }
+  // Si no hay dato explícito, no asumir cumplimiento
+  if (det[key] === 0 || det[key] === '0' || det[key] === 'false' || det[key] === false) return false;
+  if (det[key] === 1 || det[key] === '1' || det[key] === 'true' || det[key] === true) return true;
+  return null;
+};
 
 const DashboardJefaEnfermeria = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [activeView,    setActiveView]    = useState('dashboard');
+  // Navegación interna 100% por estado (evita remounts / ofuscador de rutas)
+  const [activeView, setActiveViewRaw] = useState('dashboard');
+  const setActiveView = useCallback((id) => {
+    if (VIEW_META[id]) setActiveViewRaw(id);
+  }, []);
+
   const [areaLimpieza,  setAreaLimpieza]  = useState('Consultorios');
   const [currentTime,   setCurrentTime]   = useState(new Date());
   const [busqueda,      setBusqueda]      = useState('');
   const [toast,         setToast]         = useState({ show:false, msg:'', type:'info' });
   const [alertasCaducidad, setAlertasCaducidad] = useState([]);
+  const [inventarioItems,  setInventarioItems]  = useState([]);
+  const [traspasoItem,     setTraspasoItem]     = useState(null);
   const [bitacorasMes,     setBitacorasMes]     = useState([]);
   const [sucursalFiltro,   setSucursalFiltro]   = useState('');
-  const [sidebarOpen,      setSidebarOpen]      = useState(() => {
-    try {
-      const saved = localStorage.getItem('jefa_sidebar_open');
-      return saved === null ? false : saved === 'true';
-    } catch {
-      return false;
-    }
-  });
   const [showFiltroBitacoras, setShowFiltroBitacoras] = useState(false);
   const [pedidosSucursales, setPedidosSucursales] = useState([]);
   const [pedidosLoading, setPedidosLoading] = useState(false);
@@ -142,16 +154,253 @@ const DashboardJefaEnfermeria = () => {
     setTimeout(() => setToast({ show:false, msg:'', type:'info' }), 4000);
   };
 
+  const [aprobandoId, setAprobandoId] = useState(null);
+  const [integrandoId, setIntegrandoId] = useState(null);
+
+  const handleAprobarFarmacia = async (reg, decision) => {
+    if (!reg?.id) return;
+    if (!['aprobado', 'rechazado'].includes(decision)) return;
+    if (reg.estadoAprobacion === decision) return;
+    const nombre = user?.nombre || user?.displayName || user?.email || 'Jefatura';
+    setAprobandoId(reg.id);
+    try {
+      await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+        estadoAprobacion: decision,
+        aprobadoPor: user?.uid || user?.id || null,
+        aprobadoPorNombre: nombre,
+        aprobadoAt: serverTimestamp()
+      });
+
+      let entradaCreada = null;
+      let salidaDescontada = false;
+      const areaNorm = normalizeMovimientoArea(reg.area);
+      const det = reg.detalles || {};
+
+      // Salida aprobada = traspaso: descuenta stock del origen una sola vez
+      if (decision === 'aprobado' && areaNorm === 'Salida' && !reg.stockDescontado) {
+        const cantidad = Number(det.cantidad) || 0;
+        const sucursalOrigen = det.sucursalOrigen || reg.sucursal || '';
+        if (cantidad > 0 && det.medicamentoId && sucursalOrigen) {
+          const invSnap = await getDocs(query(
+            collection(db, 'inventario'),
+            where('medicamentoId', '==', det.medicamentoId)
+          ));
+          const invDoc = invSnap.docs.find((d) => {
+            const data = d.data() || {};
+            return String(data.lote || '') === String(det.lote || '')
+              && String(data.sucursal || data.sucursalNombre || '') === String(sucursalOrigen);
+          });
+          if (invDoc) {
+            await updateDoc(invDoc.ref, {
+              stock: increment(-cantidad),
+              existencias: increment(-cantidad),
+              actualizadoAt: serverTimestamp(),
+              actualizadoPor: nombre
+            });
+            salidaDescontada = true;
+            await updateDoc(doc(db, 'bitacoras_operativas', reg.id), { stockDescontado: true });
+          } else {
+            showToast(`No se encontró stock de "${det.compuesto}" (lote ${det.lote || 'S/N'}) en ${sucursalOrigen}. La salida quedó aprobada sin descontar.`, 'warning');
+          }
+        }
+      }
+
+      // Recepción o Salida aprobada genera Entrada en el destino (una sola vez)
+      const generaEntrada = decision === 'aprobado'
+        && !reg.entradaGeneradaId
+        && (areaNorm === 'Recepción' || (areaNorm === 'Salida' && (det.sucursalDestino || '').trim()));
+
+      if (generaEntrada) {
+        const sucursalDestino = det.sucursalDestino || (areaNorm === 'Recepción' ? reg.sucursal : '') || '';
+        const sucursalOrigen = areaNorm === 'Salida'
+          ? (det.sucursalOrigen || reg.sucursal || '')
+          : (det.proveedor || det.sucursalOrigen || 'Recepción proveedor');
+        const payloadEntrada = {
+          fecha: serverTimestamp(),
+          fechaString: reg.fechaString || new Date().toLocaleDateString('en-CA'),
+          responsableNombre: reg.responsableNombre || nombre,
+          sucursal: sucursalDestino || 'Sin asignar',
+          estado: 'completado',
+          tipo: 'Farmacia',
+          area: 'Entrada',
+          origenRecepcionId: reg.id,
+          estadoAprobacion: 'aprobado',
+          estadoInventario: 'pendiente',
+          aprobadoPor: user?.uid || user?.id || null,
+          aprobadoPorNombre: nombre,
+          aprobadoAt: serverTimestamp(),
+          detalles: {
+            ...det,
+            tipo_movimiento: 'Entrada',
+            criterio_empaque: !!det.criterio_empaque,
+            criterio_etiqueta: !!det.criterio_etiqueta,
+            sucursalOrigen,
+            sucursalDestino,
+            origenRecepcionId: reg.id
+          }
+        };
+        const refEntrada = await addDoc(collection(db, 'bitacoras_operativas'), payloadEntrada);
+        entradaCreada = { id: refEntrada.id, ...payloadEntrada };
+        await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+          entradaGeneradaId: refEntrada.id
+        });
+      }
+
+      setBitacorasMes((prev) => {
+        const next = prev.map((b) => (
+          b.id === reg.id
+            ? {
+                ...b,
+                estadoAprobacion: decision,
+                aprobadoPor: user?.uid || user?.id || null,
+                aprobadoPorNombre: nombre,
+                stockDescontado: salidaDescontada || b.stockDescontado || false,
+                entradaGeneradaId: entradaCreada?.id || b.entradaGeneradaId || null
+              }
+            : b
+        ));
+        return entradaCreada ? [entradaCreada, ...next] : next;
+      });
+
+      const successMsg = areaNorm === 'Recepción' && entradaCreada
+        ? 'Recepción aprobada. Se generó la Entrada pendiente de inventario.'
+        : areaNorm === 'Salida' && entradaCreada
+          ? `Traspaso aprobado: ${salidaDescontada ? 'stock descontado del origen y ' : ''}Entrada generada en ${det.sucursalDestino}.`
+          : 'Movimiento aprobado.';
+
+      showToast(
+        decision === 'aprobado' ? successMsg : 'Movimiento no aprobado.',
+        decision === 'aprobado' ? 'success' : 'warning'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo actualizar la aprobación.', 'error');
+    } finally {
+      setAprobandoId(null);
+    }
+  };
+
+  const handleIntegrarInventario = async (reg) => {
+    if (!reg?.id) return;
+    if (reg.estadoInventario === 'integrado') {
+      showToast('Esta entrada ya está integrada al inventario.', 'warning');
+      return;
+    }
+    const det = reg.detalles || {};
+    const cantidad = Number(det.cantidad) || 0;
+    if (!cantidad) {
+      showToast('La entrada no tiene cantidad válida.', 'error');
+      return;
+    }
+    const sucursalDestino = det.sucursalDestino || reg.sucursal || '';
+    const nombre = user?.nombre || user?.displayName || user?.email || 'Jefatura';
+    setIntegrandoId(reg.id);
+    try {
+      let invDoc = null;
+      // Una sola igualdad evita depender de índice compuesto en Firestore
+      if (det.medicamentoId) {
+        const invSnap = await getDocs(query(
+          collection(db, 'inventario'),
+          where('medicamentoId', '==', det.medicamentoId)
+        ));
+        invDoc = invSnap.docs.find((d) => {
+          const data = d.data() || {};
+          return String(data.lote || '') === String(det.lote || '')
+            && String(data.sucursal || data.sucursalNombre || '') === String(sucursalDestino || '');
+        }) || null;
+      }
+
+      if (invDoc) {
+        await updateDoc(invDoc.ref, {
+          stock: increment(cantidad),
+          existencias: increment(cantidad),
+          caducidad: det.caducidad || invDoc.data().caducidad || null,
+          actualizadoAt: serverTimestamp(),
+          actualizadoPor: nombre
+        });
+      } else {
+        await addDoc(collection(db, 'inventario'), {
+          medicamentoId: det.medicamentoId || null,
+          medicamento: det.compuesto || '',
+          nombreComercial: det.compuesto || '',
+          descripcion: det.compuesto || '',
+          presentacion: det.presentacion || '',
+          forma: det.forma || '',
+          lote: det.lote || '',
+          caducidad: det.caducidad || null,
+          stock: cantidad,
+          existencias: cantidad,
+          sucursal: sucursalDestino,
+          sucursalNombre: sucursalDestino,
+          numeroAcomodo: det.numeroAcomodo || '',
+          marca: det.marca || '',
+          laboratorio: det.laboratorio || '',
+          activo: true,
+          origenBitacoraId: reg.id,
+          creadoAt: serverTimestamp(),
+          creadoPor: nombre
+        });
+      }
+
+      await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+        estadoInventario: 'integrado',
+        integradoAt: serverTimestamp(),
+        integradoPor: user?.uid || user?.id || null,
+        integradoPorNombre: nombre
+      });
+
+      setBitacorasMes((prev) => prev.map((b) => (
+        b.id === reg.id
+          ? { ...b, estadoInventario: 'integrado', integradoPorNombre: nombre }
+          : b
+      )));
+
+      showToast('Entrada aceptada e integrada al inventario.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo integrar al inventario.', 'error');
+    } finally {
+      setIntegrandoId(null);
+    }
+  };
+
+  const handleTraspasoDone = ({ msg, cantidad, inventarioId }) => {
+    if (inventarioId) {
+      setInventarioItems((prev) => prev.map((i) => (
+        i.id === inventarioId
+          ? { ...i, stock: (Number(i.stock) || 0) - cantidad, existencias: (Number(i.existencias) || 0) - cantidad }
+          : i
+      )));
+      setAlertasCaducidad((prev) => prev
+        .map((a) => (a.id === inventarioId ? { ...a, stock: (Number(a.stock) || 0) - cantidad } : a))
+        .filter((a) => (Number(a.stock) || 0) > 0));
+    }
+    showToast(msg, 'success');
+  };
+
+  /** Existencia actual de un insumo de pedido en una sucursal (empate por nombre). */
+  const existenciaDeInsumo = (nombreInsumo, sucursalNombre) => {
+    const term = String(nombreInsumo || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!term) return null;
+    const suc = String(sucursalNombre || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const matches = inventarioItems.filter((i) => {
+      const iSuc = String(i.sucursal || i.sucursalNombre || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      if (suc && iSuc !== suc) return false;
+      const nombre = String(i.medicamento || i.nombreComercial || i.descripcion || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      return nombre && (nombre.includes(term) || term.includes(nombre));
+    });
+    if (matches.length === 0) return null;
+    return matches.reduce((acc, i) => acc + (Number(i.stock ?? i.existencias) || 0), 0);
+  };
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('jefa_sidebar_open', String(sidebarOpen));
-    } catch {}
-  }, [sidebarOpen]);
 
   useEffect(() => {
     let isMounted = true;
@@ -174,8 +423,10 @@ const DashboardJefaEnfermeria = () => {
         const limit = new Date();
         limit.setMonth(hoy.getMonth() + 3);
         const alertas = [];
+        const invItems = [];
         inventarioSnap.docs.forEach((docRef) => {
           const item = docRef.data();
+          invItems.push({ id: docRef.id, ...item });
           if (item.caducidad) {
             const fCad = new Date(item.caducidad);
             if (fCad <= limit && item.stock > 0) {
@@ -184,6 +435,7 @@ const DashboardJefaEnfermeria = () => {
             }
           }
         });
+        setInventarioItems(invItems);
         setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
 
         const bitacoras = bitacorasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -216,7 +468,7 @@ const DashboardJefaEnfermeria = () => {
 
   // Pedidos en tiempo real
   useEffect(() => {
-    if (activeView !== 'pedidos') return;
+    if (activeView !== 'pedidos' && activeView !== 'dashboard') return;
     setPedidosLoading(true);
     const q = query(collection(db, 'bitacoras_operativas'), where('tipo', '==', 'Pedido de medicamento'));
     const unsub = onSnapshot(q, (snap) => {
@@ -237,7 +489,7 @@ const DashboardJefaEnfermeria = () => {
 
   // Registros KRIT en tiempo real (cuando se ve la vista krit)
   useEffect(() => {
-    if (activeView !== 'krit') return;
+    if (activeView !== 'krit' && activeView !== 'dashboard') return;
     const fechaInicio = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA');
     const fechaFin = new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA');
     const q = query(
@@ -255,7 +507,7 @@ const DashboardJefaEnfermeria = () => {
 
   // Registros Autoclave en tiempo real (cuando se ve la vista autoclave)
   useEffect(() => {
-    if (activeView !== 'autoclave') return;
+    if (activeView !== 'autoclave' && activeView !== 'dashboard') return;
     const fechaInicio = new Date(currentTime.getFullYear(), currentTime.getMonth(), 1).toLocaleDateString('en-CA');
     const fechaFin = new Date(currentTime.getFullYear(), currentTime.getMonth() + 1, 0).toLocaleDateString('en-CA');
     const q = query(
@@ -270,10 +522,6 @@ const DashboardJefaEnfermeria = () => {
     });
     return () => unsub();
   }, [activeView, currentTime]);
-
-  const handleLogout = async () => {
-    try { await logout(); navigate('/'); } catch { showToast('Error al salir', 'error'); }
-  };
 
   const alertasFiltradas = alertasCaducidad.filter(a =>
     (a.medicamento || a.compuesto || '').toLowerCase().includes(busqueda.toLowerCase())
@@ -292,9 +540,7 @@ const DashboardJefaEnfermeria = () => {
     return bitacorasMes.filter(b => b.sucursal === sucursalFiltro);
   }, [bitacorasMes, sucursalFiltro]);
 
-  const meta = VIEW_META[activeView];
-  const colors = COLOR_MAP[meta.color];
-  const ViewIcon = meta.icon;
+  const meta = VIEW_META[activeView] || VIEW_META.dashboard;
 
   const mesLabel = currentTime.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }).toUpperCase();
   const hoyStr = currentTime.toLocaleDateString('en-CA');
@@ -305,6 +551,147 @@ const DashboardJefaEnfermeria = () => {
   const temp4Done = bitacorasHoy.some(b => b.tipo === 'Temperatura' && b.turno?.includes('4:00'));
   const temp10Done = bitacorasHoy.some(b => b.tipo === 'Temperatura' && b.turno?.includes('10:00'));
   const cloroDone = bitacorasHoy.some(b => b.tipo === 'Cloro y PH');
+
+  const resumenExec = useMemo(() => {
+    const tempOk = [temp8Done, temp4Done, temp10Done].filter(Boolean).length;
+    const limpiezaHoy = bitacorasHoy.filter((b) => b.tipo === 'Limpieza');
+    const areasLimpiezaHoy = new Set(limpiezaHoy.map((b) => b.area).filter(Boolean)).size;
+    const areasTotal = Object.keys(LIMPIEZA_AREAS).length;
+    const recepcionMes = bitacorasMes.filter((b) => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción');
+    const esMes = bitacorasMes.filter((b) => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)));
+    const pedidosMes = bitacorasMes.filter((b) => b.tipo === 'Pedido de medicamento');
+    const pedidosHoy = pedidosMes.filter((b) => b.fechaString === hoyStr);
+    const rechazos = recepcionMes.filter((b) => resolveEstadoAprobacion(b) === 'rechazado').length;
+    const pendientesAprob = recepcionMes.filter((b) => resolveEstadoAprobacion(b) === 'pendiente').length;
+    const cantRecepcion = sumCantidadFarmacia(recepcionMes);
+    const entradasMes = esMes.filter((b) => normalizeMovimientoArea(b.area) === 'Entrada');
+    const salidasMes = esMes.filter((b) => normalizeMovimientoArea(b.area) === 'Salida');
+    const cantEntradas = sumCantidadFarmacia(entradasMes);
+    const cantSalidas = sumCantidadFarmacia(salidasMes);
+    const alertasAtencion = alertasCaducidad.filter((a) => a.riesgo !== 'alto').length;
+    const kritSucursales = new Set(kritRegistros.map((r) => r.sucursal).filter(Boolean)).size;
+    const autoclaveSucursales = new Set(autoclaveRegistros.map((r) => r.sucursal).filter(Boolean)).size;
+    const kritVencidos = kritRegistros.filter((r) => {
+      if (!r.proximoCambio) return false;
+      return new Date(r.proximoCambio) < new Date(hoyStr);
+    }).length;
+
+    const cumplimientoHoy = tempOk + (cloroDone ? 1 : 0);
+    const cumplimientoMeta = 4;
+
+    const moduloRows = [
+      {
+        id: 'temperaturas',
+        estado: tempOk === 3 ? 'Completo' : tempOk > 0 ? 'Parcial' : 'Pendiente',
+        dato1: `${tempOk}/3 turnos hoy`,
+        dato2: `${bitacorasMes.filter((b) => b.tipo === 'Temperatura').length} en el mes`,
+      },
+      {
+        id: 'cloro',
+        estado: cloroDone ? 'Completo' : 'Pendiente',
+        dato1: cloroDone ? 'Registrado hoy' : 'Sin captura hoy',
+        dato2: `${bitacorasMes.filter((b) => b.tipo === 'Cloro y PH').length} en el mes`,
+      },
+      {
+        id: 'limpieza',
+        estado: areasLimpiezaHoy >= areasTotal ? 'Completo' : areasLimpiezaHoy > 0 ? 'Parcial' : 'Pendiente',
+        dato1: `${areasLimpiezaHoy}/${areasTotal} áreas hoy`,
+        dato2: `${bitacorasMes.filter((b) => b.tipo === 'Limpieza').length} en el mes`,
+      },
+      {
+        id: 'recepcion',
+        estado: recepcionMes.length ? 'Activo' : 'Sin datos',
+        dato1: `${cantRecepcion} u. · ${recepcionMes.length} mov.`,
+        dato2: rechazos ? `${rechazos} rechazos` : (pendientesAprob ? `${pendientesAprob} pendientes` : 'Sin pendientes'),
+      },
+      {
+        id: 'es',
+        estado: esMes.length ? 'Activo' : 'Sin datos',
+        dato1: `+${cantEntradas} / −${cantSalidas}`,
+        dato2: `${esMes.length} movimientos`,
+      },
+      {
+        id: 'carro_rojo',
+        estado: 'Panel',
+        dato1: 'Cobertura por sucursal',
+        dato2: 'Stock y caducidad',
+      },
+      {
+        id: 'krit',
+        estado: kritVencidos > 0 ? 'Atención' : kritSucursales > 0 ? 'Activo' : 'Sin datos',
+        dato1: `${kritRegistros.length} registros`,
+        dato2: kritVencidos > 0 ? `${kritVencidos} vencidos` : `${kritSucursales} sucursales`,
+      },
+      {
+        id: 'autoclave',
+        estado: autoclaveSucursales > 0 ? 'Activo' : 'Sin datos',
+        dato1: `${autoclaveRegistros.length} ciclos`,
+        dato2: `${autoclaveSucursales} sucursales`,
+      },
+      {
+        id: 'almacen',
+        estado: 'Panel',
+        dato1: 'Inventario central',
+        dato2: `${alertasCaducidad.length} por vencer`,
+      },
+      {
+        id: 'caducidades',
+        estado: alertasCriticas > 0 ? 'Crítico' : alertasCaducidad.length ? 'Atención' : 'Estable',
+        dato1: `${alertasCriticas} críticas`,
+        dato2: `${alertasAtencion} preventivas`,
+      },
+      {
+        id: 'pedidos',
+        estado: pedidosHoy.length ? 'Hoy' : pedidosMes.length ? 'Activo' : 'Sin datos',
+        dato1: `${pedidosMes.length} pedidos mes`,
+        dato2: `${pedidosHoy.length} hoy`,
+      },
+      {
+        id: 'alertas',
+        estado: alertasCriticas > 0 ? 'Crítico' : alertasCaducidad.length ? 'Atención' : 'OK',
+        dato1: `${alertasCaducidad.length} alertas`,
+        dato2: `≤90 días`,
+      },
+    ];
+
+    const prioridades = [];
+    if (tempOk < 3) prioridades.push({ id: 'temperaturas', texto: `Faltan ${3 - tempOk} turnos de temperatura hoy`, severidad: 'alta' });
+    if (!cloroDone) prioridades.push({ id: 'cloro', texto: 'Cloro y PH sin registrar hoy', severidad: 'alta' });
+    if (areasLimpiezaHoy === 0) prioridades.push({ id: 'limpieza', texto: 'Ningún área de limpieza registrada hoy', severidad: 'media' });
+    if (alertasCriticas > 0) prioridades.push({ id: 'alertas', texto: `${alertasCriticas} ítems de inventario por vencer (≤30 días)`, severidad: 'alta' });
+    if (kritVencidos > 0) prioridades.push({ id: 'krit', texto: `${kritVencidos} cambios KRIT vencidos`, severidad: 'media' });
+
+    return {
+      tempOk,
+      cumplimientoHoy,
+      cumplimientoMeta,
+      areasLimpiezaHoy,
+      areasTotal,
+      recepcionMes: recepcionMes.length,
+      esMes: esMes.length,
+      cantRecepcion,
+      cantEntradas,
+      cantSalidas,
+      pedidosMes: pedidosMes.length,
+      pedidosHoy: pedidosHoy.length,
+      rechazos,
+      pendientesAprob,
+      alertasAtencion,
+      moduloRows,
+      prioridades,
+      bitacorasHoyCount: bitacorasHoy.length,
+    };
+  }, [
+    temp8Done, temp4Done, temp10Done, cloroDone, bitacorasHoy, bitacorasMes, hoyStr,
+    alertasCaducidad, alertasCriticas, kritRegistros, autoclaveRegistros,
+  ]);
+
+  const estadoTone = (estado) => {
+    if (estado === 'Completo' || estado === 'OK' || estado === 'Estable' || estado === 'Activo' || estado === 'Hoy') return 'text-emerald-700';
+    if (estado === 'Crítico' || estado === 'Pendiente') return 'text-rose-600';
+    if (estado === 'Atención' || estado === 'Parcial') return 'text-amber-600';
+    return 'text-slate-500';
+  };
 
   const TableWrap = ({ children }) => (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in duration-500 relative z-10 flex-1 flex flex-col min-h-0 print:block">
@@ -339,52 +726,6 @@ const DashboardJefaEnfermeria = () => {
   const NumCell = ({ val, bold }) => (
     <Td className={`text-center ${bold ? 'font-bold text-slate-800' : ''}`}>{!isEmptyVal(val) ? val : <span className="text-slate-300 font-bold">—</span>}</Td>
   );
-
-  const NavItem = ({ id }) => {
-    const m = VIEW_META[id];
-    const Icon = m.icon;
-    const c = COLOR_MAP[m.color];
-    const active = activeView === id;
-    
-    return (
-      <button
-        onClick={() => setActiveView(id)}
-        className={`
-          relative flex items-center transition-all duration-300 group shrink-0
-          ${sidebarOpen 
-            ? 'w-full gap-3 px-4 py-3.5 rounded-2xl' 
-            : 'w-12 h-12 mx-auto justify-center rounded-[1rem]'
-          }
-          ${active ? c.active : 'text-slate-400 hover:bg-white/60 hover:text-slate-700 border border-transparent'}
-        `}
-      >
-        <Icon 
-           size={sidebarOpen ? 18 : 22} 
-           strokeWidth={active && !sidebarOpen ? 2.5 : 2} 
-           className={active && sidebarOpen ? '' : (active ? '' : 'group-hover:text-blue-500')} 
-        />
-        
-        {sidebarOpen && <span className="block tracking-wide text-xs font-bold whitespace-nowrap">{m.label}</span>}
-        
-        {id === 'alertas' && alertasCriticas > 0 && (
-          <span className={`
-            flex items-center justify-center font-black shadow-sm shrink-0
-            ${sidebarOpen ? 'ml-auto h-5 px-2 rounded-lg text-[10px]' : 'absolute -top-1 -right-1 w-4 h-4 rounded-full text-[8px]'}
-            ${active ? 'bg-rose-500 text-white border-2 border-white' : 'bg-rose-100 text-rose-600 border border-rose-200'}
-          `}>
-            {alertasCriticas}
-          </span>
-        )}
-      </button>
-    );
-  };
-
-  const statsData = [
-    { label: 'Registros este mes', value: bitacorasMes.length, icon: Clipboard, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
-    { label: 'Alertas críticas',   value: alertasCriticas,      icon: AlertTriangle, color: 'text-rose-600',  bg: 'bg-rose-50 border-rose-100'  },
-    { label: 'Items por vencer',   value: alertasCaducidad.length, icon: Clock,    color: 'text-amber-600',bg: 'bg-amber-50 border-amber-100'},
-    { label: 'Áreas Auditadas',  value: Object.keys(LIMPIEZA_AREAS).length, icon: Shield, color:'text-teal-600', bg:'bg-teal-50 border-teal-100'},
-  ];
 
   const PrintFormat = () => {
     const printRows = Array.from({ length: diasEnMes }, (_, i) => i + 1);
@@ -550,33 +891,46 @@ const DashboardJefaEnfermeria = () => {
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: 20 }).map((_, i) => {
-                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && b.area === 'Recepción');
-                const reg = registros[i];
-                const det = reg?.detalles || {};
-                return (
-                  <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
-                    <td className={tdP}>{reg ? reg.fechaString.split('-').reverse().join('/') : ''}</td>
-                    <td className={tdP}>{det.factura || ''}</td>
-                    <td className={tdPLeft}>{det.compuesto || ''}</td>
-                    <td className={tdP}>{det.presentacion || ''}</td>
-                    <td className={tdP}>{det.forma || ''}</td>
-                    <td className={tdP}>{det.lote || ''}</td>
-                    <td className={tdP}>{det.cantidad || ''}</td>
-                    <td className={tdP}>{det.caducidad ? det.caducidad.split('-').reverse().join('/') : ''}</td>
-                    <td className={tdP}>{reg ? (det.empaque_ok ? 'X' : '') : ''}</td>
-                    <td className={tdP}>{reg ? (det.empaque_ok ? 'X' : '') : ''}</td>
-                    <td className={tdP}>{reg ? (det.empaque_ok ? 'X' : '') : ''}</td>
-                    <td className={tdP}>{reg ? (!det.empaque_ok ? 'X' : '') : ''}</td>
-                    <td className={tdP}>{reg?.responsableNombre ? reg.responsableNombre.split(' ')[0] : ''}</td>
-                    <td className={tdPLeft}>{det.observaciones || ''}</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción');
+                const rows = Math.max(registros.length, 20);
+                return Array.from({ length: rows }).map((_, i) => {
+                  const reg = registros[i];
+                  const det = reg?.detalles || {};
+                  const empOk = readCriterio(det, 'criterio_empaque', ['empaque_ok']);
+                  const etiOk = readCriterio(det, 'criterio_etiqueta', ['etiqueta_ok']);
+                  const estado = reg ? resolveEstadoAprobacion(reg) : null;
+                  return (
+                    <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
+                      <td className={tdP}>{reg ? reg.fechaString.split('-').reverse().join('/') : ''}</td>
+                      <td className={tdP}>{det.factura || ''}</td>
+                      <td className={tdPLeft}>{det.compuesto || ''}</td>
+                      <td className={tdP}>{det.presentacion || ''}</td>
+                      <td className={tdP}>{det.forma || ''}</td>
+                      <td className={tdP}>{det.lote || ''}</td>
+                      <td className={tdP}>{det.cantidad || ''}</td>
+                      <td className={tdP}>{det.caducidad ? det.caducidad.split('-').reverse().join('/') : ''}</td>
+                      <td className={tdP}>{reg ? (empOk === true ? 'X' : '') : ''}</td>
+                      <td className={tdP}>{reg ? (etiOk === true ? 'X' : '') : ''}</td>
+                      <td className={tdP}>{estado === 'aprobado' ? 'X' : ''}</td>
+                      <td className={tdP}>{estado === 'rechazado' ? 'X' : ''}</td>
+                      <td className={tdP}>{reg?.responsableNombre ? reg.responsableNombre.split(' ')[0] : ''}</td>
+                      <td className={tdPLeft}>{[
+                        det.proveedor || det.sucursalOrigen ? `De: ${det.proveedor || det.sucursalOrigen}` : '',
+                        det.sucursalDestino ? `Suc: ${det.sucursalDestino}` : '',
+                        det.observaciones || ''
+                      ].filter(Boolean).join(' · ')}</td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
-          <div className="bg-[#d9d9d9] print-exact-colors border border-[#666] border-t-0 p-2 min-h-[60px]">
-             <span className="font-bold text-[10px]">COMENTARIOS:</span>
+          <div className="bg-[#d9d9d9] print-exact-colors border border-[#666] border-t-0 p-2 min-h-[60px] text-[10px]">
+             <span className="font-bold">COMENTARIOS / TOTALES:</span>
+             {' '}Recepción: {resumenExec.cantRecepcion} u. ({resumenExec.recepcionMes} mov.)
+             {' · '}Pendientes: {resumenExec.pendientesAprob}
+             {' · '}No aprobados: {resumenExec.rechazos}
           </div>
           </>
         )}
@@ -600,30 +954,40 @@ const DashboardJefaEnfermeria = () => {
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: 20 }).map((_, i) => {
-                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && b.area !== 'Recepción');
-                const reg = registros[i];
-                const det = reg?.detalles || {};
-                return (
-                  <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
-                    <td className={tdP}>{reg ? reg.fechaString.split('-').reverse().join('/') : ''}</td>
-                    <td className={tdP}>{det.factura || ''}</td>
-                    <td className={tdPLeft}>{det.compuesto || ''}</td>
-                    <td className={tdP}>{det.presentacion || ''}</td>
-                    <td className={tdP}>{det.forma || ''}</td>
-                    <td className={tdP}>{det.lote || ''}</td>
-                    <td className={tdP}>{det.cantidad || ''}</td>
-                    <td className={tdP}>{det.caducidad ? det.caducidad.split('-').reverse().join('/') : ''}</td>
-                    <td className={tdP}>{reg?.area || ''}</td>
-                    <td className={tdP}>{reg?.responsableNombre ? reg.responsableNombre.split(' ')[0] : ''}</td>
-                    <td className={tdPLeft}>{det.observaciones || ''}</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)));
+                const rows = Math.max(registros.length, 20);
+                return Array.from({ length: rows }).map((_, i) => {
+                  const reg = registros[i];
+                  const det = reg?.detalles || {};
+                  return (
+                    <tr key={i} className="bg-[#f2f2f2] print-exact-colors">
+                      <td className={tdP}>{reg ? reg.fechaString.split('-').reverse().join('/') : ''}</td>
+                      <td className={tdP}>{det.factura || ''}</td>
+                      <td className={tdPLeft}>{det.compuesto || ''}</td>
+                      <td className={tdP}>{det.presentacion || ''}</td>
+                      <td className={tdP}>{det.forma || ''}</td>
+                      <td className={tdP}>{det.lote || ''}</td>
+                      <td className={tdP}>{det.cantidad || ''}</td>
+                      <td className={tdP}>{det.caducidad ? det.caducidad.split('-').reverse().join('/') : ''}</td>
+                      <td className={tdP}>{reg ? normalizeMovimientoArea(reg.area) : ''}</td>
+                      <td className={tdP}>{reg?.responsableNombre ? reg.responsableNombre.split(' ')[0] : ''}</td>
+                      <td className={tdPLeft}>{[
+                        det.sucursalOrigen ? `De: ${det.sucursalOrigen}` : '',
+                        det.sucursalDestino ? `A: ${det.sucursalDestino}` : '',
+                        reg?.estadoInventario === 'pendiente' ? 'Inv. pendiente' : '',
+                        reg?.estadoInventario === 'integrado' ? 'Inv. integrado' : '',
+                        det.observaciones || ''
+                      ].filter(Boolean).join(' · ')}</td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
-          <div className="bg-[#d9d9d9] print-exact-colors border border-[#666] border-t-0 p-2 min-h-[60px]">
-             <span className="font-bold text-[10px]">COMENTARIOS:</span>
+          <div className="bg-[#d9d9d9] print-exact-colors border border-[#666] border-t-0 p-2 min-h-[60px] text-[10px]">
+             <span className="font-bold">COMENTARIOS / TOTALES:</span>
+             {' '}Entradas: +{resumenExec.cantEntradas} u. · Salidas: −{resumenExec.cantSalidas} u. · Netas: {resumenExec.cantEntradas - resumenExec.cantSalidas} u.
           </div>
           </>
         )}
@@ -755,269 +1119,292 @@ const DashboardJefaEnfermeria = () => {
 
       {toast.show && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast({ ...toast, show:false })} />}
 
-      <div className="flex h-[100dvh] w-screen overflow-hidden bg-[#f4f7f9] text-slate-700">
+      <div className="flex flex-col w-full min-h-full bg-[#f8f9fa] text-slate-700">
 
-        {/* ── SIDEBAR DESKTOP ──────────────────────────────────────────────────── */}
-        <aside className={`print-hidden hidden md:flex flex-shrink-0 ${sidebarOpen ? 'w-64' : 'w-20'} bg-white border border-slate-200 shadow-sm my-4 ml-4 rounded-xl flex-col overflow-hidden transition-all duration-300 z-20`}>
-          <div className={`flex items-center gap-3 px-6 py-6 border-b border-slate-200/50 ${!sidebarOpen && 'justify-center px-0'}`}>
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-md shadow-blue-500/30">
-              <ShieldAlert size={20} className="text-white" />
-            </div>
-            {sidebarOpen && (
-              <div className="leading-tight">
-                <p className="text-sm font-black text-slate-800 font-jakarta tracking-tight">Santa Cruz</p>
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Jefatura Enfermería</p>
-              </div>
-            )}
-          </div>
+        {/* ── HEADER + SUBNAV (sticky dentro del scroll de AppShell) ── */}
+        <div className="flex flex-col p-3 sm:p-4 gap-3">
 
-          <nav className={`flex-1 overflow-y-auto space-y-2 custom-scrollbar ${sidebarOpen ? 'p-4' : 'p-2 py-4'}`}>
-            {sidebarOpen && <p className="px-2 pt-2 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Resumen</p>}
-            <NavItem id="dashboard" />
-
-            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Auditorías</p>}
-            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            {['temperaturas','cloro','limpieza'].map(id => <NavItem key={id} id={id} />)}
-
-            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">COFEPRIS</p>}
-            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            {['recepcion','es','carro_rojo','krit','autoclave'].map(id => <NavItem key={id} id={id} />)}
-
-            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Almacén</p>}
-            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            <NavItem id="almacen" />
-            <NavItem id="caducidades" />
-
-            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pedidos</p>}
-            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            <NavItem id="pedidos" />
-
-            {sidebarOpen && <p className="px-2 pt-5 pb-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sistema</p>}
-            {!sidebarOpen && <div className="my-4 border-t border-slate-200/60 w-8 mx-auto"/>}
-            <NavItem id="alertas" />
-          </nav>
-
-          <div className={`p-4 border-t border-slate-200/50 ${!sidebarOpen && 'flex justify-center'}`}>
-            {sidebarOpen ? (
-              <div className="flex items-center gap-3 px-3 py-3 rounded-2xl bg-white border border-slate-100 shadow-sm cursor-default">
-                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600 text-sm font-black flex-shrink-0 border border-slate-200">
-                  {(user?.nombre || 'E')[0].toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-slate-800 truncate font-jakarta">{user?.nombre || 'Supervisora'}</p>
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{user?.sucursal || 'Central'}</p>
-                </div>
-                <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all">
-                  <LogOut size={16}/>
-                </button>
-              </div>
-            ) : (
-              <button onClick={handleLogout} className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 shadow-sm border border-slate-200 transition-all">
-                <LogOut size={18}/>
-              </button>
-            )}
-          </div>
-        </aside>
-
-        {/* ── MAIN AREA ──────────────────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col overflow-hidden p-4 md:pl-6 z-10 relative pb-[80px] md:pb-4">
-
-          <header className="print-hidden bg-white border border-slate-200 rounded-xl h-16 md:h-20 mb-4 md:mb-6 px-4 md:px-6 flex items-center justify-between flex-shrink-0 shadow-sm">
-            <div className="flex items-center gap-2 md:gap-4">
-                <button onClick={() => setSidebarOpen(o => !o)} className="hidden md:block p-2 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-slate-700 hover:shadow-sm transition-all">
-                <ChevronRight size={18} className={`transition-transform duration-300 ${sidebarOpen ? 'rotate-180' : ''}`}/>
-              </button>
-              
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg flex items-center justify-center shadow-sm border border-slate-200 ${colors.pill}`}>
-                    <ViewIcon size={18} className="md:w-5 md:h-5"/>
-                </div>
-                <div>
-                    <h1 className="text-sm md:text-lg font-black text-slate-800 font-jakarta leading-none">{meta.label}</h1>
-                    <div className="flex items-center gap-2 mt-0.5 md:mt-1">
-                        <span className="text-[9px] md:text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-slate-100">
-                            <MapPin size={10}/> {user?.sucursal || 'General'}
-                        </span>
-                    </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 md:gap-4">
-              <div className="hidden md:flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-4 py-2 shadow-sm">
-                <Calendar size={14} className="text-slate-400"/>
-                <span className="text-xs font-bold text-slate-600 capitalize">{mesLabel}</span>
+          <header className="print-hidden sticky top-0 z-20 bg-white/80 backdrop-blur-md border border-slate-200/80 rounded-lg px-3 sm:px-5 py-3">
+            <div className="flex items-end justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                {activeView !== 'dashboard' ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('dashboard')}
+                    className="mb-1 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900"
+                  >
+                    <ChevronRight size={12} className="rotate-180" /> Volver al resumen
+                  </button>
+                ) : (
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em]">Jefatura de enfermería</p>
+                )}
+                <h1 className="text-[18px] sm:text-[22px] font-bold text-slate-900 leading-tight truncate" style={{ fontFamily: 'Sora, system-ui, sans-serif' }}>
+                  {activeView === 'dashboard' ? 'Centro de mando' : meta.label}
+                </h1>
+                <p className="text-[12px] text-slate-500 mt-0.5 flex items-center gap-1.5 truncate">
+                  {activeView === 'dashboard' ? (
+                    <>Supervisión de auditorías, COFEPRIS, almacén y operación</>
+                  ) : (
+                    <>
+                      <MapPin size={12} className="text-slate-400 shrink-0" />
+                      {user?.sucursal || user?.sucursalActual || 'General'}
+                      <span className="text-slate-300">·</span>
+                      <span className="capitalize">{mesLabel.toLowerCase()}</span>
+                    </>
+                  )}
+                </p>
               </div>
 
-              {(activeView === 'temperaturas' || activeView === 'cloro' || activeView === 'limpieza') && catalogoSucursalesJefa.length > 0 && (
-                <div className="hidden md:flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm">
-                  <MapPin size={13} className="text-blue-500 shrink-0"/>
+              <div className="flex items-center gap-2 flex-wrap">
+                {(activeView === 'temperaturas' || activeView === 'cloro' || activeView === 'limpieza') && catalogoSucursalesJefa.length > 0 && (
                   <select
                     value={sucursalFiltro}
                     onChange={e => setSucursalFiltro(e.target.value)}
-                    className="bg-transparent text-[11px] font-bold text-slate-700 outline-none cursor-pointer pr-1"
+                    className="bg-white border border-slate-200 rounded-md px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 outline-none"
                   >
                     <option value="">Todas las sucursales</option>
                     {catalogoSucursalesJefa.map(s => (
                       <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
                     ))}
                   </select>
-                </div>
-              )}
-              
-              <div className="hidden lg:flex items-center gap-2 border-l border-slate-200 pl-4">
-                  <button onClick={() => navigate('/enfermeria/dashboard')} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">
-                      <Stethoscope size={16}/> Agenda
-                  </button>
-                  <button onClick={() => setShowFiltroBitacoras(true)} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm">
-                    <Filter size={16}/> Filtrar Bitacoras
-                  </button>
-                    <button onClick={() => navigate('/enfermeria/registros')} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-800 transition-all active:scale-95">
-                      <Plus size={16}/> Capturar Registros
-                  </button>
-              </div>
-
-              {activeView !== 'dashboard' && activeView !== 'alertas' && activeView !== 'almacen' && activeView !== 'caducidades' && (
-                <button onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-all active:scale-95">
-                    <Printer size={16}/>
+                )}
+                <button type="button" onClick={() => navigate('/enfermeria/dashboard')} className="inline-flex items-center gap-1.5 border border-slate-200 bg-transparent hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors">
+                  <Stethoscope size={13}/> Agenda
                 </button>
-              )}
+                <button type="button" onClick={() => setShowFiltroBitacoras(true)} className="inline-flex items-center gap-1.5 border border-slate-200 bg-transparent hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors">
+                  <Filter size={13}/> Filtrar
+                </button>
+                <button type="button" onClick={() => navigate('/enfermeria/registros')} className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-2.5 py-1.5 rounded-md text-[11px] font-semibold hover:bg-slate-800 transition-colors">
+                  <Plus size={13}/> Capturar
+                </button>
+                {activeView !== 'dashboard' && activeView !== 'alertas' && activeView !== 'almacen' && activeView !== 'caducidades' && (
+                  <button type="button" onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:inline-flex items-center border border-slate-200 bg-transparent hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md transition-colors">
+                    <Printer size={13}/>
+                  </button>
+                )}
+              </div>
             </div>
           </header>
 
-          <main className="print-hidden flex-1 flex flex-col overflow-hidden relative">
-              
-              {/* --- DASHBOARD VIEW (CENTRO DE MANDO) --- */}
+          <main className="print-hidden flex flex-col relative min-h-[60vh]">
+
               {activeView === 'dashboard' && (
-                <div className="flex-1 overflow-y-auto custom-scrollbar pb-6 pr-2">
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                        <div className="xl:col-span-2 space-y-6">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                {statsData.map((s, i) => (
-                                    <div key={i} className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
-                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shadow-inner mb-2 ${s.bg}`}>
-                                            <s.icon size={18} className={s.color}/>
-                                        </div>
-                                        <p className="text-2xl font-black text-slate-800 font-jakarta leading-none mb-1">{s.value}</p>
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{s.label}</p>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-6 border-b border-slate-100 pb-3">
-                                    <Activity size={18} className="text-blue-500"/> Semáforo Diario <span className="text-slate-400 font-medium">({hoyStr.split('-').reverse().join('/')})</span>
-                                </h3>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 h-24">
-                                    <StatusWidget title="Temp. Mañana" done={temp8Done} time="8:00 AM" />
-                                    <StatusWidget title="Temp. Tarde" done={temp4Done} time="4:00 PM" />
-                                    <StatusWidget title="Temp. Noche" done={temp10Done} time="10:00 PM" />
-                                    <StatusWidget title="Cloro y PH" done={cloroDone} time="1x por día" />
-                                </div>
-                            </div>
-                            
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[280px]">
-                                <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
-                                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                                        <ClipboardList size={16} className="text-indigo-500"/> Últimos Registros
-                                    </h3>
-                                </div>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
-                                    {bitacorasMes.slice(0, 8).map((b, i) => (
-                                        <div key={b.id || i} className="flex justify-between items-center p-3 hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                                                <div>
-                                                    <p className="text-sm font-bold text-slate-700">{b.tipo} <span className="text-xs text-slate-400 font-medium">({b.area || b.turno || 'General'})</span></p>
-                                                    <p className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">Por: {b.responsableNombre}</p>
-                                                </div>
-                                            </div>
-                                            <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{b.fechaString.split('-').reverse().join('/')}</span>
-                                        </div>
-                                    ))}
-                                    {bitacorasMes.length === 0 && <p className="p-6 text-center text-slate-400 text-sm italic">No hay registros recientes.</p>}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-6">
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-                                    <Zap size={18} className="text-amber-500"/> Accesos Directos
-                                </h3>
-                                <div className="space-y-3">
-                                    <button onClick={() => navigate('/enfermeria/dashboard')} className="w-full bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
-                                        <div className="bg-blue-100 text-blue-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Stethoscope size={20}/></div>
-                                        <div className="text-left">
-                                            <p className="font-bold text-sm text-slate-700 group-hover:text-blue-700">Torre de Control</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Agenda y Triage</p>
-                                        </div>
-                                    </button>
-                                        <button onClick={() => setShowFiltroBitacoras(true)} className="w-full bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
-                                          <div className="bg-indigo-100 text-indigo-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Filter size={20}/></div>
-                                          <div className="text-left">
-                                            <p className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">Filtrar Bitacoras</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Consulta e impresion</p>
-                                          </div>
-                                        </button>
-                                    <button onClick={() => navigate('/enfermeria/registros')} className="w-full bg-slate-50 hover:bg-emerald-50 border border-slate-100 hover:border-emerald-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
-                                        <div className="bg-emerald-100 text-emerald-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Plus size={20}/></div>
-                                        <div className="text-left">
-                                            <p className="font-bold text-sm text-slate-700 group-hover:text-emerald-700">Capturar Bitácora</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Auditoría Operativa</p>
-                                        </div>
-                                    </button>
-                                    <button onClick={() => setActiveView('carro_rojo')} className="w-full bg-slate-50 hover:bg-rose-50 border border-slate-100 hover:border-rose-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
-                                        <div className="bg-rose-100 text-rose-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><ShieldAlert size={20}/></div>
-                                        <div className="text-left">
-                                            <p className="font-bold text-sm text-slate-700 group-hover:text-rose-700">Carro Rojo</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Bitácora por Sucursal</p>
-                                        </div>
-                                    </button>
-                                    <button onClick={() => setActiveView('almacen')} className="w-full bg-slate-50 hover:bg-amber-50 border border-slate-100 hover:border-amber-100 p-4 rounded-lg flex items-center gap-4 transition-all group">
-                                      <div className="bg-amber-100 text-amber-600 p-2.5 rounded-lg group-hover:scale-110 transition-transform"><Package size={20}/></div>
-                                      <div className="text-left">
-                                        <p className="font-bold text-sm text-slate-700 group-hover:text-amber-700">Almacén</p>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Inventario central</p>
-                                      </div>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[320px]">
-                                <div className="p-5 border-b border-slate-100 bg-rose-50/30 flex justify-between items-center shrink-0">
-                                    <h3 className="text-sm font-black text-rose-600 uppercase tracking-widest flex items-center gap-2">
-                                        <AlertTriangle size={16}/> Riesgo Inventario
-                                    </h3>
-                                    <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-lg text-[10px] font-black">{alertasCriticas} Críticas</span>
-                                </div>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                                    {alertasCaducidad.filter(a => a.riesgo === 'alto').slice(0, 5).map(item => (
-                                        <div key={item.id} className="bg-white border border-rose-100 rounded-xl p-3 shadow-sm flex justify-between items-center hover:bg-rose-50 transition-colors">
-                                            <div className="truncate pr-2">
-                                                <p className="font-bold text-xs text-slate-800 truncate">{item.medicamento || item.compuesto}</p>
-                                                <p className="text-[10px] text-slate-500 mt-0.5">Lote: <span className="font-mono">{item.lote}</span></p>
-                                            </div>
-                                            <div className="text-center shrink-0 bg-rose-50 border border-rose-100 px-2 py-1 rounded-lg">
-                                                <p className="text-sm font-black text-rose-600 leading-none">{item.diasRestantes}</p>
-                                                <p className="text-[8px] font-bold text-rose-400 uppercase">Días</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {alertasCriticas === 0 && (
-                                        <div className="h-full flex flex-col items-center justify-center gap-2 text-emerald-600 opacity-60">
-                                            <CheckCircle2 size={32}/>
-                                            <p className="text-xs font-bold uppercase tracking-widest">Sin alertas críticas</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
+                <div className="w-full max-w-[1280px] mx-auto pb-10 space-y-5">
+                  {/* KPI strip — estilo Centro Ejecutivo */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-slate-200 rounded-lg overflow-hidden border border-slate-200">
+                    <div className="bg-white px-4 py-3.5 col-span-2 lg:col-span-1">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] mb-2">Cumplimiento hoy</p>
+                      <p className="text-[24px] font-extrabold text-slate-900 leading-none">
+                        {resumenExec.cumplimientoHoy}
+                        <span className="text-[14px] font-medium text-slate-400">/{resumenExec.cumplimientoMeta}</span>
+                      </p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[11px] text-slate-600">
+                        <span>Temp <strong className="text-slate-900">{resumenExec.tempOk}/3</strong></span>
+                        <span>Cloro <strong className={cloroDone ? 'text-emerald-700' : 'text-rose-600'}>{cloroDone ? 'OK' : 'pendiente'}</strong></span>
+                      </div>
                     </div>
+                    <div className="bg-white px-4 py-3.5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] mb-2">Bitácoras</p>
+                      <p className="text-[24px] font-extrabold text-slate-900 leading-none">{bitacorasMes.length}</p>
+                      <p className="text-[11px] text-slate-500 mt-1.5">este mes</p>
+                      <p className="text-[11px] text-slate-600 mt-1">{resumenExec.bitacorasHoyCount} <span className="text-slate-400">hoy</span></p>
+                    </div>
+                    <div className="bg-white px-4 py-3.5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] mb-2">Farmacia</p>
+                      <p className="text-[24px] font-extrabold text-slate-900 leading-none">{resumenExec.recepcionMes + resumenExec.esMes}</p>
+                      <p className="text-[11px] text-slate-500 mt-1.5">movimientos</p>
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        +{resumenExec.cantRecepcion} <span className="text-slate-400">u. recep.</span>
+                        {' · '}
+                        +{resumenExec.cantEntradas}/−{resumenExec.cantSalidas} <span className="text-slate-400">E/S</span>
+                      </p>
+                    </div>
+                    <div className="bg-white px-4 py-3.5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] mb-2">Riesgos</p>
+                      <p className="text-[24px] font-extrabold text-slate-900 leading-none">{alertasCriticas}</p>
+                      <p className="text-[11px] text-slate-500 mt-1.5">alertas críticas</p>
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        {alertasCaducidad.length} <span className="text-slate-400">por vencer</span>
+                        {' · '}
+                        {resumenExec.pedidosHoy} <span className="text-slate-400">pedidos hoy</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Prioridades + Módulos lado a lado */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                    {/* Prioridades — columna estrecha */}
+                    <div className="lg:col-span-4 bg-white border border-slate-200 rounded-lg overflow-hidden">
+                      <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between gap-2">
+                        <p className="text-[12px] font-bold text-slate-900">Prioridades hoy</p>
+                        <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${
+                          resumenExec.prioridades.length
+                            ? 'bg-rose-50 text-rose-600'
+                            : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {resumenExec.prioridades.length || 'OK'}
+                        </span>
+                      </div>
+                      <div className="divide-y divide-slate-50">
+                        {resumenExec.prioridades.length === 0 ? (
+                          <div className="px-3.5 py-6 text-center">
+                            <CheckCircle2 size={18} className="mx-auto mb-1.5 text-emerald-500" />
+                            <p className="text-[11px] font-semibold text-slate-500">Sin pendientes críticos</p>
+                          </div>
+                        ) : (
+                          resumenExec.prioridades.map((p) => {
+                            const m = VIEW_META[p.id];
+                            const Icon = m?.icon || AlertTriangle;
+                            return (
+                              <button
+                                key={p.id + p.texto}
+                                type="button"
+                                onClick={() => setActiveView(p.id)}
+                                className="w-full flex items-start gap-2.5 px-3.5 py-2.5 text-left hover:bg-slate-50 transition-colors group"
+                              >
+                                <Icon size={14} className={`mt-0.5 shrink-0 ${p.severidad === 'alta' ? 'text-rose-500' : 'text-amber-500'}`} strokeWidth={1.75} />
+                                <span className="flex-1 min-w-0 text-[12px] font-medium text-slate-700 leading-snug group-hover:text-slate-900">
+                                  {p.texto}
+                                </span>
+                                <ChevronRight size={13} className="mt-0.5 text-slate-300 group-hover:text-slate-500 shrink-0" />
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Módulos — lista compacta, sin tabla ancha */}
+                    <div className="lg:col-span-8 bg-white border border-slate-200 rounded-lg overflow-hidden">
+                      <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between gap-2">
+                        <p className="text-[12px] font-bold text-slate-900">Módulos</p>
+                        <p className="text-[10px] text-slate-400 font-medium hidden sm:block">Clic para abrir</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-slate-100">
+                        {resumenExec.moduloRows.map((row) => {
+                          const m = VIEW_META[row.id];
+                          const Icon = m.icon;
+                          return (
+                            <button
+                              key={row.id}
+                              type="button"
+                              onClick={() => setActiveView(row.id)}
+                              className="flex items-center gap-2.5 px-3.5 py-2.5 text-left bg-white hover:bg-slate-50 transition-colors group"
+                            >
+                              <Icon size={14} className="text-slate-400 group-hover:text-slate-700 shrink-0" strokeWidth={1.75} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-[12px] font-semibold text-slate-900 truncate">{m.label}</span>
+                                  <span className={`text-[10px] font-bold shrink-0 ${estadoTone(row.estado)}`}>{row.estado}</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{row.dato1}</p>
+                              </div>
+                              <ChevronRight size={13} className="text-slate-300 group-hover:text-slate-500 shrink-0" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dos columnas: actividad + accesos/riesgos */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col min-h-[320px]">
+                      <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+                        <p className="text-[13px] font-bold text-slate-900">Actividad reciente</p>
+                        <button type="button" onClick={() => navigate('/enfermeria/registros')} className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1">
+                          Capturar <ChevronRight size={12} />
+                        </button>
+                      </div>
+                      <div className="flex-1 divide-y divide-slate-100 overflow-y-auto max-h-[360px]">
+                        {bitacorasMes.slice(0, 10).map((b, i) => (
+                          <div key={b.id || i} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold text-slate-800 truncate">
+                                {b.tipo}
+                                <span className="text-slate-400 font-medium"> · {b.area || b.turno || 'General'}</span>
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-semibold uppercase mt-0.5 truncate">
+                                {b.responsableNombre || '—'}
+                                {b.sucursal ? ` · ${b.sucursal}` : ''}
+                              </p>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-500 shrink-0 tabular-nums">
+                              {(b.fechaString || '').split('-').reverse().join('/')}
+                            </span>
+                          </div>
+                        ))}
+                        {bitacorasMes.length === 0 && (
+                          <p className="px-4 py-10 text-center text-[12px] text-slate-400">Sin registros este mes.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-4 min-h-[320px]">
+                      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden flex-1">
+                        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
+                          <p className="text-[13px] font-bold text-slate-900">Accesos directos</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-px bg-slate-100 p-px">
+                          {[
+                            { label: 'Agenda', sub: 'Enfermería', icon: Stethoscope, action: () => navigate('/enfermeria/dashboard') },
+                            { label: 'Capturar', sub: 'Bitácora', icon: Plus, action: () => navigate('/enfermeria/registros') },
+                            { label: 'Filtrar', sub: 'Impresión', icon: Filter, action: () => setShowFiltroBitacoras(true) },
+                            { label: 'Carro rojo', sub: 'Sucursales', icon: ShieldAlert, action: () => setActiveView('carro_rojo') },
+                            { label: 'Almacén', sub: 'Inventario', icon: Package, action: () => setActiveView('almacen') },
+                            { label: 'Alertas', sub: `${alertasCriticas} críticas`, icon: AlertTriangle, action: () => setActiveView('alertas') },
+                          ].map((a) => (
+                            <button
+                              key={a.label}
+                              type="button"
+                              onClick={a.action}
+                              className="bg-white px-3.5 py-3.5 text-left hover:bg-slate-50 transition-colors group"
+                            >
+                              <a.icon size={16} className="text-slate-400 group-hover:text-slate-800 mb-2" strokeWidth={1.75} />
+                              <p className="text-[13px] font-semibold text-slate-900">{a.label}</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">{a.sub}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+                          <p className="text-[13px] font-bold text-slate-900">Inventario en riesgo</p>
+                          <button type="button" onClick={() => setActiveView('alertas')} className="text-[11px] font-semibold text-slate-600 hover:text-slate-900">
+                            Ver todo
+                          </button>
+                        </div>
+                        <div className="divide-y divide-slate-100 max-h-[180px] overflow-y-auto">
+                          {alertasCaducidad.slice(0, 5).map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setActiveView('alertas')}
+                              className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left hover:bg-slate-50"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[12px] font-semibold text-slate-800 truncate">{item.medicamento || item.compuesto}</p>
+                                <p className="text-[10px] text-slate-400">Lote {item.lote || '—'} · stock {item.stock ?? '—'}</p>
+                              </div>
+                              <span className={`text-[12px] font-bold shrink-0 ${item.riesgo === 'alto' ? 'text-rose-600' : 'text-amber-600'}`}>
+                                {item.diasRestantes}d
+                              </span>
+                            </button>
+                          ))}
+                          {alertasCaducidad.length === 0 && (
+                            <div className="px-4 py-6 text-center text-slate-400">
+                              <CheckCircle2 size={20} className="mx-auto mb-1.5 text-emerald-500" />
+                              <p className="text-[11px] font-semibold">Sin ítems por vencer</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* --- VISTAS TABULARES: TEMPERATURA Y CLORO --- */}
               {(activeView === 'temperaturas' || activeView === 'cloro') && (
                 <TableWrap>
                     <thead>
@@ -1219,7 +1606,11 @@ const DashboardJefaEnfermeria = () => {
 
              {/* --- RECEPCIÓN Y ENTRADAS/SALIDAS (FORMATO OFICIAL) ──────────────────── */}
               {(activeView === 'recepcion' || activeView === 'es') && (() => {
-                  const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && (activeView === 'recepcion' ? b.area === 'Recepción' : b.area !== 'Recepción'));
+                  const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && (
+                    activeView === 'recepcion'
+                      ? normalizeMovimientoArea(b.area) === 'Recepción'
+                      : ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area))
+                  ));
 
                   if (registros.length === 0) {
                       return (
@@ -1231,38 +1622,89 @@ const DashboardJefaEnfermeria = () => {
                       );
                   }
 
+                  const renderAprobacionCell = (reg) => {
+                    const estado = resolveEstadoAprobacion(reg);
+                    const busy = aprobandoId === reg.id;
+                    if (estado === 'aprobado') return <Badge variant="ok">APROBADO</Badge>;
+                    if (estado === 'rechazado') return <Badge variant="critical">NO APROBADO</Badge>;
+                    return (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleAprobarFarmacia(reg, 'aprobado')}
+                            className="px-2 py-1 rounded-md text-[9px] font-black uppercase bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
+                          >
+                            Aprobar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleAprobarFarmacia(reg, 'rechazado')}
+                            className="px-2 py-1 rounded-md text-[9px] font-black uppercase border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            No aprobar
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const renderInventarioCell = (reg) => {
+                    if (normalizeMovimientoArea(reg.area) !== 'Entrada') return <span className="text-slate-300">—</span>;
+                    if (reg.estadoInventario === 'integrado') return <Badge variant="ok">EN INVENTARIO</Badge>;
+                    if (resolveEstadoAprobacion(reg) !== 'aprobado' && !reg.origenRecepcionId) {
+                      return <span className="text-[9px] font-bold text-slate-400 uppercase">Requiere aprobación</span>;
+                    }
+                    return (
+                      <button
+                        type="button"
+                        disabled={integrandoId === reg.id}
+                        onClick={() => handleIntegrarInventario(reg)}
+                        className="px-2.5 py-1.5 rounded-md text-[9px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {integrandoId === reg.id ? 'Integrando…' : 'Aceptar e integrar'}
+                      </button>
+                    );
+                  };
+
                   return (
-                      <div className="flex-1 flex flex-col h-full animate-in fade-in min-h-0">
-                        {/* VISTA DESKTOP (Tabla Desglosada - Formato Excel) */}
-                        <div className="hidden md:flex flex-1 flex-col overflow-hidden bg-white rounded-xl border border-slate-200 shadow-sm">
+                      <div className="flex-1 flex flex-col h-full animate-in fade-in min-h-0 gap-3">
+                        <div className="hidden md:flex flex-1 flex-col overflow-hidden bg-white rounded-xl border border-slate-200 shadow-sm min-h-0">
                           <div className="overflow-auto custom-scrollbar flex-1">
-                            <table className="w-full text-sm min-w-[1200px] border-collapse">
+                            <table className="w-full text-sm min-w-[1280px] border-collapse">
                               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                                 <tr>
                                   <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-24 border-r border-slate-200">Fecha</th>
                                   <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">Factura</th>
-                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 border-r border-slate-200">Insumo / Compuesto</th>
+                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 border-r border-slate-200">Insumo</th>
+                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-36 border-r border-slate-200">De → A</th>
                                   <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-24 border-r border-slate-200">Lote</th>
                                   <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-20 border-r border-slate-200">Cant.</th>
                                   <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">Caducidad</th>
-                                  
                                   {activeView === 'recepcion' ? (
-                                      <>
-                                        <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-32 border-r border-slate-200">Criterios (Emp / Etiq)</th>
-                                        <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-24 border-r border-slate-200">Aprobado</th>
-                                      </>
+                                      <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-32 border-r border-slate-200">Empaque / Etiqueta</th>
                                   ) : (
-                                      <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-32 border-r border-slate-200">Movimiento</th>
+                                      <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">Movimiento</th>
                                   )}
-                                  
+                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-32 border-r border-slate-200">Aprobado</th>
+                                  {activeView === 'es' && (
+                                    <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-36 border-r border-slate-200">Inventario</th>
+                                  )}
                                   <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">{activeView === 'recepcion' ? 'Recibió' : 'Realizó'}</th>
-                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-48">Observaciones</th>
+                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-40">Observaciones</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
                                 {registros.map(reg => {
                                     const det = reg.detalles || {};
-                                    const esEntrada = reg.area?.toLowerCase().includes('entrada');
+                                    const areaNorm = normalizeMovimientoArea(reg.area);
+                                    const esEntrada = areaNorm === 'Entrada';
+                                    const empOk = readCriterio(det, 'criterio_empaque', ['empaque_ok']);
+                                    const etiOk = readCriterio(det, 'criterio_etiqueta', ['etiqueta_ok']);
+                                    const desde = det.proveedor || det.sucursalOrigen || '—';
+                                    const hacia = det.sucursalDestino || reg.sucursal || '—';
                                     return (
                                       <tr key={reg.id} className="hover:bg-slate-50/80 transition-colors group">
                                           <td className="px-4 py-3 align-middle text-center font-mono text-[11px] font-bold text-slate-600 border-r border-slate-100">
@@ -1275,11 +1717,15 @@ const DashboardJefaEnfermeria = () => {
                                               <p className="font-bold text-xs text-slate-800">{det.compuesto}</p>
                                               <p className="text-[10px] text-slate-500 uppercase mt-0.5">{det.presentacion} • {det.forma}</p>
                                           </td>
+                                          <td className="px-4 py-3 align-middle border-r border-slate-100">
+                                              <p className="text-[11px] font-semibold text-slate-700 leading-tight">{desde}</p>
+                                              <p className="text-[10px] text-slate-400">→ {hacia}</p>
+                                          </td>
                                           <td className="px-4 py-3 align-middle font-mono text-[11px] font-bold text-slate-600 border-r border-slate-100">
                                               {det.lote || 'S/N'}
                                           </td>
                                           <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
-                                              <span className={`text-sm font-black ${esEntrada || activeView === 'recepcion' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                              <span className={`text-sm font-black ${esEntrada || activeView === 'recepcion' ? 'text-emerald-700' : 'text-rose-600'}`}>
                                                   {esEntrada || activeView === 'recepcion' ? '+' : '-'}{det.cantidad}
                                               </span>
                                           </td>
@@ -1288,31 +1734,33 @@ const DashboardJefaEnfermeria = () => {
                                           </td>
                                           
                                           {activeView === 'recepcion' ? (
-                                              <>
                                                 <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
                                                     <div className="flex flex-col gap-1">
-                                                        <span className={`text-[9px] font-bold uppercase tracking-wider ${det.criterio_empaque ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                            EMP: {det.criterio_empaque ? 'CUMPLE' : 'DAÑO'}
+                                                        <span className={`text-[9px] font-bold uppercase tracking-wider ${empOk === true ? 'text-emerald-600' : empOk === false ? 'text-red-600' : 'text-slate-400'}`}>
+                                                            EMP: {empOk === true ? 'CUMPLE' : empOk === false ? 'DAÑO' : 'S/D'}
                                                         </span>
-                                                        <span className={`text-[9px] font-bold uppercase tracking-wider ${det.criterio_etiqueta ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                            ETIQ: {det.criterio_etiqueta ? 'CUMPLE' : 'DAÑO'}
+                                                        <span className={`text-[9px] font-bold uppercase tracking-wider ${etiOk === true ? 'text-emerald-600' : etiOk === false ? 'text-red-600' : 'text-slate-400'}`}>
+                                                            ETIQ: {etiOk === true ? 'CUMPLE' : etiOk === false ? 'DAÑO' : 'S/D'}
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
-                                                    <Badge variant={det.criterio_empaque && det.criterio_etiqueta ? 'ok' : 'critical'}>
-                                                        {det.criterio_empaque && det.criterio_etiqueta ? 'APROBADO' : 'RECHAZADO'}
-                                                    </Badge>
-                                                </td>
-                                              </>
                                           ) : (
                                               <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
-                                                  <Badge variant={esEntrada ? 'ok' : 'preventive'}>{reg.area}</Badge>
+                                                  <Badge variant={esEntrada ? 'ok' : 'preventive'}>{areaNorm}</Badge>
                                               </td>
                                           )}
 
+                                          <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
+                                              {renderAprobacionCell(reg)}
+                                          </td>
+                                          {activeView === 'es' && (
+                                            <td className="px-4 py-3 align-middle text-center border-r border-slate-100">
+                                              {renderInventarioCell(reg)}
+                                            </td>
+                                          )}
+
                                           <td className="px-4 py-3 align-middle text-[10px] font-bold uppercase text-slate-700 border-r border-slate-100">
-                                              {reg.responsableNombre.split(' ')[0]}
+                                              {(reg.responsableNombre || '').split(' ')[0]}
                                           </td>
                                           <td className="px-4 py-3 align-middle text-[10px] text-slate-500 italic max-w-[200px] truncate" title={det.observaciones}>
                                               {det.observaciones || '-'}
@@ -1325,11 +1773,15 @@ const DashboardJefaEnfermeria = () => {
                           </div>
                         </div>
 
-                        {/* VISTA MOBILE (Tarjetas Limpias y Formales) */}
                         <div className="md:hidden flex flex-col gap-4 overflow-y-auto pb-10">
                             {registros.map(reg => {
                                 const det = reg.detalles || {};
-                                const esEntrada = reg.area?.toLowerCase().includes('entrada');
+                                const areaNorm = normalizeMovimientoArea(reg.area);
+                                const esEntrada = areaNorm === 'Entrada';
+                                const empOk = readCriterio(det, 'criterio_empaque', ['empaque_ok']);
+                                const etiOk = readCriterio(det, 'criterio_etiqueta', ['etiqueta_ok']);
+                                const desde = det.proveedor || det.sucursalOrigen || '—';
+                                const hacia = det.sucursalDestino || reg.sucursal || '—';
                                 
                                 return (
                                     <div key={reg.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3">
@@ -1337,8 +1789,9 @@ const DashboardJefaEnfermeria = () => {
                                             <div className="flex-1 pr-2">
                                                 <p className="font-bold text-sm text-slate-800 leading-tight">{det.compuesto}</p>
                                                 <p className="text-[10px] text-slate-500 uppercase mt-0.5">{det.presentacion} • {det.forma}</p>
+                                                <p className="text-[10px] text-slate-600 mt-1 font-semibold">{desde} → {hacia}</p>
                                             </div>
-                                            <div className={`px-3 py-1 rounded-xl text-lg font-black shrink-0 ${esEntrada || activeView === 'recepcion' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                            <div className={`px-3 py-1 rounded-xl text-lg font-black shrink-0 ${esEntrada || activeView === 'recepcion' ? 'bg-slate-100 text-slate-800' : 'bg-rose-50 text-rose-600'}`}>
                                                 {esEntrada || activeView === 'recepcion' ? '+' : '-'}{det.cantidad}
                                             </div>
                                         </div>
@@ -1352,40 +1805,25 @@ const DashboardJefaEnfermeria = () => {
                                                 <span className="text-slate-400 font-bold block uppercase">Lote</span>
                                                 <span className="text-slate-700 font-mono font-bold block mt-0.5 truncate">{det.lote || 'S/N'}</span>
                                             </div>
-                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                                                <span className="text-slate-400 font-bold block uppercase">Caducidad</span>
-                                                <span className="text-slate-700 font-mono font-bold block mt-0.5 truncate">{det.caducidad ? det.caducidad.split('-').reverse().join('/') : 'N/A'}</span>
-                                            </div>
-                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                                                <span className="text-slate-400 font-bold block uppercase">Fecha / Resp.</span>
-                                                <span className="text-slate-700 font-bold block mt-0.5 truncate">{reg.fechaString.split('-').reverse().join('/')} • {reg.responsableNombre.split(' ')[0]}</span>
-                                            </div>
                                         </div>
 
                                         {activeView === 'recepcion' && (
-                                            <div className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-100 mt-1">
-                                                <div className="flex gap-3">
-                                                    <span className={`text-[9px] font-bold uppercase ${det.criterio_empaque ? 'text-emerald-600' : 'text-red-600'}`}>EMP: {det.criterio_empaque ? 'CUMPLE' : 'DAÑO'}</span>
-                                                    <span className={`text-[9px] font-bold uppercase ${det.criterio_etiqueta ? 'text-emerald-600' : 'text-red-600'}`}>ETIQ: {det.criterio_etiqueta ? 'CUMPLE' : 'DAÑO'}</span>
-                                                </div>
-                                                <Badge variant={det.criterio_empaque && det.criterio_etiqueta ? 'ok' : 'critical'}>
-                                                    {det.criterio_empaque && det.criterio_etiqueta ? 'APROBADO' : 'RECHAZADO'}
-                                                </Badge>
+                                            <div className="flex gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                <span className={`text-[9px] font-bold uppercase ${empOk === true ? 'text-emerald-600' : empOk === false ? 'text-red-600' : 'text-slate-400'}`}>EMP: {empOk === true ? 'CUMPLE' : empOk === false ? 'DAÑO' : 'S/D'}</span>
+                                                <span className={`text-[9px] font-bold uppercase ${etiOk === true ? 'text-emerald-600' : etiOk === false ? 'text-red-600' : 'text-slate-400'}`}>ETIQ: {etiOk === true ? 'CUMPLE' : etiOk === false ? 'DAÑO' : 'S/D'}</span>
                                             </div>
                                         )}
 
                                         {activeView === 'es' && (
-                                            <div className="flex justify-end mt-1">
-                                                <Badge variant={esEntrada ? 'ok' : 'preventive'}>{reg.area}</Badge>
+                                            <div className="flex justify-between items-center">
+                                                <Badge variant={esEntrada ? 'ok' : 'preventive'}>{areaNorm}</Badge>
+                                                {renderInventarioCell(reg)}
                                             </div>
                                         )}
-                                        
-                                        {det.observaciones && (
-                                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 mt-1">
-                                                <span className="text-[9px] font-bold text-slate-400 uppercase">Observaciones:</span>
-                                                <p className="text-[10px] text-slate-600 italic mt-0.5">{det.observaciones}</p>
-                                            </div>
-                                        )}
+
+                                        <div className="border-t border-slate-100 pt-2 flex justify-center">
+                                          {renderAprobacionCell(reg)}
+                                        </div>
                                     </div>
                                 );
                             })}
@@ -1656,10 +2094,13 @@ const DashboardJefaEnfermeria = () => {
                                                       <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200">Insumo</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Físico</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Pedido</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-24" title="Existencia actual en inventario de la sucursal">Exis. inv.</th>
                                                     </tr>
                                                   </thead>
                                                   <tbody>
-                                                    {filas.map((fila, idx) => (
+                                                    {filas.map((fila, idx) => {
+                                                      const exisInv = existenciaDeInsumo(fila.insumo, pedido.sucursal);
+                                                      return (
                                                       <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
                                                         <td className="px-3 py-1.5 font-semibold text-slate-800 text-[12px] border-b border-slate-50">
                                                           {fila.insumo}
@@ -1667,8 +2108,14 @@ const DashboardJefaEnfermeria = () => {
                                                         </td>
                                                         <td className="px-3 py-1.5 text-center font-bold text-slate-600 text-[12px] border-b border-slate-50">{fila.fisico || '—'}</td>
                                                         <td className="px-3 py-1.5 text-center font-bold text-blue-600 text-[12px] border-b border-slate-50">{fila.pedido || '—'}</td>
+                                                        <td className={`px-3 py-1.5 text-center font-bold text-[12px] border-b border-slate-50 ${
+                                                          exisInv === null ? 'text-slate-300' : exisInv <= 0 ? 'text-rose-600' : 'text-emerald-700'
+                                                        }`}>
+                                                          {exisInv === null ? 'S/D' : exisInv}
+                                                        </td>
                                                       </tr>
-                                                    ))}
+                                                      );
+                                                    })}
                                                   </tbody>
                                                 </table>
                                               </div>
@@ -1689,68 +2136,196 @@ const DashboardJefaEnfermeria = () => {
                 );
               })()}
 
-              {/* --- ALERTAS ────────────────────────────────────────────────────── */}
+              {/* --- CENTRO DE ALERTAS ────────────────────────────────────────── */}
               {activeView === 'alertas' && (() => {
-                  if (alertasFiltradas.length === 0) {
-                      return (
-                          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px]">
-                              <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center border-4 border-emerald-100 mb-4">
-                                  <CheckCircle2 size={40} className="text-emerald-500"/>
-                              </div>
-                              <h3 className="text-xl font-bold text-slate-700">¡Inventario Saludable!</h3>
-                              <p className="text-sm text-slate-400 mt-2 text-center max-w-md">No hay medicamentos próximos a caducar en los próximos 3 meses.</p>
-                          </div>
-                      );
-                  }
+                  const movFarmacia = bitacorasMes.filter((b) => b.tipo === 'Farmacia');
+                  const pendientesAprob = movFarmacia.filter((b) => resolveEstadoAprobacion(b) === 'pendiente');
+                  const enTransito = movFarmacia.filter((b) =>
+                    normalizeMovimientoArea(b.area) === 'Entrada' && b.estadoInventario === 'pendiente'
+                  );
+                  const picosPorDia = Object.entries(
+                    movFarmacia.reduce((acc, b) => {
+                      const key = b.fechaString || 'Sin fecha';
+                      acc[key] = (acc[key] || 0) + 1;
+                      return acc;
+                    }, {})
+                  ).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                  const maxPico = picosPorDia.length ? picosPorDia[0][1] : 0;
+
+                  const rutaDe = (b) => {
+                    const det = b.detalles || {};
+                    const de = det.proveedor || det.sucursalOrigen || '—';
+                    const a = det.sucursalDestino || b.sucursal || '—';
+                    return { de, a, med: det.compuesto || '—', cant: det.cantidad || '—', area: normalizeMovimientoArea(b.area) };
+                  };
 
                   return (
-                      <div className="space-y-4 animate-in fade-in flex-1 flex flex-col min-h-0">
+                      <div className="animate-in fade-in flex-1 flex flex-col lg:flex-row gap-4 min-h-0">
+                        {/* Caducidades (con traspaso) */}
+                        <div className="flex-1 min-w-0 flex flex-col gap-3">
                           <div className="relative max-w-md shrink-0">
-                              <Search size={18} className="absolute left-4 top-3.5 text-slate-400"/>
+                              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"/>
                               <input type="text" placeholder="Buscar medicamento en riesgo..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                              className="w-full pl-12 pr-4 py-3.5 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition-all shadow-sm font-medium" />
+                              className="w-full pl-10 pr-4 py-2.5 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition-all shadow-sm font-medium" />
                           </div>
 
-                          <TableWrap>
-                              <thead>
-                                  <tr>
-                                  <Th>Medicamento / Compuesto</Th>
-                                  <Th>Lote</Th>
-                                  <Th className="text-center">Fecha Caducidad</Th>
-                                  <Th className="text-center w-32">Días Restantes</Th>
-                                  <Th className="text-center w-28">Stock</Th>
-                                  <Th className="text-center w-32 border-l border-slate-200">Alerta</Th>
-                                  </tr>
-                              </thead>
-                              <tbody>
-                                  {alertasFiltradas.map(item => (
-                                  <tr key={item.id} className={`transition-colors ${item.riesgo === 'alto' ? 'hover:bg-rose-50/80 bg-rose-50/30' : 'hover:bg-amber-50/80 bg-amber-50/30'}`}>
-                                      <Td className="font-bold text-sm text-slate-800">{item.medicamento || item.compuesto}</Td>
-                                      <Td className="font-mono text-xs font-bold text-slate-500">{item.lote}</Td>
-                                      <Td className="text-center font-mono text-xs font-bold text-slate-700">{item.caducidad.split('-').reverse().join('/')}</Td>
-                                      <Td className="text-center"><span className={`font-black text-xl ${item.diasRestantes <= 30 ? 'text-rose-600' : 'text-amber-600'}`}>{item.diasRestantes}</span></Td>
-                                      <Td className="text-center font-black text-lg text-slate-700">{item.stock}</Td>
-                                      <Td className="text-center"><Badge variant={item.riesgo === 'alto' ? 'critical' : 'preventive'}>{item.riesgo === 'alto' ? 'Critico' : 'Atención'}</Badge></Td>
-                                  </tr>
-                                  ))}
-                              </tbody>
-                          </TableWrap>
+                          {alertasFiltradas.length === 0 ? (
+                            <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 shadow-sm min-h-[280px]">
+                                <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center border-4 border-emerald-100 mb-3">
+                                    <CheckCircle2 size={32} className="text-emerald-500"/>
+                                </div>
+                                <h3 className="text-lg font-bold text-slate-700">Inventario saludable</h3>
+                                <p className="text-sm text-slate-400 mt-1.5 text-center max-w-md">Sin medicamentos próximos a caducar en 3 meses.</p>
+                            </div>
+                          ) : (
+                            <>
+                            <TableWrap>
+                                <thead>
+                                    <tr>
+                                    <Th>Medicamento</Th>
+                                    <Th>Sucursal</Th>
+                                    <Th>Lote</Th>
+                                    <Th className="text-center">Caducidad</Th>
+                                    <Th className="text-center w-24">Días</Th>
+                                    <Th className="text-center w-20">Stock</Th>
+                                    <Th className="text-center w-24 border-l border-slate-200">Alerta</Th>
+                                    <Th className="text-center w-28"></Th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {alertasFiltradas.map(item => (
+                                    <tr key={item.id} className={`transition-colors ${item.riesgo === 'alto' ? 'hover:bg-rose-50/80 bg-rose-50/30' : 'hover:bg-amber-50/80 bg-amber-50/30'}`}>
+                                        <Td className="font-bold text-sm text-slate-800">{item.medicamento || item.compuesto}</Td>
+                                        <Td className="text-[11px] font-semibold text-slate-600">{item.sucursal || item.sucursalNombre || '—'}</Td>
+                                        <Td className="font-mono text-xs font-bold text-slate-500">{item.lote}</Td>
+                                        <Td className="text-center font-mono text-xs font-bold text-slate-700">{item.caducidad.split('-').reverse().join('/')}</Td>
+                                        <Td className="text-center"><span className={`font-black text-lg ${item.diasRestantes <= 30 ? 'text-rose-600' : 'text-amber-600'}`}>{item.diasRestantes}</span></Td>
+                                        <Td className="text-center font-black text-base text-slate-700">{item.stock}</Td>
+                                        <Td className="text-center"><Badge variant={item.riesgo === 'alto' ? 'critical' : 'preventive'}>{item.riesgo === 'alto' ? 'Critico' : 'Atención'}</Badge></Td>
+                                        <Td className="text-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => setTraspasoItem({
+                                              inventarioId: item.id,
+                                              medicamentoId: item.medicamentoId || null,
+                                              nombre: item.medicamento || item.compuesto || '',
+                                              presentacion: item.presentacion || '',
+                                              numeroAcomodo: item.numeroAcomodo || '',
+                                              lote: item.lote || '',
+                                              caducidad: item.caducidad || '',
+                                              cantidadDisponible: Number(item.stock) || 0,
+                                              sucursalOrigen: item.sucursal || item.sucursalNombre || ''
+                                            })}
+                                            className="px-2.5 py-1.5 rounded-md text-[10px] font-black uppercase bg-slate-900 text-white hover:bg-slate-800"
+                                          >
+                                            Traspasar
+                                          </button>
+                                        </Td>
+                                    </tr>
+                                    ))}
+                                </tbody>
+                            </TableWrap>
 
-                          {/* Mobile Alertas Cards */}
-                          <div className="md:hidden flex flex-col gap-4 overflow-y-auto pb-10">
-                              {alertasFiltradas.map(item => (
-                                   <div key={item.id} className={`p-4 rounded-2xl border shadow-sm ${item.riesgo === 'alto' ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
-                                       <div className="flex justify-between items-start mb-2">
-                                           <h4 className="font-bold text-sm text-slate-800">{item.medicamento || item.compuesto}</h4>
-                                           <Badge variant={item.riesgo === 'alto' ? 'critical' : 'preventive'}>{item.riesgo === 'alto' ? 'Critico' : 'Atención'}</Badge>
-                                       </div>
-                                       <div className="flex justify-between text-xs text-slate-500 mt-2">
-                                           <span>Lote: {item.lote}</span>
-                                           <span className="font-bold">Quedan: {item.diasRestantes} días</span>
-                                       </div>
-                                   </div>
+                            {/* Mobile Alertas Cards */}
+                            <div className="md:hidden flex flex-col gap-3 overflow-y-auto pb-4">
+                                {alertasFiltradas.map(item => (
+                                     <div key={item.id} className={`p-4 rounded-xl border shadow-sm ${item.riesgo === 'alto' ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
+                                         <div className="flex justify-between items-start mb-2">
+                                             <h4 className="font-bold text-sm text-slate-800">{item.medicamento || item.compuesto}</h4>
+                                             <Badge variant={item.riesgo === 'alto' ? 'critical' : 'preventive'}>{item.riesgo === 'alto' ? 'Critico' : 'Atención'}</Badge>
+                                         </div>
+                                         <div className="flex justify-between text-xs text-slate-500">
+                                             <span>{item.sucursal || '—'} · Lote {item.lote}</span>
+                                             <span className="font-bold">{item.diasRestantes} días · {item.stock} pzs</span>
+                                         </div>
+                                         <button
+                                           type="button"
+                                           onClick={() => setTraspasoItem({
+                                             inventarioId: item.id,
+                                             medicamentoId: item.medicamentoId || null,
+                                             nombre: item.medicamento || item.compuesto || '',
+                                             lote: item.lote || '',
+                                             caducidad: item.caducidad || '',
+                                             cantidadDisponible: Number(item.stock) || 0,
+                                             sucursalOrigen: item.sucursal || item.sucursalNombre || ''
+                                           })}
+                                           className="mt-2.5 w-full px-2.5 py-1.5 rounded-md text-[10px] font-black uppercase bg-slate-900 text-white"
+                                         >
+                                           Traspasar a otra sucursal
+                                         </button>
+                                     </div>
+                                ))}
+                            </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Rutas y actividad del mes */}
+                        <div className="w-full lg:w-80 shrink-0 flex flex-col gap-3">
+                          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                            <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                              <p className="text-[12px] font-bold text-slate-900">Pendientes de aprobación</p>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${pendientesAprob.length ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-600'}`}>{pendientesAprob.length}</span>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto divide-y divide-slate-50">
+                              {pendientesAprob.length === 0 && (
+                                <p className="px-3.5 py-3 text-[11px] text-slate-400">Sin movimientos por aprobar.</p>
+                              )}
+                              {pendientesAprob.slice(0, 8).map((b) => {
+                                const r = rutaDe(b);
+                                return (
+                                  <button key={b.id} type="button" onClick={() => setActiveView(r.area === 'Recepción' ? 'recepcion' : 'es')}
+                                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 transition-colors">
+                                    <p className="text-[11px] font-bold text-slate-800 truncate">{r.med} · {r.cant} pzs</p>
+                                    <p className="text-[10px] text-slate-500">{r.area}: {r.de} → {r.a} · {b.fechaString}</p>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                            <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                              <p className="text-[12px] font-bold text-slate-900">Traspasos en tránsito</p>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${enTransito.length ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-600'}`}>{enTransito.length}</span>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto divide-y divide-slate-50">
+                              {enTransito.length === 0 && (
+                                <p className="px-3.5 py-3 text-[11px] text-slate-400">Sin entradas por integrar.</p>
+                              )}
+                              {enTransito.slice(0, 8).map((b) => {
+                                const r = rutaDe(b);
+                                return (
+                                  <button key={b.id} type="button" onClick={() => setActiveView('es')}
+                                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 transition-colors">
+                                    <p className="text-[11px] font-bold text-slate-800 truncate">{r.med} · {r.cant} pzs</p>
+                                    <p className="text-[10px] text-slate-500">{r.de} → {r.a} · por integrar</p>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                            <div className="px-3.5 py-2.5 border-b border-slate-100">
+                              <p className="text-[12px] font-bold text-slate-900">Picos de movimiento (mes)</p>
+                            </div>
+                            <div className="p-3.5 space-y-2">
+                              {picosPorDia.length === 0 && (
+                                <p className="text-[11px] text-slate-400">Sin movimientos de farmacia este mes.</p>
+                              )}
+                              {picosPorDia.map(([dia, count]) => (
+                                <div key={dia} className="flex items-center gap-2">
+                                  <span className="text-[10px] font-mono font-bold text-slate-500 w-16 shrink-0">{dia.split('-').reverse().slice(0, 2).join('/')}</span>
+                                  <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-slate-800 rounded-full" style={{ width: `${maxPico ? (count / maxPico) * 100 : 0}%` }} />
+                                  </div>
+                                  <span className="text-[11px] font-black text-slate-800 tabular-nums w-6 text-right">{count}</span>
+                                </div>
                               ))}
+                            </div>
                           </div>
+                        </div>
                       </div>
                   );
               })()}
@@ -1793,26 +2368,19 @@ const DashboardJefaEnfermeria = () => {
 
         </div>
 
-        {/* ── BOTTOM NAV (MOBILE ONLY) ──────────────────────────────────────────── */}
-        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-200 z-50 flex items-center gap-2 px-2 py-3 overflow-x-auto custom-scrollbar print-hidden">
-            {Object.keys(VIEW_META).map(id => {
-                const m = VIEW_META[id];
-                const active = activeView === id;
-            const cm = COLOR_MAP[m.color];
-                return (
-              <button key={id} onClick={() => setActiveView(id)} className={`flex flex-col items-center justify-center min-w-[72px] px-2 py-1 rounded-lg transition-all ${active ? cm.mobileActive : 'text-slate-400 hover:text-slate-600'}`}>
-                        <m.icon size={22} className={active ? 'animate-pulse' : ''}/>
-                        <span className="text-[9px] font-bold mt-1 tracking-tight text-center leading-tight">{m.label.split(' ')[0]}</span>
-                    </button>
-                )
-            })}
-        </nav>
-        
         <FiltroBitacorasJefaturaModal
           isOpen={showFiltroBitacoras}
           onClose={() => setShowFiltroBitacoras(false)}
           sourceRows={bitacorasMes}
         />
+
+        {traspasoItem && (
+          <TraspasoSucursalModal
+            item={traspasoItem}
+            onClose={() => setTraspasoItem(null)}
+            onDone={handleTraspasoDone}
+          />
+        )}
 
       </div>
     </>

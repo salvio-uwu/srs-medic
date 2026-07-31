@@ -6,6 +6,7 @@ import { useSessionLocation } from '../../context/SessionLocationContext';
 import { resolveUserHomePath } from '../../services/permissionService';
 import LocationSelector from '../../components/LocationSelector';
 import logoImg from '../../assets/logo_azul.png';
+import { consumeLogoutReason } from '../../utils/sessionIdle';
 
 /* ══════════════════════════════════════════
    ICONS — Form
@@ -385,12 +386,26 @@ const Login = () => {
     return () => clearTimeout(t);
   }, []);
 
-  // Transicion al portal cuando el usuario esta autenticado
+  // Aviso si la sesión se cerró por inactividad
   useEffect(() => {
-    if (!loading && user?.rol && step !== 'portal') {
-      setStep('portal');
+    const reason = consumeLogoutReason();
+    if (reason === 'idle') {
+      setToast({
+        show: true,
+        msg: 'Sesión cerrada por inactividad (30 min). Vuelve a iniciar sesión.',
+        type: 'error',
+      });
+      const t = setTimeout(() => setToast({ show: false, msg: '', type: 'error' }), 7000);
+      return () => clearTimeout(t);
     }
-  }, [user, loading]);
+  }, []);
+
+  // Tras autenticación, ir al home unificado
+  useEffect(() => {
+    if (!loading && user?.rol) {
+      navigate('/inicio', { replace: true });
+    }
+  }, [loading, user?.rol, navigate]);
 
   const showToast = (msg, type = 'error') => {
     setToast({ show: true, msg, type });
@@ -599,7 +614,7 @@ const Login = () => {
                 {/* Selector de ubicación */}
                 {catalogosReady && (
                   <div className="ap2" style={{ marginBottom: 16 }}>
-                    <LocationSelector accentColor={config.color} />
+                    <LocationSelector accentColor={config.color} required />
                   </div>
                 )}
 

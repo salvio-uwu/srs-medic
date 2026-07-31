@@ -10,7 +10,7 @@ import {
   Monitor, Calculator, LogOut, Scale, Ruler, ArrowLeftRight
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { goBackOr } from '../../utils/navigation';
+import { goBackOr, resolveExpedienteExitPath } from '../../utils/navigation';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { db, auth } from "../../config/firebase";
@@ -19,7 +19,6 @@ import {
   query, where, orderBy, getDocs, limit, runTransaction, setDoc, onSnapshot,
   writeBatch
 } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../context/AuthContext';
 
 // Importación de las secciones y componentes
@@ -39,6 +38,7 @@ import { buildEnfermeriaPatientLogRecord } from '../../services/enfermeriaPatien
 import { getTipoCitaLabel } from '../../services/referenciaMedicaService';
 import AvatarPaciente from '../../components/AvatarPaciente';
 import { getPatientDisplayName } from '../../utils/patientName';
+import { calcularEdad, formatearEdadTexto } from '../../utils/patientAge';
 import PlantillaDinamicaModal from '../../components/PlantillaDinamicaModal';
 
 // historialmedico/ fue eliminado — glob deshabilitado
@@ -466,19 +466,6 @@ const formatIssuedTimeEsMx = (value = new Date()) => {
   });
 };
 
-const calculateAgeFromBirthdate = (birthDate) => {
-  if (!(birthDate instanceof Date) || Number.isNaN(birthDate.getTime())) return null;
-
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const hasBirthdayPassed =
-    today.getMonth() > birthDate.getMonth() ||
-    (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
-
-  if (!hasBirthdayPassed) age -= 1;
-  return age >= 0 ? age : null;
-};
-
 const buildPacienteRecipeId = (nombreCompleto, birthDate) => {
   const safeName = (nombreCompleto || 'PACIENTE')
     .normalize('NFD')
@@ -826,14 +813,31 @@ const ExpedienteClinico = () => {
     paciente: pacienteNombreLegacy,
     openDocumentTemplates = false,
     openedFrom = '',
-    doctorOverride = null
+    doctorOverride = null,
+    from: openedFromPath = '',
   } = location.state || {};
   const nombreInicialRuta = String(pacienteNombreState || pacienteNombreLegacy || '').trim();
   const isEnfermeriaDocumentMode = Boolean(
     openDocumentTemplates &&
     (openedFrom === 'enfermeria_agenda' || location.pathname.startsWith('/enfermeria'))
   );
-  const exitFallbackPath = isEnfermeriaDocumentMode ? '/enfermeria/dashboard' : '/agenda';
+  const exitFallbackPath = resolveExpedienteExitPath({
+    from: openedFromPath,
+    openedFrom,
+    pathname: location.pathname,
+  });
+  const missingContextRedirectRef = useRef(false);
+
+  // Expediente se abre desde Agenda con paciente/cita; sin contexto no hay consulta válida
+  useEffect(() => {
+    if (pacienteId) {
+      missingContextRedirectRef.current = false;
+      return;
+    }
+    if (missingContextRedirectRef.current) return;
+    missingContextRedirectRef.current = true;
+    navigate(exitFallbackPath, { replace: true });
+  }, [pacienteId, navigate, exitFallbackPath]);
 
   // --- ESTADOS DE UI Y MODALES ---
   const [showHistoricoEmbarazos, setShowHistoricoEmbarazos] = useState(false);
@@ -1673,13 +1677,12 @@ const ExpedienteClinico = () => {
 
           const fechaNacimientoDate = parseFirestoreDate(dataPx.fechaNacimiento);
           const fechaNacimientoIso = formatDateIso(fechaNacimientoDate);
-          const edadCalc = calculateAgeFromBirthdate(fechaNacimientoDate);
           const legacyId = getLegacyPatientIdFromDb(dataPx);
           const generatedId = buildPacienteRecipeId(nombreCompletoPx, fechaNacimientoDate);
 
           nuevosDatos.px_info = {
             ...nuevosDatos.px_info,
-            edad: Number.isInteger(edadCalc) ? `${edadCalc} años` : '--',
+            edad: formatearEdadTexto(fechaNacimientoDate),
             fecha_nacimiento: fechaNacimientoIso,
             id_receta: legacyId || generatedId,
             telefono: dataPx.telefonoMovil || '',
@@ -1906,22 +1909,37 @@ const ExpedienteClinico = () => {
             }
           }
 
-          if (dataCita.consultaIniciadaAt?.toDate) {
-            consultaInicioRef.current = dataCita.consultaIniciadaAt.toDate();
-          } else if (dataCita.estado !== 'completada') {
-            // Solo iniciar consulta si la cita NO está completada
-            // (evita crear residuales al solo "ver" un expediente terminado)
-            consultaInicioRef.current = new Date();
-            await updateDoc(doc(db, "citas", citaId), {
-              consultaIniciadaAt: serverTimestamp(),
-              estado: 'en_consulta'
-            });
-            citaEntryStateRef.current = {
-              ...citaEntryStateRef.current,
-              autoStarted: true
-            };
-          } else {
-            consultaInicioRef.current = new Date();
+          {
+            const estadoCita = String(dataCita.estado || '').toLowerCase().trim();
+            const citaActiva = estadoCita !== 'completada' && estadoCita !== 'cancelada';
+
+            if (dataCita.consultaIniciadaAt?.toDate) {
+              consultaInicioRef.current = dataCita.consultaIniciadaAt.toDate();
+              // Si el médico reabre tras salir sin guardar, consultaIniciadaAt
+              // ya existe pero el estado pudo haberse revertido a en_espera/pendiente.
+              // Resincronizar para que Agenda de Enfermería muestre "En consulta".
+              if (citaActiva && estadoCita !== 'en_consulta') {
+                await updateDoc(doc(db, 'citas', citaId), { estado: 'en_consulta' });
+                citaEntryStateRef.current = {
+                  ...citaEntryStateRef.current,
+                  autoStarted: true
+                };
+              }
+            } else if (citaActiva) {
+              // Solo iniciar consulta si la cita está activa
+              // (evita crear residuales al solo "ver" un expediente terminado)
+              consultaInicioRef.current = new Date();
+              await updateDoc(doc(db, 'citas', citaId), {
+                consultaIniciadaAt: serverTimestamp(),
+                estado: 'en_consulta'
+              });
+              citaEntryStateRef.current = {
+                ...citaEntryStateRef.current,
+                autoStarted: true
+              };
+            } else {
+              consultaInicioRef.current = new Date();
+            }
           }
 
           // A) Signos Vitales
@@ -1933,6 +1951,26 @@ const ExpedienteClinico = () => {
             if (dataCita.signos_vitales.peso) nuevosDatos.consulta.exploracion.antropometria.peso = dataCita.signos_vitales.peso;
             if (dataCita.signos_vitales.talla) nuevosDatos.consulta.exploracion.antropometria.talla = dataCita.signos_vitales.talla;
             if (dataCita.signos_vitales.imc) nuevosDatos.consulta.exploracion.antropometria.imc = dataCita.signos_vitales.imc;
+            // Glucosa de triage → lista de glucometría del expediente
+            if (dataCita.signos_vitales.glucosa) {
+              const listaGlu = [...(nuevosDatos.consulta.exploracion.glucosa?.lista || [])];
+              const idxTriage = listaGlu.findIndex((g) => g?.origen === 'triage');
+              const entryTriage = {
+                fecha: new Date().toISOString().split('T')[0],
+                categoria: 'Capilar (triage)',
+                valor: dataCita.signos_vitales.glucosa,
+                origen: 'triage'
+              };
+              if (idxTriage >= 0) {
+                listaGlu[idxTriage] = { ...listaGlu[idxTriage], ...entryTriage };
+              } else {
+                listaGlu.push(entryTriage);
+              }
+              nuevosDatos.consulta.exploracion.glucosa = {
+                ...(nuevosDatos.consulta.exploracion.glucosa || {}),
+                lista: listaGlu
+              };
+            }
           }
 
           // B) Motivo de Triage
@@ -2090,19 +2128,47 @@ const ExpedienteClinico = () => {
         const signosActuales = prev.consulta?.exploracion?.signos || {};
         const tieneSignos = signosActuales.peso || signosActuales.talla || signosActuales.temp || signosActuales.ta || signosActuales.fc;
         if (tieneSignos) return prev;
-        const sv = data.signos_vitales;
+        const sv = data.signos_vitales || {};
+        const nextSignos = { ...prev.consulta.exploracion.signos, ...sv };
+        const nextAntropometria = {
+          ...prev.consulta.exploracion.antropometria,
+          ...(sv.peso ? { peso: sv.peso } : {}),
+          ...(sv.talla ? { talla: sv.talla } : {}),
+          ...(sv.imc ? { imc: sv.imc } : {})
+        };
+        const listaGluActual = prev.consulta?.exploracion?.glucosa?.lista || [];
+        let nextGlucosaLista = listaGluActual;
+        if (sv.glucosa) {
+          const idxTriage = listaGluActual.findIndex((g) => g?.origen === 'triage');
+          const entryTriage = {
+            fecha: new Date().toISOString().split('T')[0],
+            categoria: 'Capilar (triage)',
+            valor: sv.glucosa,
+            origen: 'triage'
+          };
+          if (idxTriage >= 0) {
+            nextGlucosaLista = listaGluActual.map((g, i) => (i === idxTriage ? { ...g, ...entryTriage } : g));
+          } else {
+            nextGlucosaLista = [...listaGluActual, entryTriage];
+          }
+        }
+        const signosSinCambio =
+          JSON.stringify(prev.consulta?.exploracion?.signos || {}) === JSON.stringify(nextSignos)
+          && JSON.stringify(prev.consulta?.exploracion?.antropometria || {}) === JSON.stringify(nextAntropometria)
+          && JSON.stringify(listaGluActual) === JSON.stringify(nextGlucosaLista);
+        if (signosSinCambio) return prev;
+
         const nextExpediente = {
           ...prev,
           consulta: {
             ...prev.consulta,
             exploracion: {
               ...prev.consulta.exploracion,
-              signos: { ...prev.consulta.exploracion.signos, ...sv },
-              antropometria: {
-                ...prev.consulta.exploracion.antropometria,
-                ...(sv.peso ? { peso: sv.peso } : {}),
-                ...(sv.talla ? { talla: sv.talla } : {}),
-                ...(sv.imc ? { imc: sv.imc } : {})
+              signos: nextSignos,
+              antropometria: nextAntropometria,
+              glucosa: {
+                ...(prev.consulta.exploracion.glucosa || {}),
+                lista: nextGlucosaLista
               }
             }
           }
@@ -2940,22 +3006,10 @@ const ExpedienteClinico = () => {
         console.warn('[Expediente] Error no crítico al escribir bitácora:', e);
       }
 
-      try {
-        const telefonoPx = expediente?.px_info?.telefono || pacienteData?.telefonoMovil || '';
-        if (telefonoPx && citaId) {
-          const functionsInstance = getFunctions();
-          const enviarEncuesta = httpsCallable(functionsInstance, 'enviarEncuestaWhatsApp');
-          await enviarEncuesta({
-            telefono: telefonoPx,
-            nombrePaciente: pacienteNombre,
-            nombreDoctor: user?.nombre || '',
-            citaId,
-            pacienteId
-          });
-        }
-      } catch (encuestaError) {
-        console.warn('No se pudo enviar encuesta de satisfacción:', encuestaError);
-      }
+      // Encuesta WhatsApp: PAUSADA temporalmente (CF 500 / app Meta eliminada).
+      // No bloquear ni disparar el callable hasta reactivar la integración.
+      // const telefonoPx = expediente?.px_info?.telefono || pacienteData?.telefonoMovil || '';
+      // if (telefonoPx && citaId) { ... enviarEncuestaWhatsApp ... }
 
       // --- Limpieza ---
       setTempMed(DEFAULT_TEMP_MED);
@@ -2979,7 +3033,8 @@ const ExpedienteClinico = () => {
 
       saveCompletedRef.current = true;
       showToast("Expediente guardado correctamente.", "success");
-      setTimeout(() => goBackOr(navigate, exitFallbackPath), 1500);
+      // Destino explícito a Agenda (sin history.back: con URLs ofuscadas termina en /inicio o /login)
+      navigate(exitFallbackPath, { replace: true });
 
     } catch (e) {
       console.error('[Expediente] Error en executeSave:', e);
@@ -3396,14 +3451,7 @@ const ExpedienteClinico = () => {
     }
     const fechaNacimientoRaw = exp?.px_info?.fecha_nacimiento || pacienteData?.fechaNacimiento || pacienteData?.fecha_nacimiento || '';
     const fechaNacimientoDate = parseFirestoreDate(fechaNacimientoRaw);
-    const edadCalculada = (() => {
-      if (!fechaNacimientoDate) return '';
-      const hoy = new Date();
-      let years = hoy.getFullYear() - fechaNacimientoDate.getFullYear();
-      const monthDiff = hoy.getMonth() - fechaNacimientoDate.getMonth();
-      if (monthDiff < 0 || (monthDiff === 0 && hoy.getDate() < fechaNacimientoDate.getDate())) years -= 1;
-      return years > 0 ? String(years) : '';
-    })();
+    const edadCalculada = formatearEdadTexto(fechaNacimientoDate, '');
     const telefonoPaciente = exp?.px_info?.telefono
       || pacienteData?.telefonoMovil
       || pacienteData?.telefono
@@ -3693,8 +3741,8 @@ const ExpedienteClinico = () => {
                 {pacienteNombre || 'Cargando...'}
               </h1>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-px rounded border border-blue-100 uppercase tracking-wide">
-                  {expediente.px_info.edad || '--'}
+                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-px rounded border border-blue-100 tracking-wide normal-case">
+                  {formatearEdadTexto(pacienteData?.fechaNacimiento || expediente.px_info.fecha_nacimiento, expediente.px_info.edad || '--')}
                 </span>
                 {expediente.px_info.fecha_nacimiento && (() => {
                   const d = parseFirestoreDate(expediente.px_info.fecha_nacimiento);
@@ -4007,7 +4055,7 @@ const ExpedienteClinico = () => {
                     expediente={expediente}
                     updateCampo={updateCampo}
                     sexo={pacienteData?.sexo}
-                    edad={parseInt(expediente.px_info.edad)}
+                    edad={calcularEdad(pacienteData?.fechaNacimiento || expediente.px_info.fecha_nacimiento, 0)}
                     tempAlergia={tempAlergia}
                     setTempAlergia={setTempAlergia}
                     tempCirugia={tempCirugia}

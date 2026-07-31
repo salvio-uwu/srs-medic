@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit, Eye } from 'lucide-react';
-import { db, auth } from '../../config/firebase';
-import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
+import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit, Eye, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { db, auth, functions } from '../../config/firebase';
+import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth, deleteUser } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import useIsMobile from '../../hooks/useIsMobile';
 
@@ -83,9 +84,14 @@ const PERMISSION_GROUPS = [
     label: 'Recursos Humanos',
     items: [
       { id: 'rh.dashboard', label: 'Dashboard RH' },
-      { id: 'rh.auditoria', label: 'Auditoria empleados' },
-      { id: 'rh.inventario', label: 'Inventario macro' },
-      { id: 'rh.finanzas', label: 'Finanzas RH' }
+      { id: 'admin.usuarios', label: 'Gestion de usuarios' },
+      { id: 'admin.monitor', label: 'Monitor de actividad' },
+      { id: 'admin.supervision', label: 'Supervision operativa' },
+      { id: 'admin.reportes', label: 'Reportes' },
+      { id: 'admin.catalogos', label: 'Catalogos globales' },
+      { id: 'admin.dashboard', label: 'Dashboard admin' },
+      { id: 'shared.pacientes', label: 'Pacientes' },
+      { id: 'shared.agenda', label: 'Agenda general' },
     ]
   },
   {
@@ -137,7 +143,7 @@ const defaultPermissionIdsByRole = (role) => {
     case 'jefa_enfermeria':
       return ['enfermeria.jefatura', 'enfermeria.dashboard', 'shared.agenda'];
     case 'rh':
-      return ['rh.dashboard', 'rh.auditoria', 'rh.inventario', 'rh.finanzas'];
+      return ['rh.dashboard', 'admin.usuarios', 'admin.supervision', 'admin.monitor', 'admin.reportes', 'shared.agenda', 'shared.pacientes'];
     case 'intendencia':
       return ['intendencia.registro'];
     case 'recepcion':
@@ -181,6 +187,14 @@ const Usuarios = () => {
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('online');
+
+  // Reset password modal
+  const [resetTarget, setResetTarget] = useState(null); // { id, nombre, email, uid }
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetSaving, setResetSaving] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   const [consultoriosCatalogo, setConsultoriosCatalogo] = useState([]);
   const [sucursalesCatalogo, setSucursalesCatalogo] = useState([]);
@@ -732,6 +746,39 @@ const Usuarios = () => {
     }
   };
 
+  const openResetModal = (user) => {
+    setResetTarget({ id: user.id, nombre: user.nombre || 'sin nombre', email: user.email || '', uid: user.uid || user.id });
+    setResetPassword('');
+    setResetConfirm('');
+    setResetError('');
+    setResetSuccess(false);
+  };
+
+  const handleResetPassword = async () => {
+    setResetError('');
+    setResetSuccess(false);
+    if (!resetPassword || resetPassword.length < 6) {
+      setResetError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      setResetError('Las contraseñas no coinciden.');
+      return;
+    }
+    setResetSaving(true);
+    try {
+      const resetUserPasswordFn = httpsCallable(functions, 'resetUserPassword');
+      await resetUserPasswordFn({ uid: resetTarget.uid, newPassword: resetPassword });
+      setResetSuccess(true);
+      setResetPassword('');
+      setResetConfirm('');
+    } catch (error) {
+      setResetError(error.message || 'Error al restablecer la contraseña.');
+    } finally {
+      setResetSaving(false);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '20px 16px 40px' : '32px 28px 48px' }}>
       {/* ── CABECERA ── */}
@@ -881,26 +928,39 @@ const Usuarios = () => {
                     <Field label="Direccion" optional><input value={formData.direccion} onChange={(e) => updateForm('direccion', e.target.value)} style={inputCls} placeholder="Calle, numero, colonia" /></Field>
                   </div>
                 </div>
+                {!editingUserId && (
                 <div style={{ paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
                   <div style={{ marginBottom: 10 }}>
-                    <SectionLabel>{editingUserId ? 'Cambiar contrasena' : 'Contrasena de acceso'}</SectionLabel>
-                    {editingUserId && <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Deja en blanco para no modificar la contrasena actual.</p>}
+                    <SectionLabel>Contrasena de acceso</SectionLabel>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    <Field label={editingUserId ? 'Nueva contrasena' : 'Contrasena *'} optional={!!editingUserId}>
+                    <Field label="Contrasena *">
                       <div style={{ position: 'relative' }}>
                         <Lock size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                        <input type="password" minLength={6} value={formData.password} onChange={(e) => updateForm('password', e.target.value)} required={!editingUserId} style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder={editingUserId ? 'Deja vacio para no cambiar' : 'Minimo 6 caracteres'} />
+                        <input type="password" minLength={6} value={formData.password} onChange={(e) => updateForm('password', e.target.value)} required style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder="Minimo 6 caracteres" />
                       </div>
                     </Field>
-                    <Field label={editingUserId ? 'Confirmar nueva contrasena' : 'Confirmar contrasena *'} optional={!!editingUserId}>
+                    <Field label="Confirmar contrasena *">
                       <div style={{ position: 'relative' }}>
                         <Lock size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                        <input type="password" minLength={6} value={formData.confirmPassword} onChange={(e) => updateForm('confirmPassword', e.target.value)} required={!editingUserId} style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder={editingUserId ? 'Solo si cambias contrasena' : 'Repite la contrasena'} />
+                        <input type="password" minLength={6} value={formData.confirmPassword} onChange={(e) => updateForm('confirmPassword', e.target.value)} required style={{ padding: '8px 12px 8px 30px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#111', outline: 'none', background: '#fff', width: '100%', boxSizing: 'border-box' }} placeholder="Repite la contrasena" />
                       </div>
                     </Field>
                   </div>
                 </div>
+                )}
+                {editingUserId && (
+                <div style={{ paddingTop: 18, borderTop: '1px solid #e5e7eb' }}>
+                  <SectionLabel>Contrasena</SectionLabel>
+                  <div style={{ marginTop: 10, padding: '12px 14px', background: '#f3f4f6', borderRadius: 6, border: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Key size={16} style={{ color: '#6b7280', flexShrink: 0 }} />
+                    <div>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#4b5563' }}>El cambio de contraseña se realiza desde la tabla de usuarios.</p>
+                      <p style={{ margin: '2px 0 0', fontSize: 11, color: '#9ca3af' }}>Usa el botón <strong>Reset</strong> junto al nombre del usuario en la vista de tabla.</p>
+                    </div>
+                  </div>
+                </div>
+                )}
               </div>
             </div>
 
@@ -1097,7 +1157,14 @@ const Usuarios = () => {
                       </td>
                       {/* Acciones */}
                       <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => openResetModal(user)}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff', color: '#dc2626', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            title="Restablecer contraseña"
+                          >
+                            <Key size={12} /> Reset password
+                          </button>
                           <button
                             onClick={() => startEditUser(user)}
                             style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '5px', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', background: '#fff', cursor: 'pointer' }}
@@ -1182,6 +1249,9 @@ const Usuarios = () => {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, paddingTop: 8, borderTop: '1px solid #f3f4f6' }} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => openResetModal(user)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '6px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff', color: '#dc2626', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      <Key size={11} /> Reset password
+                    </button>
                     <button onClick={() => startEditUser(user)} style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '6px 10px', borderRadius: 6, border: '1px solid #111', background: '#111', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                       <Edit size={12} /> Editar
                     </button>
@@ -1198,6 +1268,94 @@ const Usuarios = () => {
         )}
 
       </div>
+      )}
+
+      {/* ── MODAL: Reset Password ── */}
+      {resetTarget && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(4px)' }} onClick={() => { if (!resetSaving) setResetTarget(null); }}>
+          <div style={{ background: '#fff', borderRadius: 12, width: 420, maxWidth: '90vw', boxShadow: '0 25px 60px rgba(0,0,0,.2)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Key size={16} style={{ color: '#dc2626' }} />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#111' }}>Restablecer contraseña</div>
+                  <div style={{ fontSize: 11, color: '#6b7280' }}>{resetTarget.nombre} — {resetTarget.email}</div>
+                </div>
+              </div>
+              <button onClick={() => setResetTarget(null)} disabled={resetSaving} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {!resetSuccess ? (
+              <div style={{ padding: '20px' }}>
+                <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <AlertCircle size={14} style={{ color: '#dc2626', flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ fontSize: 12, color: '#991b1b', lineHeight: 1.5 }}>
+                    Estás a punto de cambiar la contraseña de <strong>{resetTarget.nombre}</strong>. Esta acción es irreversible y quedará registrada en auditoría.
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <label style={{ display: 'block' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#4b5563', marginBottom: 6, display: 'block' }}>Nueva contraseña</span>
+                    <input
+                      type="password"
+                      value={resetPassword}
+                      onChange={(e) => { setResetPassword(e.target.value); setResetError(''); }}
+                      minLength={6}
+                      placeholder="Mínimo 6 caracteres"
+                      autoFocus
+                      style={{ width: '100%', padding: '10px 12px', border: `1px solid ${resetError ? '#fecaca' : '#d1d5db'}`, borderRadius: 6, fontSize: 14, color: '#111', outline: 'none', background: resetError ? '#fff5f5' : '#fff', boxSizing: 'border-box' }}
+                    />
+                  </label>
+                  <label style={{ display: 'block' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#4b5563', marginBottom: 6, display: 'block' }}>Confirmar contraseña</span>
+                    <input
+                      type="password"
+                      value={resetConfirm}
+                      onChange={(e) => { setResetConfirm(e.target.value); setResetError(''); }}
+                      minLength={6}
+                      placeholder="Repite la contraseña"
+                      style={{ width: '100%', padding: '10px 12px', border: `1px solid ${resetError ? '#fecaca' : '#d1d5db'}`, borderRadius: 6, fontSize: 14, color: '#111', outline: 'none', background: resetError ? '#fff5f5' : '#fff', boxSizing: 'border-box' }}
+                    />
+                  </label>
+                  {resetError && (
+                    <div style={{ padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, fontSize: 12, color: '#dc2626', fontWeight: 600 }}>{resetError}</div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+                  <button onClick={() => setResetTarget(null)} disabled={resetSaving} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#4b5563', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                    Cancelar
+                  </button>
+                  <button onClick={handleResetPassword} disabled={resetSaving || !resetPassword || !resetConfirm}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '8px 20px', borderRadius: 6, border: '1px solid #dc2626', background: '#dc2626',
+                      color: '#fff', fontSize: 12, fontWeight: 700, cursor: resetSaving || !resetPassword || !resetConfirm ? 'not-allowed' : 'pointer',
+                      opacity: resetSaving || !resetPassword || !resetConfirm ? 0.5 : 1,
+                    }}>
+                    {resetSaving ? <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Key size={12} />}
+                    {resetSaving ? 'Cambiando...' : 'Cambiar contraseña'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+                <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                  <CheckCircle2 size={24} style={{ color: '#059669' }} />
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#111', marginBottom: 4 }}>Contraseña restablecida</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+                  La nueva contraseña para <strong>{resetTarget.nombre}</strong> se ha guardado correctamente.
+                </div>
+                <button onClick={() => setResetTarget(null)}
+                  style={{ padding: '8px 24px', borderRadius: 6, border: '1px solid #111', background: '#111', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                  Cerrar
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

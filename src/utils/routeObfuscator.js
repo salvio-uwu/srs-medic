@@ -10,7 +10,7 @@
  */
 
 // Rutas que NO se ofuscan (login, portal, compartido, raiz)
-const SKIP_PREFIXES = ['/login', '/portal', '/compartido'];
+const SKIP_PREFIXES = ['/login', '/portal', '/inicio', '/compartido'];
 
 const shouldObfuscate = (pathname) => {
   if (pathname === '/' || pathname === '') return false;

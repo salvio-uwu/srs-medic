@@ -1,0 +1,15 @@
+---
+description: Versionado y deploy multi-nodo
+globs: package.json,deploy.sh,public/version.json,release-notes.json,VERSIONADO.md,dist/**
+alwaysApply: false
+---
+
+# Deploy y versionado
+
+- Versión en `package.json` → `__BUILD_VERSION__` (Vite) y `public/version.json`
+- Cliente detecta updates vía `useAppVersion` (poll cada 2 min)
+- Deploy: `deploy.sh` → rsync a nodos Tailscale + Docker (`Dockerfile.runtime`)
+- Meilisearch opcional: `docker compose --profile meili`
+- Tauri desktop: release en tags `v*` (`.github/workflows/release.yml`)
+- No commitear secretos ni `.env` con credenciales
+- `dist/` es build output — no editar manualmente salvo flujo explícito

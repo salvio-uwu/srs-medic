@@ -9,6 +9,32 @@ import { useAuth } from './AuthContext';
 
 const SessionLocationContext = createContext();
 
+const LOCATION_SESSION_KEY = (uid) => `srs_loc_confirmed_${uid}`;
+
+const readLocationSession = (uid) => {
+  if (!uid) return null;
+  try {
+    const raw = sessionStorage.getItem(LOCATION_SESSION_KEY(uid));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeLocationSession = (uid, payload) => {
+  if (!uid) return;
+  try {
+    sessionStorage.setItem(LOCATION_SESSION_KEY(uid), JSON.stringify(payload));
+  } catch {}
+};
+
+const clearLocationSession = (uid) => {
+  if (!uid) return;
+  try {
+    sessionStorage.removeItem(LOCATION_SESSION_KEY(uid));
+  } catch {}
+};
+
 const normalizeRole = (role = '') =>
   String(role || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
@@ -92,97 +118,89 @@ export const SessionLocationProvider = ({ children }) => {
     // Solo restaurar cuando: hay uid, catálogos listos, user data disponible, y no inicializado
     if (!uid || !catalogosReady || !userDataReadyRef.current || initializedRef.current) return;
 
-    console.log('[DEBUG restore] uid:', uid, 'userDataReady:', userDataReadyRef.current, 'initialized:', initializedRef.current);
-    console.log('[DEBUG restore] sessionSucursalId:', user?.sessionSucursalId);
-    console.log('[DEBUG restore] sessionConsultorioId:', user?.sessionConsultorioId);
-
-    // Intentar restaurar desde los campos de sesión guardados
+    // Prefill desde sesión guardada.
+    // Si en esta pestaña/navegador ya se confirmó ubicación (sessionStorage),
+    // se restaura como confirmada — recargar no vuelve a pedirla.
+    // Al cerrar sesión se limpia y vuelve a ser obligatorio.
     const savedSucursalId = user?.sessionSucursalId || '';
     const savedConsultorioId = user?.sessionConsultorioId || '';
-
-    if (isDoctorRole && savedConsultorioId) {
-      const found = catalogoConsultorios.find((c) => c.id === savedConsultorioId);
-      if (found) {
-        setSessionConsultorio(found);
-        const suc = catalogoSucursales.find((s) => s.id === found.sucursalId);
-        setSessionSucursal(suc || { id: found.sucursalId, nombre: found.sucursal || 'Sin nombre' });
-        setLocationConfirmed(true);
-        initializedRef.current = true;
-        return;
-      }
-    }
-
-    if (savedSucursalId) {
-      const found = catalogoSucursales.find((s) => s.id === savedSucursalId);
-      if (found) {
-        setSessionSucursal(found);
-        if (isDoctorRole) {
-          // Intentar restaurar consultorio también
-          const con = catalogoConsultorios.find((c) => c.id === savedConsultorioId);
-          if (con) setSessionConsultorio(con);
-        }
-        setLocationConfirmed(true);
-        initializedRef.current = true;
-        return;
-      }
-    }
-
-    // Intentar restaurar desde campos legacy como fallback
     const legacySucursalId = user?.sucursalActualId || user?.sucursalId || '';
     const legacyConsultorioId = user?.consultorioActualId || user?.consultorioRecurrenteId || user?.consultorioId || '';
 
-    if (isDoctorRole && legacyConsultorioId) {
-      const found = catalogoConsultorios.find((c) => c.id === legacyConsultorioId);
+    const consultorioId = savedConsultorioId || legacyConsultorioId;
+    const sucursalId = savedSucursalId || legacySucursalId;
+    const browserSession = readLocationSession(uid);
+
+    const applyDoctor = (found) => {
+      setSessionConsultorio(found);
+      const suc = catalogoSucursales.find((s) => s.id === found.sucursalId);
+      setSessionSucursal(suc || { id: found.sucursalId, nombre: found.sucursal || 'Sin nombre' });
+      const confirmed = !!(
+        browserSession?.confirmed
+        && browserSession.consultorioId === found.id
+      );
+      setLocationConfirmed(confirmed);
+    };
+
+    const applySucursal = (found) => {
+      setSessionSucursal(found);
+      let consultorio = null;
+      if (isDoctorRole) {
+        consultorio = catalogoConsultorios.find((c) => c.id === consultorioId) || null;
+        if (consultorio) setSessionConsultorio(consultorio);
+      }
+      const confirmed = !!(
+        browserSession?.confirmed
+        && browserSession.sucursalId === found.id
+        && (!isDoctorRole || (consultorio && browserSession.consultorioId === consultorio.id))
+      );
+      // Médico sin consultorio en sesión del navegador: no confirmar
+      if (isDoctorRole && !consultorio) {
+        setLocationConfirmed(false);
+      } else {
+        setLocationConfirmed(confirmed);
+      }
+    };
+
+    if (isDoctorRole && consultorioId) {
+      const found = catalogoConsultorios.find((c) => c.id === consultorioId);
       if (found) {
-        setSessionConsultorio(found);
-        const suc = catalogoSucursales.find((s) => s.id === found.sucursalId);
-        setSessionSucursal(suc || { id: found.sucursalId, nombre: found.sucursal || 'Sin nombre' });
-        setLocationConfirmed(true);
-        // Persistir los campos de sesión para migrar de legacy a nuevo formato
-        setDoc(doc(db, 'users', uid), {
-          sessionSucursalId: suc?.id || found.sucursalId || '',
-          sessionSucursalNombre: suc?.nombre || found.sucursal || '',
-          sessionConsultorioId: found.id,
-          sessionConsultorioNombre: found.nombre || ''
-        }, { merge: true }).catch(() => {});
+        applyDoctor(found);
         initializedRef.current = true;
         return;
       }
     }
 
-    if (legacySucursalId) {
-      const found = catalogoSucursales.find((s) => s.id === legacySucursalId);
+    if (sucursalId) {
+      const found = catalogoSucursales.find((s) => s.id === sucursalId);
       if (found) {
-        setSessionSucursal(found);
-        if (isDoctorRole) {
-          const con = catalogoConsultorios.find((c) => c.id === legacyConsultorioId);
-          if (con) setSessionConsultorio(con);
-        }
-        setLocationConfirmed(true);
-        // Migrar campos legacy a formato de sesión
-        setDoc(doc(db, 'users', uid), {
-          sessionSucursalId: found.id,
-          sessionSucursalNombre: found.nombre || ''
-        }, { merge: true }).catch(() => {});
+        applySucursal(found);
         initializedRef.current = true;
         return;
       }
     }
 
-    // No hay sesión previa guardada — no confirmar, el usuario debe seleccionar
+    setLocationConfirmed(false);
     initializedRef.current = true;
   }, [uid, catalogosReady, userDataReadyRef.current, isDoctorRole, catalogoSucursales, catalogoConsultorios,
       user?.sessionSucursalId, user?.sessionConsultorioId,
       user?.sucursalActualId, user?.sucursalId, user?.consultorioActualId, user?.consultorioRecurrenteId, user?.consultorioId]);
 
-  // ── 3. Reset al cambiar de usuario ──
+  // ── 3. Reset al cambiar de usuario / logout ──
+  const lastUidRef = useRef(null);
   useEffect(() => {
-    if (!uid) {
-      setSessionSucursal(null);
-      setSessionConsultorio(null);
-      setLocationConfirmed(false);
-      initializedRef.current = false;
+    if (uid) {
+      lastUidRef.current = uid;
+      return;
     }
+    if (lastUidRef.current) {
+      clearLocationSession(lastUidRef.current);
+      lastUidRef.current = null;
+    }
+    setSessionSucursal(null);
+    setSessionConsultorio(null);
+    setLocationConfirmed(false);
+    initializedRef.current = false;
   }, [uid]);
 
   // ── 4. Función para establecer ubicación ──
@@ -206,14 +224,18 @@ export const SessionLocationProvider = ({ children }) => {
       sucursal = catalogoSucursales.find((s) => s.id === sucursalId) || null;
     }
 
-    if (!sucursal) return; // No se puede confirmar sin sucursal
+    // Médicos deben confirmar consultorio; el resto, sucursal
+    if (isDoctorRole && !consultorio) return;
+    if (!sucursal) return;
 
     setSessionSucursal(sucursal);
     setSessionConsultorio(consultorio);
     setLocationConfirmed(true);
-
-    console.log('[DEBUG confirmLocation] sessionConsultorio:', consultorio?.id, consultorio?.nombre);
-    console.log('[DEBUG confirmLocation] sessionSucursal:', sucursal?.id, sucursal?.nombre);
+    writeLocationSession(uid, {
+      confirmed: true,
+      sucursalId: sucursal.id || '',
+      consultorioId: consultorio?.id || '',
+    });
 
     // Persistir en Firestore
     try {
@@ -296,6 +318,7 @@ export const SessionLocationProvider = ({ children }) => {
     setSessionConsultorio(null);
     setLocationConfirmed(false);
     initializedRef.current = false;
+    clearLocationSession(uid);
     try {
       await setDoc(doc(db, 'users', uid), {
         sessionSucursalId: '',

@@ -98,7 +98,7 @@ const Bienvenida = () => {
   }, []);
 
   useEffect(() => {
-    if (user?.uid) navigate('/portal', { replace: true });
+    if (user?.uid) navigate('/inicio', { replace: true });
   }, [user, navigate]);
 
   const cls = (...extra) => ['bv-fade', ...extra, mounted ? 'bv-in' : ''].join(' ');

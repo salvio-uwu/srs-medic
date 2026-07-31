@@ -5,6 +5,7 @@ const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@googl
 const { google } = require("googleapis");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 initializeApp();
 const firestoreDb = getFirestore();
@@ -385,6 +386,8 @@ exports.generarBoletinMedicoSeguro = onCall(
 exports.askGemini = onCall(
   { secrets: [geminiApiKey], invoker: "public", cors: true, timeoutSeconds: 90 },
   async (request) => {
+    console.log("askGemini: llamado recibido, auth:", !!request.auth);
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "No autorizado.");
     }
@@ -392,39 +395,51 @@ exports.askGemini = onCall(
     const { prompt } = request.data;
     if (!prompt) throw new HttpsError("invalid-argument", "Falta el prompt.");
 
+    console.log("askGemini: prompt:", prompt.slice(0, 80));
+
+    // Vertex AI — usa la cuenta de servicio del proyecto, no API key
     try {
-      const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash",
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
+      const { VertexAI } = require("@google-cloud/vertexai");
+      const vertexAI = new VertexAI({
+        project: "srs-feacb",
+        location: "us-central1",
       });
 
-      let lastError = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      // Probar modelos de Vertex AI en orden
+      const vertexModels = ["gemini-2.0-flash-001", "gemini-1.5-flash-001", "gemini-1.5-pro-001", "gemini-2.0-flash", "gemini-1.5-flash"];
+
+      for (const modelName of vertexModels) {
         try {
-          const result = await model.generateContent(prompt);
-          return { result: result.response.text() };
+          console.log("askGemini: probando Vertex AI", modelName);
+          const generativeModel = vertexAI.getGenerativeModel({ model: modelName });
+          const result = await generativeModel.generateContent(prompt);
+          const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (text) {
+            console.log("askGemini: ÉXITO Vertex AI", modelName, "->", text.slice(0, 60));
+            return { result: text };
+          }
+          console.log("askGemini: Vertex AI", modelName, "respuesta vacía");
         } catch (e) {
-          lastError = e;
-          const msg = String(e?.message || "");
-          const esRateLimit = msg.includes("429") || msg.includes("Resource exhausted") || msg.includes("Too Many Requests");
-          if (!esRateLimit || attempt === 2) throw e;
-          const delay = Math.pow(2, attempt + 2) * 1000;
-          console.log(`askGemini: rate limit, reintento ${attempt + 1}/3 en ${delay}ms`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          console.log("askGemini: Vertex AI", modelName, "falló:", String(e?.message || e).slice(0, 100));
         }
       }
-      throw lastError;
-      
-    } catch (error) {
-      console.error("Error en Gemini:", error);
-      const detalle = error?.message || String(error);
-      throw new HttpsError("internal", `Fallo al consultar a Gemini: ${detalle}`);
+
+      throw new Error("Vertex AI: ningún modelo disponible");
+    } catch (vertexError) {
+      console.error("askGemini: Vertex AI falló:", String(vertexError?.message || vertexError).slice(0, 120));
+
+      // Fallback: intentar Generative Language API con la API key
+      try {
+        const genAI = new GoogleGenerativeAI(geminiApiKey.value());
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent(prompt);
+        return { result: result.response.text() };
+      } catch (genError) {
+        console.error("askGemini: API key fallback también falló:", String(genError?.message || genError).slice(0, 100));
+      }
+
+      throw new HttpsError("internal", "Error Gemini: " + (vertexError.message || String(vertexError)));
     }
 });
 
@@ -809,7 +824,87 @@ exports.enviarEncuestaWhatsApp = onCall(
 );
 
 // ============================================================================
-// FUNCIÓN 7: WEBHOOK MULTI-PASO PARA ENCUESTAS DE SATISFACCIÓN (CON IA)
+// FUNCIÓN 8: RESET DE CONTRASEÑA POR ADMIN
+// Permite a un administrador cambiar la contraseña de cualquier usuario
+// directamente sin enviar correo de restablecimiento.
+// ============================================================================
+exports.resetUserPassword = onCall(
+  async (request) => {
+    // 1. Verificar autenticación
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar esta acción.");
+    }
+
+    const callerUid = request.auth.uid;
+
+    // 2. Verificar que el caller es admin
+    const callerDoc = await firestoreDb.collection("users").doc(callerUid).get();
+    if (!callerDoc.exists) {
+      throw new HttpsError("permission-denied", "Usuario no encontrado en el sistema.");
+    }
+
+    const callerData = callerDoc.data();
+    const callerRole = (callerData.rol || "").toLowerCase().trim();
+    const adminRoles = ["admin", "admin_maestro", "administrador"];
+    if (!adminRoles.includes(callerRole)) {
+      throw new HttpsError("permission-denied", "Solo un administrador puede restablecer contraseñas.");
+    }
+
+    // 3. Validar datos de entrada
+    const { uid, newPassword } = request.data;
+    if (!uid || !newPassword) {
+      throw new HttpsError("invalid-argument", "Se requiere el UID del usuario y la nueva contraseña.");
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      throw new HttpsError("invalid-argument", "La contraseña debe tener al menos 6 caracteres.");
+    }
+
+    // 4. Verificar que el usuario destino existe en Firestore
+    const targetDoc = await firestoreDb.collection("users").doc(uid).get();
+    if (!targetDoc.exists) {
+      throw new HttpsError("not-found", "El usuario destino no existe en el sistema.");
+    }
+
+    // 5. Cambiar la contraseña con Admin SDK
+    try {
+      await getAuth().updateUser(uid, { password: newPassword });
+    } catch (authError) {
+      console.error("Error al actualizar contraseña en Auth:", authError);
+      if (authError.code === "auth/user-not-found") {
+        throw new HttpsError("not-found", "El usuario no existe en Firebase Authentication.");
+      }
+      throw new HttpsError("internal", "No se pudo actualizar la contraseña. Verifica que el usuario tenga un proveedor de correo electrónico/contraseña.");
+    }
+
+    // 6. Registrar la acción en Firestore (auditoría)
+    const auditPayload = {
+      accion: "reset_password",
+      adminUid: callerUid,
+      adminNombre: callerData.nombre || "admin",
+      adminEmail: callerData.email || "",
+      targetUid: uid,
+      targetNombre: targetDoc.data().nombre || "sin nombre",
+      targetEmail: targetDoc.data().email || "",
+      timestamp: FieldValue.serverTimestamp(),
+    };
+
+    try {
+      await firestoreDb.collection("auditoria_password_resets").add(auditPayload);
+    } catch (auditErr) {
+      console.error("Error al registrar auditoría de reset:", auditErr);
+      // No fallar la operación por error de auditoría
+    }
+
+    return {
+      success: true,
+      message: "Contraseña restablecida correctamente.",
+      targetUid: uid,
+    };
+  }
+);
+
+// ============================================================================
+// FUNCIÓN 9: WEBHOOK MULTI-PASO PARA ENCUESTAS DE SATISFACCIÓN (CON IA)
 // Usa Gemini para generar respuestas personalizadas y naturales.
 // Paso 1: Recibe calificación general (Excelente/Buena/Regular)
 // Paso 2: Envía lista interactiva de aspectos → recibe selección

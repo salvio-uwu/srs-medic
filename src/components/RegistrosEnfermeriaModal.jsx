@@ -102,8 +102,10 @@ const REGISTRO_TABS = [
 ];
 
 const toMedicationSearchRow = (m) => {
+  const id = m.id || '';
   const nombreComercial = m.nombreComercial || m['*NOMBRE COMERCIAL'] || '';
   const marca = m.marca || m['*MARCA'] || '';
+  const laboratorio = m.laboratorio || m.LABORATORIO || '';
   const sustanciaActiva = m.sustanciasActivas || m['*SUSTANCIA(S) ACTIVA(S)'] || '';
   const presentacion = m.presentacion || m['*PRESENTACIÓN'] || m['*PRESENTACION'] || '';
   const dosis = m.dosis || m.DOSIS || '';
@@ -111,12 +113,79 @@ const toMedicationSearchRow = (m) => {
   const opcion2 = m.opcion2 || m['OPCION 2'] || '';
   const advertencia = m.advertencia || m['ADVERTENCIA '] || '';
   const embarazo = m.embarazo || m.EMBARAZO || '';
+  const numeroAcomodo = String(m.numeroAcomodo || m.acomodo || m.clave || m.codigo || '').trim();
+
+  const searchText = normalizeText([
+    id, nombreComercial, marca, laboratorio, sustanciaActiva, presentacion,
+    dosis, indicacion, opcion2, advertencia, embarazo, numeroAcomodo
+  ].join(' '));
+
+  // Tokens individuales + prefijos cortos (ej. "para" → "paracetamol")
+  const tokenSource = normalizeText([
+    nombreComercial, marca, laboratorio, sustanciaActiva, presentacion, dosis, numeroAcomodo, id
+  ].join(' '));
+  const tokens = Array.from(new Set(
+    tokenSource.split(/\s+/).filter(Boolean).flatMap((t) => {
+      const parts = [t];
+      if (t.length >= 4) parts.push(t.slice(0, 4), t.slice(0, 5));
+      return parts;
+    })
+  ));
 
   return {
-    nombreComercial, marca, sustanciaActiva, presentacion, dosis, indicacion, opcion2, advertencia, embarazo,
-    searchText: normalizeText(`${nombreComercial} ${marca} ${sustanciaActiva} ${presentacion} ${dosis} ${indicacion} ${opcion2} ${advertencia} ${embarazo}`)
+    id, nombreComercial, marca, laboratorio, sustanciaActiva, presentacion, dosis,
+    indicacion, opcion2, advertencia, embarazo, numeroAcomodo,
+    searchText, tokens
   };
 };
+
+const scoreMedicationMatch = (med, queryText) => {
+  if (!queryText) return 0;
+  const q = normalizeText(queryText);
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
+
+  let score = 0;
+  const nombre = normalizeText(med.nombreComercial);
+  const sustancia = normalizeText(med.sustanciaActiva);
+  const acomodo = normalizeText(med.numeroAcomodo);
+  const marca = normalizeText(med.marca);
+
+  if (acomodo && (acomodo === q || acomodo.startsWith(q))) score += 120;
+  if (nombre.startsWith(q)) score += 100;
+  if (sustancia.startsWith(q)) score += 80;
+  if (marca.startsWith(q)) score += 60;
+  if (med.searchText.includes(q)) score += 40;
+
+  const allTokensHit = tokens.every((t) =>
+    med.searchText.includes(t) || med.tokens.some((tok) => tok.startsWith(t) || t.startsWith(tok))
+  );
+  if (!allTokensHit) return 0;
+
+  tokens.forEach((t) => {
+    if (acomodo.includes(t)) score += 25;
+    if (nombre.includes(t)) score += 18;
+    if (sustancia.includes(t)) score += 14;
+    if (marca.includes(t)) score += 10;
+    if (med.tokens.some((tok) => tok.startsWith(t))) score += 8;
+  });
+
+  return score;
+};
+
+const normalizeMovimientoArea = (area = '') => {
+  const a = String(area || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  if (a.startsWith('recepcion')) return 'Recepción';
+  if (a.startsWith('entrada')) return 'Entrada';
+  if (a.startsWith('salida')) return 'Salida';
+  return String(area || '').trim();
+};
+
+const MOVIMIENTOS_FARMACIA = ['Recepción', 'Entrada', 'Salida'];
 
 /* ═══════════════════════════════════════════════════════════════
    COMPONENTE PRINCIPAL
@@ -158,8 +227,24 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const [formLimpieza, setFormLimpieza] = useState({ area: 'Consultorios', tareas: { col1: false, col2: false, col3: false, col4: false } });
   
   const formFarmaciaInicial = {
-    tipo_movimiento: 'Recepción', factura: '', compuesto: '', presentacion: '', forma: '', 
-    lote: '', caducidad: '', cantidad: '', observaciones: '', criterio_empaque: true, criterio_etiqueta: true
+    tipo_movimiento: 'Recepción',
+    factura: '',
+    compuesto: '',
+    presentacion: '',
+    forma: '',
+    lote: '',
+    caducidad: '',
+    cantidad: '',
+    observaciones: '',
+    criterio_empaque: true,
+    criterio_etiqueta: true,
+    medicamentoId: '',
+    numeroAcomodo: '',
+    marca: '',
+    laboratorio: '',
+    proveedor: '',
+    sucursalOrigen: '',
+    sucursalDestino: ''
   };
   const [formFarmacia, setFormFarmacia] = useState(formFarmaciaInicial);
   const [pedidoMedicamentoRows, setPedidoMedicamentoRows] = useState([]);
@@ -169,6 +254,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const [mostrarMeds, setMostrarMeds] = useState(false);
   const [indiceMeds, setIndiceMeds] = useState(-1);
   const [iaLoading, setIaLoading] = useState(false);
+  const [catalogoMedsCount, setCatalogoMedsCount] = useState(0);
   const fileInputRef = useRef(null);
   const toastTimerRef = useRef(null);
 
@@ -215,6 +301,10 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
     if (matched) {
       setSucursalActiva(matched.nombre || matched.id);
+      setFormFarmacia((prev) => ({
+        ...prev,
+        sucursalDestino: prev.sucursalDestino || matched.nombre || matched.id
+      }));
     }
     sucursalAutoSetRef.current = true;
   }, [catalogoSucursales, sessionSucursal, sucursal, sucursalActiva]);
@@ -222,15 +312,29 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   // ─── Carga medicamentos ───
   useEffect(() => {
     const initData = async () => {
-      if (!cacheMedicamentosIndex) {
-        try {
-          const snap = await getDocs(collection(db, 'catalogo_medicamentos'));
-          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((m) => m.activo !== false).map(toMedicationSearchRow).filter((m) => m.nombreComercial || m.sustanciaActiva);
-          if (rows.length > 0) { cacheMedicamentosIndex = rows; return; }
-          const res = await fetch('/data/medicamentos.json');
-          if (res.ok) { const raw = await res.json(); cacheMedicamentosIndex = raw.map(toMedicationSearchRow); }
-        } catch (e) { console.error("Error cargando medicamentos JSON", e); }
+      if (cacheMedicamentosIndex) {
+        setCatalogoMedsCount(cacheMedicamentosIndex.length);
+        return;
       }
+      try {
+        const snap = await getDocs(collection(db, 'catalogo_medicamentos'));
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((m) => m.activo !== false)
+          .map(toMedicationSearchRow)
+          .filter((m) => m.nombreComercial || m.sustanciaActiva);
+        if (rows.length > 0) {
+          cacheMedicamentosIndex = rows;
+          setCatalogoMedsCount(rows.length);
+          return;
+        }
+        const res = await fetch('/data/medicamentos.json');
+        if (res.ok) {
+          const raw = await res.json();
+          cacheMedicamentosIndex = raw.map((m, i) => toMedicationSearchRow({ ...m, id: m.id || `json_${i}` }));
+          setCatalogoMedsCount(cacheMedicamentosIndex.length);
+        }
+      } catch (e) { console.error('Error cargando catalogo_medicamentos', e); }
     };
     initData();
   }, []);
@@ -287,27 +391,37 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   // ─── Buscador autocompletado medicamentos ───
   useEffect(() => {
     const queryText = normalizeText(formFarmacia.compuesto);
-    if (queryText.length <= 2 || !cacheMedicamentosIndex) { setSugerenciasMeds([]); setMostrarMeds(false); return undefined; }
+    if (queryText.length < 2 || !cacheMedicamentosIndex) {
+      setSugerenciasMeds([]);
+      setMostrarMeds(false);
+      return undefined;
+    }
     const timer = setTimeout(() => {
-      const results = cacheMedicamentosIndex.filter((m) => m.searchText.includes(queryText)).slice(0, 12);
-      setSugerenciasMeds(results); setMostrarMeds(true);
-    }, 140);
+      const ranked = cacheMedicamentosIndex
+        .map((m) => ({ m, score: scoreMedicationMatch(m, queryText) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.m.nombreComercial.localeCompare(b.m.nombreComercial, 'es'))
+        .slice(0, 15)
+        .map((x) => x.m);
+      setSugerenciasMeds(ranked);
+      setMostrarMeds(ranked.length > 0);
+    }, 100);
     return () => clearTimeout(timer);
   }, [formFarmacia.compuesto]);
 
   // ─── Progreso del día (realtime) ───
   useEffect(() => {
     const hoyStr = new Date().toLocaleDateString('en-CA');
-    const q = query(collection(db, "bitacoras_operativas"), where("fechaString", "==", hoyStr), where("sucursal", "==", sucursalActiva || sucursal));
+    const q = query(collection(db, 'bitacoras_operativas'), where('fechaString', '==', hoyStr), where('sucursal', '==', sucursalActiva || sucursal));
     const unsub = onSnapshot(q, (snap) => {
-      const logs = snap.docs.map(d => d.data());
+      const logs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setProgresoHoy({
-        temp_8: logs.some(l => l.tipo === 'Temperatura' && l.turno === '8:00 a.m.'),
-        temp_16: logs.some(l => l.tipo === 'Temperatura' && l.turno === '4:00 p.m.'),
-        temp_22: logs.some(l => l.tipo === 'Temperatura' && l.turno === '10:00 p.m.'),
-        cloro_1: logs.some(l => l.tipo === 'Cloro y PH'),
-        limpieza: new Set(logs.filter(l => l.tipo === 'Limpieza').map(l => l.area)).size,
-        pedido_medicamento: logs.some(l => l.tipo === 'Pedido de medicamento')
+        temp_8: logs.some((l) => l.tipo === 'Temperatura' && l.turno === '8:00 a.m.'),
+        temp_16: logs.some((l) => l.tipo === 'Temperatura' && l.turno === '4:00 p.m.'),
+        temp_22: logs.some((l) => l.tipo === 'Temperatura' && l.turno === '10:00 p.m.'),
+        cloro_1: logs.some((l) => l.tipo === 'Cloro y PH'),
+        limpieza: new Set(logs.filter((l) => l.tipo === 'Limpieza').map((l) => l.area)).size,
+        pedido_medicamento: logs.some((l) => l.tipo === 'Pedido de medicamento')
       });
     });
     return () => unsub();
@@ -330,8 +444,19 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         const result = await askGemini({ prompt: [prompt, { inlineData: { data: base64Data, mimeType: file.type } }] });
         let rawText = result.data.result.replace(/```json/g, "").replace(/```/g, "").trim();
         const info = JSON.parse(rawText);
-        setFormFarmacia(prev => ({ ...prev, factura: info.factura || prev.factura, compuesto: info.compuesto || prev.compuesto, lote: info.lote || prev.lote, cantidad: info.cantidad || prev.cantidad, caducidad: info.caducidad || prev.caducidad }));
-        showToast("Datos extraídos correctamente", "success");
+        setFormFarmacia(prev => ({
+          ...prev,
+          factura: info.factura || prev.factura,
+          compuesto: info.compuesto || prev.compuesto,
+          lote: info.lote || prev.lote,
+          cantidad: info.cantidad || prev.cantidad,
+          caducidad: info.caducidad || prev.caducidad,
+          medicamentoId: '',
+          numeroAcomodo: '',
+          marca: '',
+          laboratorio: ''
+        }));
+        showToast('Datos extraídos. Selecciona el medicamento del catálogo para confirmar.', 'success');
         setIaLoading(false);
       };
     } catch (err) { setIaLoading(false); showToast("Fallo en el análisis de la imagen. Ingrese datos manualmente.", "error"); }
@@ -339,9 +464,16 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
   const handleBuscadorMedicamentos = (e) => {
     const val = e.target.value;
-    setFormFarmacia({ ...formFarmacia, compuesto: val });
+    setFormFarmacia({
+      ...formFarmacia,
+      compuesto: val,
+      medicamentoId: '',
+      numeroAcomodo: '',
+      marca: '',
+      laboratorio: ''
+    });
     setIndiceMeds(-1);
-    if (normalizeText(val).length <= 2) { setSugerenciasMeds([]); setMostrarMeds(false); }
+    if (normalizeText(val).length < 2) { setSugerenciasMeds([]); setMostrarMeds(false); }
   };
 
   const seleccionarMedicamento = (med) => {
@@ -357,12 +489,21 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     else if (pres.includes('OVU') || sust.includes('OVU')) formaInferida = 'Óvulo';
     else if (pres.includes('SOL') || sust.includes('SOL')) formaInferida = 'Solución';
     else if (pres.includes('GEL') || sust.includes('GEL')) formaInferida = 'Gel';
-    else if (pres.includes('GOTAS') || sust.includes('GOTAS')) formaInferida = 'Gotas';
-    else if (pres.includes('POMADA') || sust.includes('POMADA')) formaInferida = 'Pomada';
+
     const nombreComercial = med.nombreComercial || '';
-    const sustanciaActiva = med.sustanciaActiva ? `(${med.sustanciaActiva})` : '';
-    setFormFarmacia({ ...formFarmacia, compuesto: `${nombreComercial} ${sustanciaActiva}`.trim(), presentacion: med.presentacion || '', forma: formaInferida });
+    const sustanciaActiva = med.sustanciaActiva || '';
+    setFormFarmacia({
+      ...formFarmacia,
+      compuesto: `${nombreComercial} ${sustanciaActiva}`.trim(),
+      presentacion: med.presentacion || '',
+      forma: formaInferida,
+      medicamentoId: med.id || '',
+      numeroAcomodo: med.numeroAcomodo || '',
+      marca: med.marca || '',
+      laboratorio: med.laboratorio || ''
+    });
     setMostrarMeds(false);
+    setSugerenciasMeds([]);
   };
 
   const pedidoMedicamentoRowsFiltrados = useMemo(() => {
@@ -431,7 +572,48 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         datosGuardar = { ...datosGuardar, tipo: 'Limpieza', area: formLimpieza.area, detalles: formLimpieza.tareas };
       } else if (tipoRegistro === 'farmacia') {
         if (!formFarmacia.compuesto || !formFarmacia.cantidad || !formFarmacia.caducidad || !formFarmacia.lote) { setLoading(false); return showToast("Llene Compuesto, Cantidad, Lote y Caducidad.", "error"); }
-        datosGuardar = { ...datosGuardar, tipo: 'Farmacia', area: formFarmacia.tipo_movimiento, detalles: formFarmacia };
+        if (!formFarmacia.medicamentoId) {
+          setLoading(false);
+          return showToast('Selecciona el medicamento desde el catálogo admin (elige una sugerencia).', 'error');
+        }
+        const movimiento = normalizeMovimientoArea(formFarmacia.tipo_movimiento);
+        const sucursalDestino = (formFarmacia.sucursalDestino || sucursalActiva || '').trim();
+        const sucursalOrigen = (formFarmacia.sucursalOrigen || '').trim();
+        if (!sucursalDestino) {
+          setLoading(false);
+          return showToast('Indica la sucursal destino del movimiento.', 'error');
+        }
+        if (movimiento === 'Recepción' && !(formFarmacia.proveedor || '').trim()) {
+          setLoading(false);
+          return showToast('Indica de quién/de dónde se recibe (proveedor u origen).', 'error');
+        }
+        if ((movimiento === 'Entrada' || movimiento === 'Salida') && !sucursalOrigen) {
+          setLoading(false);
+          return showToast(movimiento === 'Entrada' ? 'Indica de dónde entra el insumo.' : 'Indica de dónde sale el insumo.', 'error');
+        }
+
+        const detalles = {
+          ...formFarmacia,
+          tipo_movimiento: movimiento,
+          criterio_empaque: !!formFarmacia.criterio_empaque,
+          criterio_etiqueta: !!formFarmacia.criterio_etiqueta,
+          sucursalOrigen: movimiento === 'Recepción' ? (formFarmacia.proveedor || '').trim() : sucursalOrigen,
+          sucursalDestino,
+          proveedor: (formFarmacia.proveedor || '').trim()
+        };
+
+        datosGuardar = {
+          ...datosGuardar,
+          tipo: 'Farmacia',
+          area: movimiento,
+          sucursal: sucursalDestino || sucursalActiva || sucursal || 'Sin asignar',
+          detalles,
+          estadoAprobacion: 'pendiente',
+          estadoInventario: movimiento === 'Entrada' ? 'pendiente' : null,
+          aprobadoPor: null,
+          aprobadoPorNombre: null,
+          aprobadoAt: null
+        };
       } else if (tipoRegistro === 'pedido_medicamento') {
         if (pedidoMedicamentoRows.length === 0) {
           setLoading(false);
@@ -854,31 +1036,93 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                 {/* Tipo movimiento + IA Scanner */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                   <div className="flex gap-1 p-1 bg-white rounded-xl border border-slate-200 shrink-0">
-                    {['Recepción', 'Entrada (Traspaso)', 'Salida (Traspaso)'].map(mov => (
-                      <button key={mov} onClick={() => setFormFarmacia({ ...formFarmacia, tipo_movimiento: mov })}
+                    {MOVIMIENTOS_FARMACIA.map((mov) => (
+                      <button
+                        key={mov}
+                        type="button"
+                        onClick={() => setFormFarmacia({
+                          ...formFarmacia,
+                          tipo_movimiento: mov,
+                          sucursalDestino: formFarmacia.sucursalDestino || sucursalActiva || '',
+                          sucursalOrigen: mov === 'Recepción' ? '' : formFarmacia.sucursalOrigen
+                        })}
                         className={`whitespace-nowrap px-5 py-2.5 rounded-lg text-[13px] font-bold transition-all ${
-                          formFarmacia.tipo_movimiento === mov ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
-                        }`}>{mov}</button>
+                          normalizeMovimientoArea(formFarmacia.tipo_movimiento) === mov ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        {mov}
+                      </button>
                     ))}
                   </div>
-                  <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200/60 rounded-xl px-5 py-3 flex-1 w-full sm:w-auto">
-                    <Sparkles size={18} className="text-indigo-500 shrink-0"/>
-                    <span className="text-[13px] font-semibold text-indigo-700">Lectura IA</span>
+                  <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-5 py-3 flex-1 w-full sm:w-auto">
+                    <Sparkles size={18} className="text-slate-500 shrink-0"/>
+                    <span className="text-[13px] font-semibold text-slate-700">Lectura IA</span>
                     <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={procesarFacturaIA}/>
-                    <button onClick={() => fileInputRef.current.click()} disabled={iaLoading}
-                      className="ml-auto bg-indigo-600 text-white px-5 py-2 rounded-lg text-[13px] font-bold hover:bg-indigo-700 flex items-center gap-2 shrink-0 transition-all active:scale-95 disabled:opacity-50">
+                    <button type="button" onClick={() => fileInputRef.current.click()} disabled={iaLoading}
+                      className="ml-auto bg-slate-900 text-white px-5 py-2 rounded-lg text-[13px] font-bold hover:bg-slate-800 flex items-center gap-2 shrink-0 transition-all active:scale-95 disabled:opacity-50">
                       {iaLoading ? <Loader2 size={15} className="animate-spin"/> : <ScanText size={15}/>}
                       {iaLoading ? 'Leyendo...' : 'Escanear'}
                     </button>
                   </div>
                 </div>
 
+                {/* Origen / Destino */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white border border-slate-200 rounded-xl p-4">
+                  {normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' ? (
+                    <div>
+                      <label className={labelBase}>¿De dónde / proveedor? *</label>
+                      <input
+                        className={inputBase}
+                        placeholder="Ej. Proveedor XYZ…"
+                        value={formFarmacia.proveedor}
+                        onChange={(e) => setFormFarmacia({ ...formFarmacia, proveedor: e.target.value, sucursalOrigen: e.target.value })}
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className={labelBase}>{normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Entrada' ? '¿De dónde entra? *' : '¿De dónde sale? *'}</label>
+                      <select
+                        className={inputBase}
+                        value={formFarmacia.sucursalOrigen}
+                        onChange={(e) => setFormFarmacia({ ...formFarmacia, sucursalOrigen: e.target.value })}
+                      >
+                        <option value="">Seleccione sucursal origen…</option>
+                        {catalogoSucursales.map((s) => (
+                          <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className={labelBase}>
+                      {normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción'
+                        ? '¿En qué sucursal se recibe? *'
+                        : normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Entrada'
+                          ? '¿A dónde entra? *'
+                          : '¿A dónde sale / destino? *'}
+                    </label>
+                    <select
+                      className={inputBase}
+                      value={formFarmacia.sucursalDestino || sucursalActiva || ''}
+                      onChange={(e) => setFormFarmacia({ ...formFarmacia, sucursalDestino: e.target.value })}
+                    >
+                      <option value="">Seleccione sucursal destino…</option>
+                      {catalogoSucursales.map((s) => (
+                        <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 {/* Buscador medicamento */}
                 <div className="relative z-20">
-                  <label className={labelBase}>Compuesto / Medicamento *</label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className={labelBase + ' mb-0'}>Compuesto / Medicamento * (catálogo admin)</label>
+                    <span className="text-[10px] font-semibold text-slate-400">{catalogoMedsCount} activos</span>
+                  </div>
                   <div className="relative">
                     <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"/>
-                    <input className={`${inputBase} pl-11 font-semibold text-base`} placeholder="Buscar medicamento..."
+                    <input className={`${inputBase} pl-11 font-semibold text-base`} placeholder="Buscar por nombre, sustancia, acomodo o clave..."
                       value={formFarmacia.compuesto} onChange={handleBuscadorMedicamentos}
                       onKeyDown={(e) => {
                         if (!mostrarMeds || sugerenciasMeds.length === 0) return;
@@ -890,14 +1134,32 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       onBlur={() => setTimeout(() => { setMostrarMeds(false); setIndiceMeds(-1); }, 200)}
                     />
                   </div>
+                  {formFarmacia.medicamentoId ? (
+                    <p className="mt-1.5 text-[11px] font-semibold text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 size={12}/> Ligado al catálogo
+                      {formFarmacia.numeroAcomodo ? ` · Acomodo ${formFarmacia.numeroAcomodo}` : ''}
+                      {formFarmacia.marca ? ` · ${formFarmacia.marca}` : ''}
+                    </p>
+                  ) : formFarmacia.compuesto ? (
+                    <p className="mt-1.5 text-[11px] font-semibold text-amber-600">Elige una sugerencia del catálogo para guardar.</p>
+                  ) : null}
                   {mostrarMeds && (
                     <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-xl mt-1.5 max-h-56 overflow-y-auto z-50 shadow-lg p-1.5">
                       {sugerenciasMeds.map((m, i) => (
-                        <div key={i} ref={el => { if (i === indiceMeds && el) el.scrollIntoView({ block: 'nearest' }) }}
+                        <div key={m.id || i} ref={el => { if (i === indiceMeds && el) el.scrollIntoView({ block: 'nearest' }) }}
                           onMouseDown={() => { seleccionarMedicamento(m); setIndiceMeds(-1); }}
                           className={`px-3 py-2.5 cursor-pointer rounded-lg transition-colors ${i === indiceMeds ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
-                          <p className="text-[15px] font-bold text-slate-800">{m.nombreComercial}</p>
-                          <p className="text-[11px] text-slate-400 font-semibold mt-0.5">{m.sustanciaActiva} • {m.presentacion}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-[15px] font-bold text-slate-800">{m.nombreComercial}</p>
+                            {m.numeroAcomodo ? (
+                              <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded shrink-0">
+                                #{m.numeroAcomodo}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                            {m.sustanciaActiva}{m.presentacion ? ` • ${m.presentacion}` : ''}{m.marca ? ` • ${m.marca}` : ''}
+                          </p>
                         </div>
                       ))}
                     </div>
@@ -920,22 +1182,22 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
                 {/* Criterios + Observaciones — flex-1 para llenar espacio */}
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 flex-1 min-h-0">
-                  {formFarmacia.tipo_movimiento === 'Recepción' && (
+                  {normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' && (
                     <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
                       <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Criterio de Aceptación</p>
                       <div className="space-y-3">
                         <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                          <input type="checkbox" className="w-5 h-5 accent-indigo-600 rounded shrink-0" checked={formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_empaque: e.target.checked })}/>
+                          <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_empaque: e.target.checked })}/>
                           <span className="text-[15px] font-medium text-slate-700">Empaque sin daños físicos</span>
                         </label>
                         <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                          <input type="checkbox" className="w-5 h-5 accent-indigo-600 rounded shrink-0" checked={formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_etiqueta: e.target.checked })}/>
+                          <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_etiqueta: e.target.checked })}/>
                           <span className="text-[15px] font-medium text-slate-700">Etiqueta íntegra y legible</span>
                         </label>
                       </div>
                     </div>
                   )}
-                  <div className={`flex flex-col ${formFarmacia.tipo_movimiento === 'Recepción' ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
+                  <div className={`flex flex-col ${normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
                     <label className={labelBase}>Observaciones</label>
                     <textarea className={`${inputBase} flex-1 min-h-[120px] resize-none`} placeholder="Notas sobre empaque, mermas, etc." value={formFarmacia.observaciones} onChange={e => setFormFarmacia({ ...formFarmacia, observaciones: e.target.value })}/>
                   </div>

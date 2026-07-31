@@ -29,13 +29,14 @@ const STYLES = `
     --shadow-lg: none;
   }
 
-  /* ── SHELL ── */
+  /* ── SHELL (sin sidebar — lo provee AppShell) ── */
   .admin-shell {
     font-family: 'Sora', 'DM Sans', system-ui, sans-serif;
     background: var(--bg);
     color: var(--slate-900);
     display: flex;
-    height: 100vh;
+    flex-direction: column;
+    min-height: 100%;
     overflow: hidden;
   }
 
@@ -889,66 +890,11 @@ Devuelve SOLO JSON:
       <style>{STYLES}</style>
       <div className="admin-shell">
 
-        {/* ── SIDEBAR ──────────────────────────────── */}
-        <aside
-          className={`admin-sidebar${(collapsed && !sidebarHovered && !isMobile) ? ' collapsed' : ''}${isMobile && mobileSidebarOpen ? ' mobile-open' : ''}`}
-          onMouseEnter={isMobile ? undefined : handleSidebarMouseEnter}
-          onMouseLeave={isMobile ? undefined : handleSidebarMouseLeave}
-        >
-
-          <div className="sidebar-brand">
-            <div className="brand-logo"><Activity size={15} /></div>
-            {(isMobile || !collapsed || sidebarHovered) && (
-              <div>
-                <div className="brand-name">SRS Médico</div>
-                <div className="brand-sub">Panel Admin</div>
-              </div>
-            )}
-          </div>
-
-          <nav className="sidebar-nav">
-            {(isMobile || !collapsed || sidebarHovered) && <div className="nav-section-label">Módulos</div>}
-            {NAV.map(({ label, icon: Icon, to }) => (
-              <NavLink
-                key={to}
-                to={to}
-                className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`}
-                title={collapsed && !sidebarHovered && !isMobile ? label : undefined}
-                onClick={() => { if (isMobile) setMobileSidebarOpen(false); }}
-              >
-                <span className="ni"><Icon size={15} /></span>
-                {(isMobile || !collapsed || sidebarHovered) && <span className="nl">{label}</span>}
-              </NavLink>
-            ))}
-
-            <div className="nav-divider" />
-            {(isMobile || !collapsed || sidebarHovered) && <div className="nav-section-label">Accesos</div>}
-            <NavLink to="/admin/agenda" className={({ isActive }) => `nav-lnk${isActive ? ' active' : ''}`} title={collapsed && !sidebarHovered && !isMobile ? 'Agenda' : undefined}>
-              <span className="ni"><CalendarBlank size={15} /></span>
-              {(isMobile || !collapsed || sidebarHovered) && <span className="nl">Agenda</span>}
-            </NavLink>
-          </nav>
-
-          <div className="sidebar-footer">
-            <button className="logout-btn" onClick={handleLogout} title={collapsed && !sidebarHovered && !isMobile ? 'Cerrar sesión' : undefined}>
-              <span className="ni"><LogOut size={15} /></span>
-              {(isMobile || !collapsed || sidebarHovered) && <span>Cerrar Sesión</span>}
-            </button>
-          </div>
-        </aside>
-
-        {/* ── MAIN ─────────────────────────────────── */}
-        <div className="admin-main">
+        {/* ── MAIN (sidebar global en AppShell) ───────────────── */}
+        <div className="admin-main" style={{ width: '100%' }}>
 
           <header className="admin-topbar">
-            <div className="topbar-left">
-              <button className="icon-btn hide-mobile" onClick={() => setCollapsed(c => !c)}>
-                {collapsed ? <Menu size={15} /> : <ChevronLeft size={15} />}
-              </button>
-              <button className="icon-btn mobile-hamburger" onClick={() => setMobileSidebarOpen(o => !o)} style={{ display: 'none' }}>
-                <Menu size={15} />
-              </button>
-            </div>
+            <div className="topbar-left" />
 
             <div className="topbar-center" ref={assistantContainerRef}>
               <form

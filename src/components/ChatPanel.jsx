@@ -364,14 +364,15 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
 
   // 1. CARGA DE CANALES
   useEffect(() => {
-    if (!isOpen || !user) return;
+    if (!isOpen || !user?.uid) return;
+    const uid = user.uid;
     listenerStartedAt.current = Date.now();
     const canalesInitRef = { current: false };
     const qCanales = query(collection(db, 'canales'), orderBy('ultimoMensajeAt', 'desc'), limit(30));
     const unsub = onSnapshot(qCanales, (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       const visible = all.filter(c =>
-        !c.esPrivado || !c.miembros?.length || c.miembros.includes(user.uid) || c.creador === user.uid
+        !c.esPrivado || !c.miembros?.length || c.miembros.includes(uid) || c.creador === uid
       );
       if (!visible.find(c => c.id === 'global'))
         visible.push({ id: 'global', nombre: 'General', creador: 'Sistema', ultimoMensajeAt: 0 });
@@ -384,7 +385,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
           if (!ts || ts < listenerStartedAt.current - 5000) return;
           const signature = buildLastMessageSignature(change.doc.id, d);
           const isNew = isNewSignature(signature);
-          if (isNew && d.ultimoRemitenteId !== user.uid && activeChatRef.current.id !== change.doc.id)
+          if (isNew && d.ultimoRemitenteId !== uid && activeChatRef.current.id !== change.doc.id)
             setChatsNoLeidos(prev => ({ ...prev, [change.doc.id]: (prev[change.doc.id] || 0) + 1 }));
         }
       });
@@ -392,7 +393,7 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
       setCanales(visible);
     });
     return () => unsub();
-  }, [isOpen, user]);
+  }, [isOpen, user?.uid]);
 
   // 2. CARGA DE CHATS PRIVADOS
   useEffect(() => {
@@ -464,30 +465,42 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
     if (!directMessageUser?.id || !isOpen || usuarios.length === 0) return;
     const targetUser = usuarios.find((u) => u.id === directMessageUser.id);
     if (!targetUser) return;
-    setActiveChat({
-      id: targetUser.id,
-      nombre: targetUser.nombre || directMessageUser.nombre || 'Usuario',
-      tipo: 'privado',
-      avatar: targetUser.avatar || ''
+    const nextNombre = targetUser.nombre || directMessageUser.nombre || 'Usuario';
+    const nextAvatar = targetUser.avatar || '';
+    setActiveChat((prev) => {
+      if (prev.id === targetUser.id && prev.tipo === 'privado' && prev.nombre === nextNombre && prev.avatar === nextAvatar) {
+        return prev;
+      }
+      return {
+        id: targetUser.id,
+        nombre: nextNombre,
+        tipo: 'privado',
+        avatar: nextAvatar
+      };
     });
     setActiveTab('mensajes');
-  }, [directMessageUser, isOpen, usuarios]);
+  }, [directMessageUser?.id, directMessageUser?.nombre, isOpen, usuarios]);
 
   // 4. MENSAJES CON PAGINACIÓN + READ RECEIPTS
   useEffect(() => {
-    if (!user || !isOpen || !activeChat.id) return;
-    setChatsNoLeidos(prev => ({ ...prev, [activeChat.id]: 0 }));
+    if (!user?.uid || !isOpen || !activeChat.id) return;
+    const uid = user.uid;
+    const chatId = activeChat.id;
+    const chatTipo = activeChat.tipo;
+    let markedRead = false;
+
+    setChatsNoLeidos(prev => ({ ...prev, [chatId]: 0 }));
     setMensajes([]);
     setChatReadBy({});
     setLastMsgDoc(null);
     setHasMore(false);
 
     let colRef;
-    if (activeChat.tipo === 'canal') {
-      colRef = collection(db, 'canales', activeChat.id, 'mensajes');
+    if (chatTipo === 'canal') {
+      colRef = collection(db, 'canales', chatId, 'mensajes');
     } else {
-      const chatId = [user.uid, activeChat.id].sort().join('_');
-      colRef = collection(db, 'chats_privados', chatId, 'mensajes');
+      const privadoId = [uid, chatId].sort().join('_');
+      colRef = collection(db, 'chats_privados', privadoId, 'mensajes');
     }
 
     const q = query(colRef, orderBy('timestamp', 'desc'), limit(MESSAGES_PAGE_SIZE));
@@ -499,21 +512,24 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
       setTimeout(() => {
         if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
       }, 80);
-      // Marcar como leído
-      const parentRef = activeChat.tipo === 'canal'
-        ? doc(db, 'canales', activeChat.id)
-        : doc(db, 'chats_privados', [user.uid, activeChat.id].sort().join('_'));
-      updateDoc(parentRef, { [`leidoPor.${user.uid}`]: serverTimestamp() }).catch(() => {});
+      // Marcar leído una vez por apertura de chat (evitar writes en cada snapshot)
+      if (markedRead) return;
+      markedRead = true;
+      const parentRef = chatTipo === 'canal'
+        ? doc(db, 'canales', chatId)
+        : doc(db, 'chats_privados', [uid, chatId].sort().join('_'));
+      updateDoc(parentRef, { [`leidoPor.${uid}`]: serverTimestamp() }).catch(() => {});
     });
     return () => unsub();
-  }, [user, isOpen, activeChat.id, activeChat.tipo]);
+  }, [user?.uid, isOpen, activeChat.id, activeChat.tipo]);
 
   // 5. TYPING INDICATOR
   useEffect(() => {
-    if (!user || !isOpen || !activeChat.id) return;
+    if (!user?.uid || !isOpen || !activeChat.id) return;
+    const uid = user.uid;
     const parentRef = activeChat.tipo === 'canal'
       ? doc(db, 'canales', activeChat.id)
-      : doc(db, 'chats_privados', [user.uid, activeChat.id].sort().join('_'));
+      : doc(db, 'chats_privados', [uid, activeChat.id].sort().join('_'));
     const unsub = onSnapshot(parentRef, (snap) => {
       const data = snap.data() || {};
       const typing = data.typing || {};
@@ -521,15 +537,18 @@ const ChatPanel = ({ isOpen, onClose, directMessageUser }) => {
       setChatReadBy(readBy);
       const now = Date.now();
       const active = Object.entries(typing)
-        .filter(([uid, ts]) => uid !== user.uid && (now - getMillis(ts)) < TYPING_TTL)
-        .map(([uid]) => {
-          const u = usuarios.find(u => u.id === uid);
-          return u?.nombre || uid.slice(0, 6);
+        .filter(([typingUid, ts]) => typingUid !== uid && (now - getMillis(ts)) < TYPING_TTL)
+        .map(([typingUid]) => {
+          const u = usuarios.find(x => x.id === typingUid);
+          return u?.nombre || typingUid.slice(0, 6);
         });
-      setTypingUsers(active);
+      setTypingUsers((prev) => {
+        if (prev.length === active.length && prev.every((name, i) => name === active[i])) return prev;
+        return active;
+      });
     });
     return () => unsub();
-  }, [user, isOpen, activeChat.id, activeChat.tipo, usuarios]);
+  }, [user?.uid, isOpen, activeChat.id, activeChat.tipo, usuarios]);
 
   // Limpieza del micrófono al cerrar
   useEffect(() => {

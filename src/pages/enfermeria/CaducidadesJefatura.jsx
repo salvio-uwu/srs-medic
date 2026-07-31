@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search, Calendar, MapPin, Printer, ChevronDown,
-  CheckCircle2, AlertTriangle, Package, ShieldAlert, Trash2, X
+  CheckCircle2, AlertTriangle, Package, ShieldAlert, Trash2, X, ArrowLeftRight
 } from 'lucide-react';
 import { db } from '../../config/firebase';
 import { collection, getDocs, query, where, onSnapshot, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
+import TraspasoSucursalModal from '../../components/TraspasoSucursalModal';
 
 /* ════════════════════════════════════════════════════════════════
    CADUCIDADES JEFATURA — Auditoría de Medicamentos Próximos a Caducar
@@ -29,6 +30,17 @@ const CaducidadesJefatura = () => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [traspasoItem, setTraspasoItem] = useState(null);
+  const [traspasoMsg, setTraspasoMsg] = useState('');
+
+  const abrirTraspaso = (reg) => setTraspasoItem({
+    nombre: reg.medicamento || '',
+    numeroAcomodo: reg.codigo || '',
+    lote: reg.lote || '',
+    caducidad: reg.mesCaducidad || '',
+    cantidadDisponible: Number(reg.cantidad) || 0,
+    sucursalOrigen: reg.sucursal || ''
+  });
 
   // ─── Cargar sucursales ───
   useEffect(() => {
@@ -168,6 +180,21 @@ const CaducidadesJefatura = () => {
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in">
+      {traspasoMsg && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[1200] bg-white border border-slate-200 shadow-lg rounded-lg px-4 py-2.5 text-[13px] font-semibold text-slate-800">
+          {traspasoMsg}
+        </div>
+      )}
+      {traspasoItem && (
+        <TraspasoSucursalModal
+          item={traspasoItem}
+          onClose={() => setTraspasoItem(null)}
+          onDone={({ msg }) => {
+            setTraspasoMsg(msg);
+            setTimeout(() => setTraspasoMsg(''), 3500);
+          }}
+        />
+      )}
       {/* ─── HEADER + FILTROS ─── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -305,7 +332,10 @@ const CaducidadesJefatura = () => {
                               <button onClick={() => setConfirmDelete(null)} className="p-1 rounded bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"><X size={12}/></button>
                             </div>
                           ) : (
-                            <button onClick={() => setConfirmDelete(reg.id)} className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={12}/></button>
+                            <div className="flex items-center gap-1 justify-center">
+                              <button onClick={() => abrirTraspaso(reg)} title="Traspasar a otra sucursal" className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"><ArrowLeftRight size={12}/></button>
+                              <button onClick={() => setConfirmDelete(reg.id)} className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={12}/></button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -334,7 +364,10 @@ const CaducidadesJefatura = () => {
                           <button onClick={() => setConfirmDelete(null)} className="p-1 rounded bg-slate-100 text-slate-500"><X size={12}/></button>
                         </div>
                       ) : (
-                        <button onClick={() => setConfirmDelete(reg.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 size={12}/></button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => abrirTraspaso(reg)} className="p-1 text-slate-400 hover:text-blue-600"><ArrowLeftRight size={12}/></button>
+                          <button onClick={() => setConfirmDelete(reg.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 size={12}/></button>
+                        </div>
                       )}
                     </div>
                   </div>

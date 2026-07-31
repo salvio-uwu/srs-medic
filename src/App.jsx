@@ -13,12 +13,14 @@ import Login from './pages/auth/Login';
 import ChatPanel from './components/ChatPanel';
 import ChatNotificationToast from './components/ChatNotificationToast';
 import { PanicLauncherButton, PanicAlertOverlay, usePanicSystem } from './components/PanicButton';
-import { useAuth } from './context/AuthContext';
+import { useAuth, isProfileHydrated } from './context/AuthContext';
 import { hasPermission } from './services/permissionService';
 import { buildLastMessageSignature, isNewSignature, getMillis } from './shared/chatSignatureCache';
 
-// Layout Admin
+// Layouts
+import AppShell from './shared/AppShell';
 import AdminLayout from './shared/AdminLayout';
+import Inicio from './pages/home/Inicio';
 
 // Módulos Administrativos
 import AgendaAdmin from './pages/admin/AgendaAdmin';
@@ -40,8 +42,7 @@ import SsaHistorial from './pages/ssa/SsaHistorial';
 import SharedExpedienteView from './components/SharedExpedienteView';
 
 // Módulos Doctor
-import Consultorio from './pages/doctor/Consultorio'; 
-import ExpedienteClinico from './pages/doctor/ExpedienteClinico'; 
+import ExpedienteClinico from './pages/doctor/ExpedienteClinico';
 import Pacientes from './pages/doctor/Pacientes';
 import CapacitacionMedicos from './pages/doctor/CapacitacionMedicos';
 
@@ -60,11 +61,8 @@ import BitacoraCarroRojoEnfermeria from './pages/enfermeria/BitacoraCarroRojoEnf
 import CaducidadesEnfermeria from './pages/enfermeria/CaducidadesEnfermeria';
 import OrdenServicioEnfermeria from './pages/enfermeria/OrdenServicioEnfermeria';
 
-// Módulos Recursos Humanos
+// Módulo Recursos Humanos
 import DashboardRH from './pages/rh/DashboardRH';
-import AuditoriaEmpleados from './pages/rh/AuditoriaEmpleados';
-import InventarioMacro from './pages/rh/InventarioMacro';
-import FinanzasRH from './pages/rh/FinanzasRH';
 
 // Módulos Compartidos
 import Agenda from './shared/Agenda';
@@ -232,7 +230,7 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
     };
   }, []);
 
-  const rutasSinChat = ['/', '/login', '/portal'];
+  const rutasSinChat = ['/', '/login'];
   const mostrarChat = Boolean(user?.uid) && !rutasSinChat.includes(location.pathname);
 
   useEffect(() => {
@@ -278,11 +276,7 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
     { id: 'admin.monitor', label: 'Monitor', path: '/admin/monitor', group: 'Administracion', permission: 'admin.monitor', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: Activity },
     { id: 'admin.agenda', label: 'Agenda', path: '/admin/agenda', group: 'Administracion', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: CalendarDays },
     { id: 'rh.dashboard', label: 'Dashboard', path: '/rh/dashboard', group: 'Recursos Humanos', permission: 'rh.dashboard', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: LayoutDashboard },
-    { id: 'rh.auditoria', label: 'Auditoría', path: '/rh/auditoria', group: 'Recursos Humanos', permission: 'rh.auditoria', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: Clipboard },
-    { id: 'rh.inventario', label: 'Inventario Macro', path: '/rh/inventario-macro', group: 'Recursos Humanos', permission: 'rh.inventario', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: Package },
-    { id: 'rh.finanzas', label: 'Finanzas', path: '/rh/finanzas', group: 'Recursos Humanos', permission: 'rh.finanzas', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: DollarSign },
     { id: 'intendencia.registro', label: 'Registro', path: '/intendencia/registro', group: 'Intendencia', permission: 'intendencia.registro', fallbackRoles: ['intendencia', 'limpieza'], icon: SprayCan },
-    { id: 'doctor.consulta', label: 'Consulta', path: '/doctor/consulta', group: 'Doctor', permission: 'doctor.agenda', fallbackRoles: ['medico', 'doctor'], icon: Stethoscope },
     { id: 'doctor.capacitacion', label: 'Capacitación', path: '/doctor/capacitacion', group: 'Doctor', permission: 'doctor.agenda', fallbackRoles: ['medico', 'doctor'], icon: BookOpen },
     { id: 'enfermeria.dashboard', label: 'Dashboard', path: '/enfermeria/dashboard', group: 'Enfermeria', permission: 'enfermeria.dashboard', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: LayoutDashboard },
     { id: 'enfermeria.triage', label: 'Triage', path: '/enfermeria/triage', group: 'Enfermeria', permission: 'enfermeria.triage', fallbackRoles: ['enfermeria', 'enfermera', 'enfermero'], icon: Syringe },
@@ -785,22 +779,28 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
 const GuestRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/portal" replace />;
+  if (user && !isProfileHydrated(user)) return null;
+  if (user) return <Navigate to="/inicio" replace />;
   return children;
 };
 
 const RequireAuth = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
+  if (user && !isProfileHydrated(user)) return null;
   if (!user) return <Navigate to="/login" replace />;
   return children;
 };
 
+// permissionId puede ser un string o un arreglo (basta con tener uno de los permisos)
 const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
+  if (user && !isProfileHydrated(user)) return null;
   if (!user) return <Navigate to="/login" replace />;
-  if (!hasPermission(user, permissionId, fallbackRoles)) return <Navigate to="/portal" replace />;
+  const permissionIds = Array.isArray(permissionId) ? permissionId : [permissionId];
+  const allowed = permissionIds.some((id) => hasPermission(user, id, fallbackRoles));
+  if (!allowed) return <Navigate to="/inicio" replace />;
   return children;
 };
 
@@ -818,6 +818,14 @@ const CarroRojoRouter = () => {
 };
 
 // ── Ofuscador de rutas: codifica las URLs visibles en el navegador ──
+const ObfuscatedPathRedirect = () => {
+  const location = useLocation();
+  const rawPath = location.pathname + location.search + location.hash;
+  const decoded = decodeRoute(rawPath);
+  // Si no se pudo decodificar, ir a inicio (no dejar que el catch-all pelee con /app/*)
+  return <Navigate to={decoded !== rawPath ? decoded : '/inicio'} replace />;
+};
+
 const RouteObfuscator = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -833,14 +841,16 @@ const RouteObfuscator = () => {
     initialDecodeDone.current = true;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reescribir la URL del navegador a su versión ofuscada en cada cambio de ruta
+  // Reescribir la URL del navegador a su versión ofuscada en cada cambio de ruta.
+  // Importante: preservar history.state — si se pasa null, React Router puede perder
+  // location.state (p. ej. pacienteId al abrir ExpedienteClinico desde Agenda).
   useEffect(() => {
     if (!initialDecodeDone.current) return;
     const currentPath = location.pathname + location.search + location.hash;
     const encoded = encodeRoute(currentPath);
     const browserPath = window.location.pathname + window.location.search + window.location.hash;
     if (encoded !== browserPath) {
-      window.history.replaceState(null, '', encoded);
+      window.history.replaceState(window.history.state, '', encoded);
     }
   }, [location]);
 
@@ -965,12 +975,16 @@ function App() {
         </div>
       )}
       <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/portal" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<GuestRoute><Login /></GuestRoute>} />
+        <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
+        <Route path="/portal" element={<Navigate to="/inicio" replace />} />
 
-        {/* --- RUTAS ADMINISTRADOR (layout compartido) --- */}
-        <Route path="/admin" element={<RequireAuth><AdminLayout /></RequireAuth>}>
+        {/* --- SHELL UNIFICADO: sidebar + contenido --- */}
+        <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+          <Route path="/inicio" element={<Inicio />} />
+
+        {/* --- RUTAS ADMINISTRADOR --- */}
+        <Route path="/admin" element={<AdminLayout />}>
           <Route path="dashboard" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><DashboardAdmin /></PermissionRoute>} />
           <Route path="inventario" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Inventario /></PermissionRoute>} />
           <Route path="usuarios" element={<PermissionRoute permissionId="admin.usuarios" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Usuarios /></PermissionRoute>} />
@@ -989,16 +1003,13 @@ function App() {
           <Route path="ssa/historial" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><SsaHistorial /></PermissionRoute>} />
       </Route>
 
-        {/* --- RUTAS RECURSOS HUMANOS --- */}
+        {/* --- RUTA RECURSOS HUMANOS --- */}
         <Route path="/rh/dashboard" element={<PermissionRoute permissionId="rh.dashboard" fallbackRoles={['rh', 'recursos_humanos', 'recursos humanos']}><DashboardRH /></PermissionRoute>} />
-        <Route path="/rh/auditoria" element={<PermissionRoute permissionId="rh.auditoria" fallbackRoles={['rh', 'recursos_humanos', 'recursos humanos']}><AuditoriaEmpleados /></PermissionRoute>} />
-        <Route path="/rh/inventario-macro" element={<PermissionRoute permissionId="rh.inventario" fallbackRoles={['rh', 'recursos_humanos', 'recursos humanos']}><InventarioMacro /></PermissionRoute>} />
-        <Route path="/rh/finanzas" element={<PermissionRoute permissionId="rh.finanzas" fallbackRoles={['rh', 'recursos_humanos', 'recursos humanos']}><FinanzasRH /></PermissionRoute>} />
 
         {/* --- RUTAS INTENDENCIA --- */}
         <Route path="/intendencia/registro" element={<PermissionRoute permissionId="intendencia.registro" fallbackRoles={['intendencia', 'limpieza']}><RegistroLimpiezaManual /></PermissionRoute>} />
         {/* --- RUTAS DOCTOR --- */}
-        <Route path="/doctor/consulta" element={<PermissionRoute permissionId="doctor.agenda" fallbackRoles={['medico', 'doctor']}><Consultorio /></PermissionRoute>} />
+        <Route path="/doctor/consulta" element={<Navigate to="/agenda" replace />} />
         <Route path="/doctor/expediente" element={<PermissionRoute permissionId="doctor.expediente" fallbackRoles={['medico', 'doctor']}><ExpedienteClinico /></PermissionRoute>} />
         {/* Edición del expediente clínico electrónico desde el directorio de pacientes (solo admin) */}
         <Route path="/expediente-electronico" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><ExpedienteClinico /></PermissionRoute>} />
@@ -1006,7 +1017,7 @@ function App() {
 
         {/* --- RUTAS ENFERMERÍA --- */}
         <Route path="/enfermeria/dashboard" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><AgendaEnfermeria /></PermissionRoute>} /> 
-        <Route path="/enfermeria/jefatura" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><DashboardJefaEnfermeria /></PermissionRoute>} /> 
+        <Route path="/enfermeria/jefatura" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa', 'admin', 'admin_maestro', 'administrador']}><DashboardJefaEnfermeria /></PermissionRoute>} /> 
         <Route path="/enfermeria/registros" element={<PermissionRoute permissionId="enfermeria.jefatura" fallbackRoles={['jefa_enfermeria', 'jefa']}><RegistrosEnfermeriaView /></PermissionRoute>} />
         <Route path="/enfermeria/carro-rojo" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CarroRojoRouter /></PermissionRoute>} />
         <Route path="/enfermeria/triage" element={<PermissionRoute permissionId="enfermeria.triage" fallbackRoles={['enfermeria', 'enfermera', 'enfermero']}><Triage /></PermissionRoute>} />
@@ -1015,19 +1026,24 @@ function App() {
         <Route path="/enfermeria/capacitacion" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CapacitacionEnfermeria /></PermissionRoute>} />
         <Route path="/enfermeria/caducidades" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CaducidadesEnfermeria /></PermissionRoute>} />
         <Route path="/enfermeria/expediente" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><ExpedienteClinico /></PermissionRoute>} />
-        <Route path="/enfermeria/orden-servicio" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo']}><OrdenServicioEnfermeria /></PermissionRoute>} />
+        {/* La orden de servicio la abre quien agenda: enfermería, recepción, médicos o admin */}
+        <Route path="/enfermeria/orden-servicio" element={<PermissionRoute permissionId={['enfermeria.dashboard', 'shared.agenda', 'doctor.agenda', 'admin.dashboard']} fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo', 'medico', 'doctor']}><OrdenServicioEnfermeria /></PermissionRoute>} />
 
         {/* --- RUTAS COMPARTIDAS --- */}
-        <Route path="/agenda" element={<PermissionRoute permissionId="shared.agenda" fallbackRoles={['medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />
+        <Route path="/agenda" element={<PermissionRoute permissionId={['shared.agenda', 'doctor.agenda']} fallbackRoles={['medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion', 'operativo', 'jefa_enfermeria', 'jefa']}><Agenda /></PermissionRoute>} />
         <Route path="/pacientes" element={<PermissionRoute permissionId="shared.pacientes" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion']}><Pacientes /></PermissionRoute>} />
 
         {/* --- COMPARTIDAS: SSA Evaluacion (medicos) --- */}
-        <Route path="/ssa/evaluar/:templateId" element={<RequireAuth><SsaEvaluacion /></RequireAuth>} />
+        <Route path="/ssa/evaluar/:templateId" element={<SsaEvaluacion />} />
+        </Route>
 
         {/* --- RUTA PÚBLICA: Expediente compartido (QR) --- */}
         <Route path="/compartido/:token" element={<SharedExpedienteView />} />
 
-        <Route path="*" element={<Navigate to="/" />} />
+        {/* URLs ofuscadas (/app/...): decodificar antes del catch-all */}
+        <Route path="/app/*" element={<ObfuscatedPathRedirect />} />
+
+        <Route path="*" element={<Navigate to="/inicio" replace />} />
       </Routes>
     </BrowserRouter>
   );

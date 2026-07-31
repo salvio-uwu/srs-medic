@@ -1,0 +1,26 @@
+---
+description: Patrones Firebase/Firestore y Cloud Functions
+globs: src/**/*.{js,jsx},functions/**/*.js
+alwaysApply: false
+---
+
+# Firebase
+
+## Inicialización
+`src/config/firebase.js` exporta `auth`, `db`, `storage`, `functions`.
+
+## Firestore
+- Listeners `onSnapshot` siempre con cleanup en `useEffect`
+- Creates: preferir `serverTimestamp()`; no mezclar formatos de fecha sin motivo
+- Queries `in` / `__name__`: máximo 10 IDs por chunk
+- Nombres de colección en español tal como están en prod (no renombrar)
+- `firestore.rules` y `storage.rules` no están en el repo — no asumir reglas
+
+## Cloud Functions (callable desde frontend)
+`askGemini`, `enviarWhatsAppNotificacion`, `enviarEncuestaWhatsApp`, `generarBoletinMedicoSeguro`, `analizarBitacora`
+
+## No conectadas al frontend
+`analizarMedicamento`, `crearSesionMeet` — no asumir que existen en UI
+
+## Secretos
+Nunca commitear ni hardcodear: `GEMINI_API_KEY`, `WHATSAPP_*`, `GOOGLE_CALENDAR_*`

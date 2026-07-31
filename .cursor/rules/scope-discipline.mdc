@@ -1,0 +1,14 @@
+---
+description: Reglas de alcance y mutación — solo tocar lo pedido
+alwaysApply: true
+---
+
+# Disciplina de alcance
+
+- Solo modificar archivos y funciones explícitamente solicitados.
+- No refactorizar, formatear ni optimizar código que funciona fuera del scope actual.
+- Antes de editar un archivo, revisar sus imports y exports para no romper dependencias.
+- Si hace falta tocar un archivo no solicitado, detenerse y pedir autorización.
+- No inventar APIs, colecciones Firestore ni funciones Cloud que no existan en el repo.
+- Si no se conoce la solución, decirlo claramente.
+- UI y comentarios en español (México).

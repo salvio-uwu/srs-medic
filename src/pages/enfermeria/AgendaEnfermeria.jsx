@@ -5,8 +5,8 @@ import {
   AlertCircle,   Zap, Video, MapPin, Building, AlertTriangle, CheckCircle2,
   Phone, ClipboardList, Edit3, Lock, CalendarClock, MessageSquare, 
   LogIn, FileText, XCircle, MoreHorizontal, Send, Ban, GitMerge, LogOut, BookOpen, ArrowLeftRight,
-  Upload, Paperclip, ReceiptText, CalendarDays, Shield, Mail,
-  Thermometer, Heart, Wind, UserCheck, Users
+  Upload, Paperclip, ReceiptText, CalendarDays, Shield, Mail, Download, ExternalLink,
+  Thermometer, Heart, Wind, UserCheck, Users, Droplet, Syringe
 } from 'lucide-react';
 import { db, functions, storage } from '../../config/firebase'; 
 import { collection, addDoc, query, where, orderBy, getDocs, getDoc, updateDoc, doc, onSnapshot, serverTimestamp, increment } from 'firebase/firestore';
@@ -17,7 +17,8 @@ import { useSessionLocation } from '../../context/SessionLocationContext';
 import { useNavigate } from 'react-router-dom';
 import ModalPaciente from '../../components/ModalPaciente';
 import AvatarPaciente, { calcularEdad } from '../../components/AvatarPaciente';
-import RegistrosEnfermeriaModal from '../../components/RegistrosEnfermeriaModal'; 
+import RegistrosEnfermeriaModal from '../../components/RegistrosEnfermeriaModal';
+import ServiciosEnfermeriaModal from '../../components/ServiciosEnfermeriaModal';
 import ModalUnificarExpedientes from '../../components/ModalUnificarExpedientes';
 import CustomDropdown from '../../components/CustomDropdown';
 import { PAYMENT_METHOD_OPTIONS } from '../../services/enfermeriaPatientLogService';
@@ -44,6 +45,75 @@ const getPatientConditions = (patientData = {}) => {
     return conditions;
 };
 
+const getDocumentoCategoria = (doc = {}) => {
+    if (doc.tipo === 'receta') {
+        return { label: 'Receta', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' };
+    }
+    if (doc.tipo === 'estudio' || doc.origen === 'carga_enfermeria') {
+        return { label: 'Estudio subido', color: '#0d9488', bg: '#f0fdfa', border: '#99f6e4' };
+    }
+    if (doc.plantillaNombre || doc.plantillaId || doc.origen === 'plantilla_dinamica') {
+        return { label: 'Plantilla', color: '#ea580c', bg: '#fff7ed', border: '#fed7aa' };
+    }
+    return { label: 'Documento', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' };
+};
+
+const formatDocumentoFecha = (value) => {
+    if (!value) return 'Sin fecha';
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Sin fecha';
+    return parsed.toLocaleString('es-MX', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+};
+
+const flattenDocumentosPaciente = (historialDocs = []) => {
+    const items = [];
+
+    historialDocs.forEach((record) => {
+        const fechaRecord = record.fecha?.toDate?.()
+            || (record.fecha ? new Date(record.fecha) : null);
+        const fechaIso = fechaRecord && !Number.isNaN(fechaRecord.getTime())
+            ? fechaRecord.toISOString()
+            : '';
+
+        const pushItem = (doc, idx, esReceta) => {
+            if (!doc || (!doc.nombre && !doc.plantillaNombre && !doc.archivoUrl)) return;
+            items.push({
+                id: `${record.id}_${esReceta ? 'rx' : 'doc'}_${idx}`,
+                historialId: record.id,
+                tipo: esReceta ? 'receta' : (doc.tipo || 'documento'),
+                nombre: doc.nombre || doc.plantillaNombre || (esReceta ? 'Receta médica' : 'Documento'),
+                formato: doc.formato || '',
+                origen: doc.origen || record.origenRegistro || '',
+                plantillaNombre: doc.plantillaNombre || '',
+                archivoUrl: doc.archivoUrl || '',
+                generadoAt: doc.generadoAt || fechaIso,
+                autor: doc.enfermeroNombre || record.medicoNombre || '',
+                citaId: record.citaId || '',
+                tipoNota: record.tipoNota || ''
+            });
+        };
+
+        (Array.isArray(record.recetasGeneradas) ? record.recetasGeneradas : []).forEach((doc, idx) => {
+            pushItem(doc, idx, true);
+        });
+        (Array.isArray(record.documentosGenerados) ? record.documentosGenerados : []).forEach((doc, idx) => {
+            pushItem(doc, idx, false);
+        });
+    });
+
+    return items.sort((a, b) => {
+        const ta = new Date(a.generadoAt).getTime() || 0;
+        const tb = new Date(b.generadoAt).getTime() || 0;
+        return tb - ta;
+    });
+};
+
 const inputStyle = "w-full p-2 bg-white border border-slate-200/80 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm text-slate-700 shadow-sm";
 const labelStyle = "text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5 ml-1";
 
@@ -66,6 +136,7 @@ const AgendaEnfermeria = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showRegistrosModal, setShowRegistrosModal] = useState(false);
+  const [showServiciosModal, setShowServiciosModal] = useState(false);
   const [showMobileNav, setShowMobileNav] = useState(false);
   const [viewFilter, setViewFilter] = useState('timeline'); 
   const [showCitaModal, setShowCitaModal] = useState(false);
@@ -97,6 +168,9 @@ const AgendaEnfermeria = () => {
     const [uploadingEstudio, setUploadingEstudio] = useState(false);
     const [dragOverCitaId, setDragOverCitaId] = useState(null);
     const [ultimaVisita, setUltimaVisita] = useState(null);
+    const [historialDocumentos, setHistorialDocumentos] = useState([]);
+    const [loadingHistorialDocumentos, setLoadingHistorialDocumentos] = useState(false);
+    const [historialDocumentosRefresh, setHistorialDocumentosRefresh] = useState(0);
     const fileInputRef = useRef(null);
     const [expandedDoctorId, setExpandedDoctorId] = useState(null);
 
@@ -279,6 +353,39 @@ const AgendaEnfermeria = () => {
 
         return () => { cancelled = true; };
     }, [selectedCita?.pacienteId, selectedCita?.id]);
+
+    useEffect(() => {
+        if (!selectedCita?.pacienteId) {
+            setHistorialDocumentos([]);
+            return undefined;
+        }
+
+        let cancelled = false;
+        setLoadingHistorialDocumentos(true);
+
+        const fetchHistorialDocumentos = async () => {
+            try {
+                const qHistorial = query(
+                    collection(db, 'historial_clinico'),
+                    where('pacienteId', '==', selectedCita.pacienteId)
+                );
+                const snap = await getDocs(qHistorial);
+                if (cancelled) return;
+
+                const registros = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                setHistorialDocumentos(flattenDocumentosPaciente(registros));
+            } catch (err) {
+                console.error('Error cargando historial documental:', err);
+                if (!cancelled) setHistorialDocumentos([]);
+            } finally {
+                if (!cancelled) setLoadingHistorialDocumentos(false);
+            }
+        };
+
+        fetchHistorialDocumentos();
+
+        return () => { cancelled = true; };
+    }, [selectedCita?.pacienteId, historialDocumentosRefresh]);
 
     useEffect(() => {
         if (!selectedCita?.pacienteId) {
@@ -947,6 +1054,10 @@ const handleGuardarCita = async (e) => {
 
   const handleFinalizarCita = async () => {
     if (!selectedCita) return;
+    if (selectedCita.esCitaEnfermeria && !selectedCita.ordenEnfermeriaGenerada && !selectedCita.ordenEnfermeriaId) {
+      showToast('Debes completar la hoja de servicio antes de finalizar', 'error');
+      return;
+    }
     setActionLoading('finalizar');
     try {
       await updateDoc(doc(db, 'citas', selectedCita.id), {
@@ -1147,6 +1258,7 @@ const handleGuardarCita = async (e) => {
                 citaId: selectedCita.id,
                 openDocumentTemplates: true,
                 openedFrom: 'enfermeria_agenda',
+                from: '/enfermeria/dashboard',
                 doctorOverride: doctorEncontrado
             }
         });
@@ -1205,6 +1317,7 @@ const handleGuardarCita = async (e) => {
             });
 
             showToast('Estudio cargado correctamente al expediente clínico.', 'success');
+            setHistorialDocumentosRefresh((prev) => prev + 1);
         } catch (e) {
             console.error('Error al cargar estudio:', e);
             showToast('Error al cargar el estudio. Intenta de nuevo.', 'error');
@@ -1377,55 +1490,136 @@ const handleGuardarCita = async (e) => {
 
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .cross-float { animation: ${modoLigero ? 'none' : 'float 6s ease-in-out infinite'}; }
 
         .btn-main {
-          background: #0f172a; color: #fff; transition: transform 0.15s, box-shadow 0.2s;
-          box-shadow: 0 8px 24px -8px rgba(15,23,42,0.4);
+          background: #111; color: #fff; transition: background 0.15s;
         }
-        .btn-main:hover { background: #1e293b; transform: scale(0.98); }
+        .btn-main:hover { background: #2b2b2b; }
         
         .glass-panel {
-                    background: ${modoLigero ? 'rgba(255,255,255,1)' : 'rgba(255, 255, 255, 0.85)'};
-                    backdrop-filter: ${modoLigero ? 'none' : 'blur(16px)'};
-                    border: 1px solid ${modoLigero ? 'rgba(226,232,240,1)' : 'rgba(255, 255, 255, 0.6)'};
-                    box-shadow: ${modoLigero ? '0 2px 8px rgba(15,23,42,0.06)' : '0 10px 40px -10px rgba(0,0,0,0.05)'};
+                    background: #ffffff;
+                    border: 1px solid #e5e7eb;
+                    box-shadow: none;
         }
 
                 .app-shell {
-                    background: #f8fafc;
+                    background: #f7f8fa;
                 }
 
                 .app-header-lite {
                     background: #ffffff;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+                    border: 1px solid #e5e7eb;
+                    box-shadow: none;
+                }
+
+                .header-tool-cluster {
+                    display: inline-flex;
+                    align-items: stretch;
+                    background: #fff;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+
+                .header-tool-cluster button {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 7px 12px;
+                    border: none;
+                    border-right: 1px solid #e5e7eb;
+                    background: transparent;
+                    color: #374151;
+                    font-size: 11px;
+                    font-weight: 700;
+                    cursor: pointer;
+                    transition: background 0.12s, color 0.12s;
+                    white-space: nowrap;
+                    font-family: inherit;
+                }
+
+                .header-tool-cluster button:last-child {
+                    border-right: none;
+                }
+
+                .header-tool-cluster button:hover {
+                    background: #f3f4f6;
+                    color: #111;
+                }
+
+                .header-ghost-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 5px;
+                    padding: 7px 8px;
+                    border: none;
+                    background: transparent;
+                    color: #6b7280;
+                    font-size: 11px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    border-radius: 6px;
+                    transition: background 0.12s, color 0.12s;
+                    white-space: nowrap;
+                    font-family: inherit;
+                }
+
+                .header-ghost-btn:hover {
+                    background: #f3f4f6;
+                    color: #111;
+                }
+
+                .header-icon-btn {
+                    width: 32px;
+                    height: 32px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 1px solid #e5e7eb;
+                    background: #fff;
+                    color: #9ca3af;
+                    border-radius: 7px;
+                    cursor: pointer;
+                    transition: background 0.12s, color 0.12s, border-color 0.12s;
+                }
+
+                .header-icon-btn:hover {
+                    background: #f9fafb;
+                    color: #374151;
+                    border-color: #d1d5db;
+                }
+
+                .header-date-nav {
+                    display: inline-flex;
+                    align-items: center;
+                    background: #fafafa;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                    padding: 2px;
                 }
 
                 .badge-branch-lite {
                     display: inline-flex;
                     align-items: center;
                     gap: 4px;
-                    background: #f8fafc;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 8px;
-                    padding: 2px 8px;
-                    font-size: 10px;
-                    font-weight: 700;
-                    color: #64748b;
-                    text-transform: uppercase;
-                    letter-spacing: .08em;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #6b7280;
+                    letter-spacing: 0;
+                    text-transform: none;
+                    max-width: 220px;
                 }
 
                 .status-online-lite {
                     display: inline-flex;
                     align-items: center;
-                    gap: 6px;
+                    gap: 5px;
                     font-size: 10px;
-                    font-weight: 700;
+                    font-weight: 600;
                     color: #059669;
-                    text-transform: uppercase;
-                    letter-spacing: .08em;
                 }
 
                 .timeline-toolbar {
@@ -1434,8 +1628,8 @@ const handleGuardarCita = async (e) => {
                     align-items: center;
                     justify-content: space-between;
                     gap: 8px;
-                    border-bottom: 1px solid #e2e8f0;
-                    background: #ffffff;
+                    border-bottom: 1px solid #e5e7eb;
+                    background: #fafafa;
                 }
 
                 @media (min-width: 640px) {
@@ -1449,21 +1643,21 @@ const handleGuardarCita = async (e) => {
                     display: inline-flex;
                     align-items: center;
                     gap: 6px;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 999px;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 6px;
                     padding: 5px 10px;
                     font-size: 10px;
                     font-weight: 800;
                     letter-spacing: .05em;
                     text-transform: uppercase;
-                    color: #475569;
+                    color: #4b5563;
                     background: #ffffff;
                 }
 
                 .timeline-chip-lite.active {
-                    border-color: #93c5fd;
-                    color: #1d4ed8;
-                    background: #eff6ff;
+                    border-color: #111;
+                    color: #fff;
+                    background: #111;
                 }
 
                 .modo-ligero *, .modo-ligero *::before, .modo-ligero *::after {
@@ -1507,9 +1701,11 @@ const handleGuardarCita = async (e) => {
             </div>
             <nav className="px-4 pb-2 space-y-1">
               {[
+                { label: 'Servicios', icon: <Syringe size={20}/>, color: 'text-slate-700', action: () => { setShowMobileNav(false); setShowServiciosModal(true); } },
                 { label: 'Registros', icon: <ClipboardList size={20}/>, color: 'text-slate-700', action: () => { setShowMobileNav(false); setShowRegistrosModal(true); } },
+                { label: 'Jornada', icon: <ReceiptText size={20}/>, color: 'text-slate-700', action: () => { setShowMobileNav(false); setShowResumenJornada(true); } },
                 { label: 'Directorio de Pacientes', icon: <User size={20}/>, color: 'text-slate-700', action: () => { setShowMobileNav(false); navigate('/pacientes', { state: { from: '/enfermeria/dashboard' } }); } },
-                { label: 'Capacitación', icon: <BookOpen size={20}/>, color: 'text-violet-600', action: () => { setShowMobileNav(false); navigate('/enfermeria/capacitacion'); } },
+                { label: 'Capacitación', icon: <BookOpen size={20}/>, color: 'text-slate-700', action: () => { setShowMobileNav(false); navigate('/enfermeria/capacitacion'); } },
                 { label: 'Cerrar sesión', icon: <LogOut size={18}/>, color: 'text-rose-500', action: async () => { setShowMobileNav(false); try { await logout(); navigate('/'); } catch {} } },
               ].map(item => (
                 <button
@@ -1540,129 +1736,135 @@ const handleGuardarCita = async (e) => {
         <div className={`h-screen flex flex-col relative overflow-hidden text-slate-700 app-shell ${modoLigero ? 'modo-ligero' : ''}`}>
 
 {/* 1. HEADER RESPONSIVE */}
-                <div className="app-header-lite px-3 sm:px-6 py-3 flex flex-wrap md:flex-nowrap justify-between items-center gap-2 z-30 shrink-0 mx-3 sm:mx-6 mt-3 rounded-2xl mb-3">
-          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-blue-500/30 shrink-0">
-              <Activity size={18} className="sm:w-5 sm:h-5"/>
-            </div>
-            <div className="min-w-0">
-                            <h1 className="text-base sm:text-xl font-bold text-slate-900 leading-none sora tracking-tight truncate">Enfermería</h1>
-              <div className="flex items-center gap-2 mt-1">
-                                <span className="badge-branch-lite">
-                    <MapPin size={10}/> <span className="hidden sm:inline">{sucursalPredeterminada?.nombre || 'Sin sucursal'}</span><span className="sm:hidden">{(sucursalPredeterminada?.nombre || 'Sucursal').split(' ').slice(0,2).join(' ')}</span>
-                </span>
-                <span className="w-1 h-1 rounded-full bg-slate-300 hidden sm:block"></span>
-                                <span className="status-online-lite hidden sm:inline-flex">
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div> En Linea
-                </span>
+                <div className="app-header-lite px-3 sm:px-4 py-2.5 z-30 shrink-0 mx-3 sm:mx-6 mt-3 rounded-lg mb-3">
+          <div className="flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-2">
+
+            {/* Identidad */}
+            <div className="flex items-center gap-2.5 min-w-0 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-[#111] text-white flex items-center justify-center shrink-0">
+                <Activity size={15} strokeWidth={2.25} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-[15px] font-bold text-[#111] leading-none sora tracking-tight">Enfermería</h1>
+                  <span className="status-online-lite hidden sm:inline-flex" title="Conectado">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                    En línea
+                  </span>
+                </div>
+                <div className="badge-branch-lite mt-1 truncate" title={sucursalPredeterminada?.nombre || 'Sin sucursal'}>
+                  <MapPin size={11} className="shrink-0 text-slate-400" />
+                  <span className="truncate">{sucursalPredeterminada?.nombre || 'Sin sucursal'}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Selector de Fecha Inteligente */}
-          <div className="bg-white/80 border border-slate-200 p-1 rounded-xl flex items-center shadow-sm order-3 md:order-none">
-            <button onClick={()=>cambiarDia(-1)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-all hover:shadow-sm"><ChevronLeft size={18}/></button>
-            
-            <div className="relative flex items-center justify-center px-2 sm:px-4 cursor-pointer group">
-                <input 
-                    type="date" 
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 date-picker-overlay"
-                    value={toInputDateValue(currentDate)}
-                    onChange={(e) => {
-                            if(e.target.value) setCurrentDate(new Date(e.target.value + 'T12:00:00'));
-                        }}
-                    />
-                    <div className="flex flex-col items-center group-hover:text-blue-600 transition-colors">
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                            <CalIcon size={14} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
-                        <span className="text-xs sm:text-sm font-bold text-slate-800 capitalize font-jakarta group-hover:text-blue-700 transition-colors">
-                            {currentDate.toLocaleDateString('es-MX', { weekday: 'short' }).replace('.', '')}
-                        </span>
-                    </div>
-                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-500">
-                        {currentDate.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}
-                    </span>
+            {/* Fecha pegada a identidad */}
+            <div className="header-date-nav order-3 md:order-none">
+              <button type="button" onClick={() => cambiarDia(-1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-colors">
+                <ChevronLeft size={15} />
+              </button>
+              <div className="relative flex items-center justify-center px-2 cursor-pointer group min-w-[108px]">
+                <input
+                  type="date"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 date-picker-overlay"
+                  value={toInputDateValue(currentDate)}
+                  onChange={(e) => {
+                    if (e.target.value) setCurrentDate(new Date(e.target.value + 'T12:00:00'));
+                  }}
+                />
+                <div className="flex items-center gap-1.5">
+                  <CalIcon size={12} className="text-slate-400 group-hover:text-slate-700 transition-colors" />
+                  <span className="text-[12px] font-bold text-slate-800 capitalize font-jakarta group-hover:text-black transition-colors whitespace-nowrap">
+                    {currentDate.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '')}
+                  </span>
                 </div>
+              </div>
+              <button type="button" onClick={() => cambiarDia(1)} className="p-1.5 hover:bg-white rounded-md text-slate-500 transition-colors">
+                <ChevronRight size={15} />
+              </button>
             </div>
-<button onClick={()=>cambiarDia(1)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-all hover:shadow-sm"><ChevronRight size={18}/></button>
-          </div>
 
-          <div className="flex gap-2 sm:gap-3">
-            {/* --- NUEVO BOTÓN: REGISTROS ACTUALIZADO --- */}
-            <button 
-                onClick={() => setShowRegistrosModal(true)} 
-                className="hidden md:flex text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 font-bold text-xs px-4 py-2 rounded-xl transition-all items-center gap-2 shadow-sm"
-            >
-                <ClipboardList size={16} /> Registros
-            </button>
+            {/* Acciones a la derecha */}
+            <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
+              {/* Operativos: un solo bloque */}
+              <div className="hidden md:flex header-tool-cluster">
+                <button type="button" onClick={() => setShowServiciosModal(true)}>
+                  <Syringe size={13} /> Servicios
+                </button>
+                <button type="button" onClick={() => setShowRegistrosModal(true)}>
+                  <ClipboardList size={13} /> Registros
+                </button>
+                <button type="button" onClick={() => setShowResumenJornada(true)}>
+                  <ReceiptText size={13} /> Jornada
+                </button>
+              </div>
 
-            {/* --- BOTÓN: RESUMEN DE JORNADA --- */}
-            <button 
-                onClick={() => setShowResumenJornada(true)} 
-                className="hidden md:flex text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-200 font-bold text-xs px-4 py-2 rounded-xl transition-all items-center gap-2 shadow-sm"
-            >
-                <ReceiptText size={16} /> Jornada
-            </button>
+              {/* Secundarios: peso visual menor */}
+              <div className="hidden md:flex items-center gap-0.5">
+                <button type="button" onClick={() => navigate('/pacientes', { state: { from: '/enfermeria/dashboard' } })} className="header-ghost-btn">
+                  <User size={13} /> Directorio
+                </button>
+                <button type="button" onClick={() => navigate('/enfermeria/capacitacion')} className="header-ghost-btn">
+                  <BookOpen size={13} /> Capacitación
+                </button>
+              </div>
 
-            {/* BOTÓN EXISTENTE: DIRECTORIO */}
-            <button onClick={() => navigate('/pacientes', { state: { from: '/enfermeria/dashboard' } })} className="hidden md:flex text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 font-bold text-xs px-4 py-2 rounded-xl transition-all items-center gap-2 shadow-sm">
-                <User size={16} /> Directorio
-            </button>
+              <div className="hidden md:block w-px h-5 bg-slate-200 mx-0.5" />
 
-            {/* BOTÓN: CAPACITACIÓN */}
-            <button onClick={() => navigate('/enfermeria/capacitacion')} className="hidden md:flex text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-200 font-bold text-xs px-4 py-2 rounded-xl transition-all items-center gap-2 shadow-sm">
-                <BookOpen size={16} /> Capacitación
-            </button>
+              <button
+                type="button"
+                onClick={async () => { try { await logout(); navigate('/'); } catch {} }}
+                className="hidden md:inline-flex header-icon-btn"
+                title="Cerrar sesión"
+              >
+                <LogOut size={14} />
+              </button>
 
-            {/* BOTÓN: CERRAR SESIÓN */}
-            <button onClick={async () => { try { await logout(); navigate('/'); } catch {} }} className="hidden md:flex text-slate-400 hover:text-rose-500 hover:bg-rose-50 border border-slate-200 font-bold text-xs px-3 py-2 rounded-xl transition-all items-center gap-2">
-                <LogOut size={16} />
-            </button>
-            
-            {/* BOTÓN EXISTENTE: NUEVA CITA */}
-                        <button onClick={() => {
+              <button type="button" onClick={() => {
                 setEditingCitaId('');
-                                const consultorioNombre = selectedConsultorio !== 'Todos' ? selectedConsultorio : (consultoriosNombres[0] || '');
-                                const consultorioData = consultorios.find((c) => c.nombre === consultorioNombre);
-                                const motivoData = catalogoMotivos[0] || null;
-                            const sucursalData = sucursalPredeterminada || null;
-                                setNuevaCita({
-                                    ...nuevaCita,
-                                    fecha: toInputDateValue(currentDate),
-                                    hora: '',
-                                    horaFin: '',
-                                    consultorio: consultorioNombre,
-                                    consultorioId: consultorioData?.id || '',
-                                    motivo: motivoData?.nombre || '',
-                                    motivoId: motivoData?.id || '',
-                                    sucursal: sessionSucursal?.nombre || sucursalData?.nombre || user?.sucursal || '',
-                                    sucursalId: sessionSucursal?.id || sucursalData?.id || user?.sucursalId || '',
-                                    formaPago: ''
-                                });
-                                setShowCitaModal(true);
-                            }} 
-                className="btn-main font-jakarta rounded-xl px-3 sm:px-4 py-2 flex items-center gap-1.5 sm:gap-2 text-xs shadow-md">
-              <Plus size={16} strokeWidth={2.5} /> <span className="hidden sm:inline">Nueva Cita</span><span className="sm:hidden">Cita</span>
-            </button>
+                const consultorioNombre = selectedConsultorio !== 'Todos' ? selectedConsultorio : (consultoriosNombres[0] || '');
+                const consultorioData = consultorios.find((c) => c.nombre === consultorioNombre);
+                const motivoData = catalogoMotivos[0] || null;
+                const sucursalData = sucursalPredeterminada || null;
+                setNuevaCita({
+                  ...nuevaCita,
+                  fecha: toInputDateValue(currentDate),
+                  hora: '',
+                  horaFin: '',
+                  consultorio: consultorioNombre,
+                  consultorioId: consultorioData?.id || '',
+                  motivo: motivoData?.nombre || '',
+                  motivoId: motivoData?.id || '',
+                  sucursal: sessionSucursal?.nombre || sucursalData?.nombre || user?.sucursal || '',
+                  sucursalId: sessionSucursal?.id || sucursalData?.id || user?.sucursalId || '',
+                  formaPago: ''
+                });
+                setShowCitaModal(true);
+              }}
+                className="btn-main font-jakarta rounded-lg px-3.5 py-2 flex items-center gap-1.5 text-xs font-bold shadow-sm">
+                <Plus size={14} strokeWidth={2.5} /> <span className="hidden sm:inline">Nueva Cita</span><span className="sm:hidden">Cita</span>
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="flex-1 flex overflow-hidden px-3 sm:px-6 pb-3 sm:pb-6 gap-3 sm:gap-6 z-10 relative">
           
           {/* --- COLUMNA IZQUIERDA: AGENDA --- */}
-          <div className="flex-1 flex flex-col relative overflow-hidden glass-panel rounded-2xl sm:rounded-3xl min-w-0">
+          <div className="flex-1 flex flex-col relative overflow-hidden glass-panel rounded-lg min-w-0">
               
              {/* HUD DE MÉTRICAS & SELECTOR DE CONSULTORIO */}
-              <div className="px-3 sm:px-6 py-2 border-b border-slate-200/50 flex justify-between items-center gap-2 sm:gap-3 shrink-0 bg-white/40" />
+              <div className="hidden" />
 
 
               {/* FILTROS */}
               <div className="timeline-toolbar flex-col sm:flex-row gap-2">
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 sora shrink-0">Consultas del día</h2>
+                  <h2 className="text-sm sm:text-base font-bold text-[#111] sora shrink-0">Consultas del día</h2>
                   <div className="flex items-center gap-1.5 sm:gap-2">
                       {/* Selector de consultorio */}
-                      <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 shadow-sm shrink-0">
-                          <div className="bg-indigo-50 p-1 rounded-md text-indigo-600"><Building size={12}/></div>
+                      <div className="flex items-center gap-1.5 bg-white p-1 rounded-md border border-slate-200 shrink-0">
+                          <Building size={12} className="text-slate-500 ml-1"/>
                           <div className="relative">
                               <select 
                                 value={selectedConsultorio} onChange={(e) => setSelectedConsultorio(e.target.value)}
@@ -1695,10 +1897,10 @@ const handleGuardarCita = async (e) => {
               </div>
 
               {/* TIMELINE */}
-              <div className="flex-1 overflow-y-auto px-2 sm:px-6 md:px-10 pb-10 pt-4 sm:pt-8 custom-scrollbar bg-slate-50/40">
+              <div className="flex-1 overflow-y-auto px-2 sm:px-6 md:px-10 pb-10 pt-4 sm:pt-6 custom-scrollbar bg-[#f7f8fa]">
                   {viewFilter === 'timeline' ? (
-                      <div className="max-w-6xl mx-auto bg-white border border-slate-200 rounded-2xl sm:rounded-3xl shadow-sm overflow-hidden">
-                          <div className="hidden md:flex bg-slate-50/80 border-b border-slate-200 py-3 text-xs font-black text-slate-400 uppercase tracking-widest px-4">
+                      <div className="max-w-6xl mx-auto bg-white border border-slate-200 rounded-lg overflow-hidden">
+                          <div className="hidden md:flex bg-[#fafafa] border-b border-slate-200 py-3 text-xs font-black text-slate-400 uppercase tracking-widest px-4">
                               <div className="w-32 lg:w-40 text-center border-r border-slate-200">Rango Horario</div>
                               <div className="flex-1 pl-4 lg:pl-8">Paciente y Detalles</div>
                               <div className="w-48 lg:w-72 text-left pl-4 lg:pl-8 border-l border-slate-200">Asignación</div>
@@ -1728,18 +1930,18 @@ const handleGuardarCita = async (e) => {
                                       key={slot.value} 
                                       ref={slot.isCurrent ? scrollRef : null}
                                       className={`flex flex-col sm:flex-row min-h-[60px] sm:min-h-[80px] group border-b border-slate-100 last:border-0 relative transition-colors ${
-                                          slot.isCurrent ? 'bg-blue-50/40 shadow-inner' : slot.isPast ? 'bg-slate-50/60' : hayBloqueo && citasEnSlot.length === 0 ? 'bg-red-50/40' : 'bg-white hover:bg-slate-50/50'
+                                          slot.isCurrent ? 'bg-[#fafafa]' : slot.isPast ? 'bg-slate-50/60' : hayBloqueo && citasEnSlot.length === 0 ? 'bg-red-50/40' : 'bg-white hover:bg-slate-50/50'
                                       }`}
                                   >
                                       {/* Línea Activa */}
-                                      {slot.isCurrent && <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500 z-20 rounded-r-md ${modoLigero ? '' : 'animate-pulse'}`}></div>}
+                                      {slot.isCurrent && <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#111] z-20"></div>}
 
-                                      <div className={`w-full sm:w-32 lg:w-40 flex items-center sm:flex-col sm:items-center justify-start sm:justify-center px-3 py-2 sm:py-0 border-b sm:border-b-0 sm:border-r border-slate-100 shrink-0 ${slot.isPast ? 'text-slate-400' : 'text-slate-600'} ${slot.isCurrent ? 'text-blue-700 bg-blue-100/30' : ''}`}>
+                                      <div className={`w-full sm:w-32 lg:w-40 flex items-center sm:flex-col sm:items-center justify-start sm:justify-center px-3 py-2 sm:py-0 border-b sm:border-b-0 sm:border-r border-slate-100 shrink-0 ${slot.isPast ? 'text-slate-400' : 'text-slate-600'} ${slot.isCurrent ? 'text-[#111]' : ''}`}>
                                           <span className={`font-bold font-mono tracking-tight ${slot.isCurrent ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'}`}>{slot.value}</span>
                                           {citasEnSlot.length > 0 && !hayBloqueo && (
                                               <button
                                                   onClick={(e) => { e.stopPropagation(); iniciarAgendado(slot); }}
-                                                  className="mt-1 opacity-0 group-hover:opacity-100 w-6 h-6 rounded-lg bg-blue-50 border border-blue-200 text-blue-500 hover:bg-blue-100 hover:text-blue-700 hover:border-blue-300 flex items-center justify-center transition-all shadow-sm"
+                                                  className="mt-1 opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-[#111] hover:border-slate-400 flex items-center justify-center transition-all"
                                                   title="Agendar otra cita en este horario"
                                               >
                                                   <Plus size={14}/>
@@ -1751,7 +1953,7 @@ const handleGuardarCita = async (e) => {
                                           {citasEnSlot.length === 0 && !hayBloqueo && (
                                               <button 
                                                   onClick={() => iniciarAgendado(slot)}
-                                                  className={`absolute left-2 sm:left-8 opacity-0 group-hover:opacity-100 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl transition-all z-10 flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-bold shadow-sm ${slot.isPast ? 'text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 hover:shadow-md' : 'text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 hover:shadow-md'}`}
+                                                  className={`absolute left-2 sm:left-8 opacity-0 group-hover:opacity-100 px-3 sm:px-4 py-2 sm:py-2.5 rounded-md transition-all z-10 flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-bold ${slot.isPast ? 'text-slate-500 bg-white border border-slate-300 hover:bg-slate-50' : 'text-[#111] bg-white border border-slate-300 hover:bg-slate-50 hover:border-slate-400'}`}
                                               >
                                                   <Plus size={14} className="sm:w-4 sm:h-4"/> <span className="hidden sm:inline">{slot.isPast ? 'Registro Pasado' : 'Agendar Paciente'}</span><span className="sm:hidden">{slot.isPast ? 'Registro' : 'Agendar'}</span>
                                               </button>
@@ -1779,11 +1981,11 @@ const handleGuardarCita = async (e) => {
                                                         onDragOver={(e) => handleDragOverCard(e, cita.id, cita)}
                                                         onDragLeave={handleDragLeaveCard}
                                                         onDrop={(e) => handleDropOnCard(e, cita)}
-                                                        className={`flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 border shadow-sm rounded-xl sm:rounded-2xl transition-all cursor-pointer group/item gap-2 sm:gap-0 ${
-                                                            isDragOver ? 'ring-2 ring-teal-400 border-teal-400 bg-teal-50/50 scale-[1.02]' :
+                                                        className={`flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 border rounded-lg transition-all cursor-pointer group/item gap-2 sm:gap-0 ${
+                                                            isDragOver ? 'ring-2 ring-[#111] border-[#111] bg-slate-50 scale-[1.01]' :
                                                         esCancelada
                                                             ? 'bg-red-50/60 border-red-200/60 opacity-55 hover:opacity-80 hover:border-red-300'
-                                                            : 'bg-white border-slate-100 hover:shadow-md hover:border-blue-300'
+                                                            : 'bg-white border-slate-200 hover:border-slate-400'
                                                     }`}>
                                                        <div className="flex items-center gap-2 sm:gap-4 overflow-hidden min-w-0">
                                                              <EstadoPacienteBadge cita={cita} size="xs" />
@@ -1795,7 +1997,7 @@ const handleGuardarCita = async (e) => {
                                                            </div>
                                                        </div>
                                                        <div className={`hidden md:flex items-center gap-3 shrink-0 w-48 lg:w-64 justify-start border-l pl-4 lg:pl-6 ${esCancelada ? 'border-red-100/60' : 'border-slate-100'}`}>
-                                                           <div className={`w-8 h-8 lg:w-10 lg:h-10 rounded-xl border flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${esCancelada ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                                                           <div className={`w-8 h-8 lg:w-10 lg:h-10 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 ${esCancelada ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-[#f3f4f6] border-slate-200 text-slate-600'}`}>
                                                                {cita.doctorAsignado?.charAt(0) || 'D'}
                                                            </div>
                                                            <div className="flex flex-col min-w-0">
@@ -1828,14 +2030,14 @@ const handleGuardarCita = async (e) => {
           </div>
 
            {/* --- COLUMNA DERECHA: MÉDICOS DISPONIBLES --- */}
-           <div className="w-[380px] glass-panel rounded-3xl flex flex-col z-20 hidden xl:flex overflow-hidden">
-               <div className="p-6 border-b border-slate-200/50 bg-white/40">
+           <div className="w-[380px] glass-panel rounded-lg flex flex-col z-20 hidden xl:flex overflow-hidden">
+               <div className="px-5 py-4 border-b border-slate-200 bg-[#fafafa]">
                    <h3 className="text-xs font-black text-slate-500 flex items-center justify-between uppercase tracking-widest">
-                       <span className="flex items-center gap-2"><Zap size={18} className="text-amber-500" fill="currentColor"/> Médicos</span>
-                       <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-lg">{doctoresConPx.length}</span>
+                       <span className="flex items-center gap-2"><Zap size={16} className="text-slate-500"/> Médicos</span>
+                       <span className="border border-slate-200 bg-white text-slate-600 px-2 py-0.5 rounded-md">{doctoresConPx.length}</span>
                    </h3>
                </div>
-               <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-white/20">
+               <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-white">
                    {doctoresConPx.map(doc => {
                        const status = doc._status;
                        const doctorConsultorio = doc._consultorio;
@@ -1860,19 +2062,15 @@ const handleGuardarCita = async (e) => {
                            <div key={doc.id}>
                                <div
                                    onClick={() => setExpandedDoctorId(isExpanded ? null : doc.id)}
-                                   className={`p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${
+                                   className={`p-4 rounded-lg border transition-all cursor-pointer ${
                                        isExpanded
-                                           ? 'border-blue-300 bg-blue-50/70 shadow-md'
-                                           : esMiSucursal
-                                               ? 'border-teal-200 bg-teal-50/50 hover:border-teal-300'
-                                               : 'border-slate-100 bg-white hover:border-blue-200'
+                                           ? 'border-[#111] bg-white'
+                                           : 'border-slate-200 bg-white hover:border-slate-400'
                                    }`}
                                >
                                    <div className="flex items-center gap-3 min-w-0">
                                        <div className="relative shrink-0">
-                                           <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-black border text-base shadow-sm ${
-                                               isActive ? 'bg-teal-50 text-teal-600 border-teal-200' : 'bg-slate-50 text-slate-600 border-slate-200'
-                                           }`}>
+                                           <div className="w-11 h-11 rounded-lg flex items-center justify-center font-black border text-base bg-[#f3f4f6] text-slate-700 border-slate-200">
                                                {doc.nombre?.charAt(0)}
                                            </div>
                                            <div className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 border-2 border-white rounded-full ${status.color}`}></div>
@@ -1880,7 +2078,7 @@ const handleGuardarCita = async (e) => {
                                        <div className="flex flex-col min-w-0 flex-1">
                                            <div className="flex items-center gap-2">
                                                <p className="text-sm font-bold text-slate-800 leading-tight font-jakarta truncate">{doc.nombre}</p>
-                                               {esMiSucursal && <MapPin size={10} className="text-teal-500 shrink-0" />}
+                                               {esMiSucursal && <MapPin size={10} className="text-slate-500 shrink-0" />}
                                            </div>
                                            <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5 tracking-wider truncate">
                                                {doctorConsultorio.nombre || 'Consulta Gral'}
@@ -1902,7 +2100,7 @@ const handleGuardarCita = async (e) => {
                                        <div className="flex items-center gap-1.5 shrink-0">
                                            <button
                                                onClick={handleSendMessage}
-                                               className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center hover:bg-blue-50 hover:border-blue-300 transition-colors active:scale-95"
+                                               className="w-8 h-8 rounded-md bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-50 hover:border-slate-400 transition-colors active:scale-95"
                                                title={`Enviar mensaje a ${doc.nombre}`}
                                            >
                                                <MessageSquare size={13} className="text-slate-500" />
@@ -1916,13 +2114,11 @@ const handleGuardarCita = async (e) => {
                                </div>
 
                                {isExpanded && (
-                                   <div className="mx-1 mt-1 mb-2 p-4 rounded-2xl bg-white border border-blue-200 shadow-sm space-y-3 animate-in slide-in-from-top-2 duration-200">
+                                   <div className="mx-1 mt-1 mb-2 p-4 rounded-lg bg-white border border-slate-200 space-y-3 animate-in slide-in-from-top-2 duration-200">
                                        {enConsulta ? (
                                            <>
                                                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
-                                                   <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center">
-                                                       <UserCheck size={13} className="text-blue-600" />
-                                                   </div>
+                                                   <UserCheck size={14} className="text-slate-500 shrink-0" />
                                                    <div className="min-w-0">
                                                        <p className="text-xs font-bold text-slate-700 truncate">{enConsulta.paciente}</p>
                                                        <p className="text-[9px] text-slate-400 uppercase tracking-wider">
@@ -1966,6 +2162,13 @@ const handleGuardarCita = async (e) => {
                                                                <Activity size={11} className="text-emerald-400 mx-auto mb-0.5" />
                                                                <p className="text-[9px] text-slate-400 font-bold uppercase">SpO₂</p>
                                                                <p className="text-xs font-black text-slate-700">{signosVit.spo2}%</p>
+                                                           </div>
+                                                       )}
+                                                       {signosVit.glucosa && (
+                                                           <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
+                                                               <Droplet size={11} className="text-teal-500 mx-auto mb-0.5" />
+                                                               <p className="text-[9px] text-slate-400 font-bold uppercase">Glucosa</p>
+                                                               <p className="text-xs font-black text-slate-700">{signosVit.glucosa}</p>
                                                            </div>
                                                        )}
                                                        {signosVit.imc && (
@@ -2029,7 +2232,7 @@ const handleGuardarCita = async (e) => {
 
                                        <button
                                            onClick={handleSendMessage}
-                                           className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[11px] font-bold flex items-center justify-center gap-2 hover:from-blue-600 hover:to-indigo-600 active:scale-[0.98] transition-all shadow-sm"
+                                           className="w-full py-2.5 rounded-md bg-[#111] text-white text-[11px] font-bold flex items-center justify-center gap-2 hover:bg-[#2b2b2b] active:scale-[0.98] transition-all"
                                        >
                                            <MessageSquare size={13} /> Enviar mensaje directo
                                        </button>
@@ -2378,7 +2581,7 @@ const handleGuardarCita = async (e) => {
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.4)', backdropFilter: 'blur(4px)' }} />
 
                 <div 
-                    style={{ position: 'relative', background: '#fff', borderRadius: '16px', boxShadow: '0 24px 60px rgba(15,23,42,.18)', width: '100%', maxWidth: '1080px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalIn .25s ease-out' }}
+                    style={{ position: 'relative', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 12px 40px rgba(0,0,0,.12)', width: '100%', maxWidth: '1080px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalIn .25s ease-out' }}
                     onClick={e => e.stopPropagation()}
                 >
                     {/* ─── HEADER ─── */}
@@ -2401,12 +2604,12 @@ const handleGuardarCita = async (e) => {
                                         {selectedCita.consultorio || 'Sin consultorio'}
                                     </span>
                                     {selectedCita.esTeleconsulta && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5' }}>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: 700, border: '1px solid #e5e7eb', background: '#fff', color: '#4b5563' }}>
                                             <Video size={10} /> Teleconsulta
                                         </span>
                                     )}
                                     {selectedCita.esCitaEnfermeria && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 700, border: '1px solid #99f6e4', background: '#f0fdfa', color: '#0d9488' }}>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: 700, border: '1px solid #e5e7eb', background: '#fff', color: '#4b5563' }}>
                                             Enfermería
                                         </span>
                                     )}
@@ -2447,32 +2650,35 @@ const handleGuardarCita = async (e) => {
                                         <button onClick={async () => {
                                             if (selectedPacienteDetalle?.id) { setPacienteAEditar(selectedPacienteDetalle); setShowPacienteModal(true); return; }
                                             try { const snap = await getDoc(doc(db, 'pacientes', selectedCita.pacienteId)); if (snap.exists()) { setPacienteAEditar({ id: snap.id, ...snap.data() }); setShowPacienteModal(true); } } catch {}
-                                        }} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                        }} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#fff', color: '#111', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                             <Edit3 size={11} /> Editar paciente
                                         </button>
                                     )}
                                     {selectedCita.esTeleconsulta && selectedCita.meetLink && (
-                                        <button onClick={() => window.open(selectedCita.meetLink, '_blank')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                        <button onClick={() => window.open(selectedCita.meetLink, '_blank')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#fff', color: '#111', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                             <Video size={11} /> Unirse a Meet
                                         </button>
                                     )}
                                     {selectedCita.esCitaEnfermeria && (
-                                        <button onClick={() => window.open(`/enfermeria/orden-servicio?citaId=${selectedCita.id}`, '_blank')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '9999px', border: '1px solid #99f6e4', background: '#f0fdfa', color: '#0d9488', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                            <ClipboardList size={11} /> Orden de servicio
+                                        <button onClick={() => {
+                                            const qs = new URLSearchParams({ citaId: selectedCita.id });
+                                            window.open(`/enfermeria/orden-servicio?${qs.toString()}`, '_blank');
+                                        }} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#fff', color: '#111', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                            <Syringe size={11} /> {(selectedCita.ordenEnfermeriaGenerada || selectedCita.ordenEnfermeriaId) ? 'Editar hoja' : 'Hoja de servicio'}
                                         </button>
                                     )}
                                 </div>
                             </div>
 
                             {/* Cerrar */}
-                            <button onClick={cerrarDetalleCita} style={{ width: '30px', height: '30px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', flexShrink: 0 }}>
+                            <button onClick={cerrarDetalleCita} style={{ width: '30px', height: '30px', borderRadius: '6px', border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', flexShrink: 0 }}>
                                 <X size={14} />
                             </button>
                         </div>
                     </div>
 
                     {/* ─── BODY ─── */}
-                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                    <div style={{ flex: 1, overflowY: 'auto', background: '#f7f8fa' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px', padding: '16px 20px' }}>
 
                             {/* ── COL IZQUIERDA ── */}
@@ -2505,9 +2711,9 @@ const handleGuardarCita = async (e) => {
 
                                 {/* ÚLTIMA VISITA */}
                                 {ultimaVisita && (
-                                    <div style={{ background: '#fff', border: '1px solid #d1fae5', borderRadius: '8px', overflow: 'hidden' }}>
-                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #d1fae5', background: '#ecfdf5', fontSize: '12px', fontWeight: 700, color: '#065f46', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <CalendarClock size={13} style={{ color: '#059669' }} /> Última consulta
+                                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <CalendarClock size={13} style={{ color: '#9ca3af' }} /> Última consulta
                                         </div>
                                         <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                             {(() => {
@@ -2547,19 +2753,17 @@ const handleGuardarCita = async (e) => {
 
                                 {/* TRIAGE PENDIENTE */}
                                 {!selectedCita.signos_vitales && selectedCita.estado !== 'completada' && selectedCita.estado !== 'cancelada' && (
-                                    <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '16px' }}>
+                                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                                            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #fde68a' }}>
-                                                <AlertCircle size={18} style={{ color: '#f59e0b' }} />
-                                            </div>
+                                            <AlertCircle size={18} style={{ color: '#6b7280', flexShrink: 0 }} />
                                             <div>
-                                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#92400e' }}>Triage Pendiente</div>
-                                                <div style={{ fontSize: '11px', color: '#a16207' }}>Toma de signos vitales requerida</div>
+                                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>Triage pendiente</div>
+                                                <div style={{ fontSize: '11px', color: '#6b7280' }}>Toma de signos vitales requerida</div>
                                             </div>
                                         </div>
                                         <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente } })}
-                                            style={{ width: '100%', height: '36px', borderRadius: '8px', border: 'none', background: '#f59e0b', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
-                                            Iniciar Triage
+                                            style={{ width: '100%', height: '36px', borderRadius: '6px', border: 'none', background: '#111', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                                            Iniciar triage
                                         </button>
                                     </div>
                                 )}
@@ -2567,23 +2771,28 @@ const handleGuardarCita = async (e) => {
                                 {/* SIGNOS VITALES */}
                                 {selectedCita.signos_vitales && (
                                     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
-                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #bfdbfe', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <CheckCircle2 size={14} style={{ color: '#3b82f6' }} />
-                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e40af' }}>Signos Vitales</span>
+                                                <CheckCircle2 size={14} style={{ color: '#6b7280' }} />
+                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#111' }}>Signos vitales</span>
                                             </div>
                                             <button onClick={() => navigate('/enfermeria/triage', { state: { citaId: selectedCita.id, pacienteId: selectedCita.pacienteId, pacienteNombre: selectedCita.paciente, editMode: true } })}
-                                                style={{ fontSize: '10px', fontWeight: 700, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                style={{ fontSize: '10px', fontWeight: 700, color: '#111', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 <Edit3 size={10} /> Editar
                                             </button>
                                         </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8, padding: 12 }}>
                                             {[{ l: 'Peso', v: selectedCita.signos_vitales.peso, u: 'kg' }, { l: 'Talla', v: selectedCita.signos_vitales.talla, u: 'm' }, { l: 'Temp', v: selectedCita.signos_vitales.temp, u: '°C' }, { l: 'T/A', v: selectedCita.signos_vitales.ta, u: '' },
-                                              { l: 'F.C.', v: selectedCita.signos_vitales.fc, u: 'lpm' }, { l: 'F.R.', v: selectedCita.signos_vitales.fr, u: 'rpm' }, { l: 'SpO2', v: selectedCita.signos_vitales.spo2, u: '%' }, { l: 'IMC', v: selectedCita.signos_vitales.imc, u: '' }].map((s, i) => (
-                                                <div key={i} style={{ padding: '10px 6px', textAlign: 'center', borderRight: i % 4 !== 3 ? '1px solid #f3f4f6' : 'none', borderTop: i >= 4 ? '1px solid #f3f4f6' : 'none' }}>
-                                                    <div style={{ fontSize: '9px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.l}</div>
-                                                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#111', marginTop: '2px' }}>{s.v || '--'}</div>
-                                                    {s.u && <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '1px' }}>{s.u}</div>}
+                                              { l: 'F.C.', v: selectedCita.signos_vitales.fc, u: 'lpm' }, { l: 'F.R.', v: selectedCita.signos_vitales.fr, u: 'rpm' }, { l: 'SpO₂', v: selectedCita.signos_vitales.spo2, u: '%' }, { l: 'Glucosa', v: selectedCita.signos_vitales.glucosa, u: 'mg/dL' },
+                                              { l: 'IMC', v: selectedCita.signos_vitales.imc, u: '' }].map((s, i) => (
+                                                <div key={i}>
+                                                    <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between', gap: 4 }}>
+                                                        <span>{s.l}</span>
+                                                        {s.u ? <span style={{ color: '#d1d5db', fontWeight: 600 }}>{s.u}</span> : null}
+                                                    </div>
+                                                    <div style={{ marginTop: 4, height: 32, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 14, fontWeight: 700, color: '#111', fontFamily: 'Sora, system-ui, sans-serif' }}>
+                                                        {s.v || '—'}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -2637,12 +2846,10 @@ const handleGuardarCita = async (e) => {
                                             <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: 1.5, background: '#fafafa', borderRadius: '6px', padding: '8px 10px', border: '1px solid #f3f4f6' }}>{detallePacienteActivo?.notas || 'Sin notas registradas.'}</div>
                                         </div>
                                         {selectedCita.estado === 'cancelada' && (
-                                            <div style={{ background: '#fff1f2', borderRadius: '8px', padding: '12px', border: '1px solid #fecdd3', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #fecdd3' }}>
-                                                    <Ban size={16} style={{ color: '#f43f5e' }} />
-                                                </div>
+                                            <div style={{ background: '#fff', borderRadius: '8px', padding: '12px', border: '1px solid #fecdd3', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                <Ban size={16} style={{ color: '#e11d48', flexShrink: 0 }} />
                                                 <div>
-                                                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>Cita Cancelada</div>
+                                                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#be123c' }}>Cita cancelada</div>
                                                     {selectedCita.canceladaMotivo && <div style={{ fontSize: '11px', color: '#e11d48', marginTop: '2px' }}>{selectedCita.canceladaMotivo}</div>}
                                                 </div>
                                             </div>
@@ -2668,7 +2875,7 @@ const handleGuardarCita = async (e) => {
                                             { label: 'Recordatorio', value: selectedCita.recordatorioEnviado ? 'Enviado' : 'Pendiente', tone: selectedCita.recordatorioEnviado ? 'success' : 'neutral' },
                                             { label: 'Modalidad', value: selectedCita.esTeleconsulta ? 'Teleconsulta' : 'Presencial' },
                                         ].map((row, i) => {
-                                            const toneColors = row.tone === 'success' ? { bg: '#d1fae5', color: '#065f46' } : row.tone === 'warning' ? { bg: '#fef3c7', color: '#92400e' } : { bg: '#f3f4f6', color: '#374151' };
+                                            const toneColors = row.tone === 'success' ? { bg: '#f3f4f6', color: '#111' } : row.tone === 'warning' ? { bg: '#fef3c7', color: '#92400e' } : { bg: '#f3f4f6', color: '#374151' };
                                             return (
                                                 <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '7px 10px', borderRadius: '6px', background: i % 2 === 0 ? '#fafafa' : '#fff' }}>
                                                     <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>{row.label}</span>
@@ -2683,7 +2890,7 @@ const handleGuardarCita = async (e) => {
                                 {selectedCita.estado !== 'cancelada' && selectedCita.estado !== 'completada' && (
                                     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
                                         <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', fontSize: '12px', fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <Zap size={13} style={{ color: '#6366f1' }} /> Acciones rápidas
+                                            <Zap size={13} style={{ color: '#9ca3af' }} /> Acciones rápidas
                                         </div>
                                         <div style={{ padding: '12px' }}>
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
@@ -2698,7 +2905,14 @@ const handleGuardarCita = async (e) => {
                                                 <ActionBtn icon={<Building size={14}/>} label="Consultorio" sub="Cambiar ubicación" onClick={() => { setCambiarConsultorioData({ consultorioId: '', consultorioNombre: '', sucursalId: '', sucursalNombre: '', justificacion: '' }); setShowCambiarConsultorio(true); }} color="slate" />
                                                 {selectedCita.pacienteId && <ActionBtn icon={<GitMerge size={14}/>} label="Unificar" sub="Fusionar duplicados" onClick={() => setShowUnificar(true)} color="violet" />}
                                                 {selectedCita.esCitaEnfermeria && (
-                                                    <ActionBtn icon={<CheckCircle2 size={14}/>} label="Finalizar" sub="Completar atención" onClick={handleFinalizarCita} loading={actionLoading === 'finalizar'} color="emerald" />
+                                                    <ActionBtn
+                                                      icon={<CheckCircle2 size={14}/>}
+                                                      label="Finalizar"
+                                                      sub={(selectedCita.ordenEnfermeriaGenerada || selectedCita.ordenEnfermeriaId) ? 'Completar atención' : 'Requiere hoja de servicio'}
+                                                      onClick={handleFinalizarCita}
+                                                      loading={actionLoading === 'finalizar'}
+                                                      color="emerald"
+                                                    />
                                                 )}
                                             </div>
                                             <button onClick={() => setShowCancelarConfirm(true)}
@@ -2711,14 +2925,120 @@ const handleGuardarCita = async (e) => {
 
                                 {/* COMPLETADA */}
                                 {selectedCita.estado === 'completada' && (
-                                    <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
-                                        <CheckCircle2 size={28} style={{ color: '#10b981', margin: '0 auto 8px' }} />
-                                        <div style={{ fontSize: '13px', fontWeight: 800, color: '#065f46' }}>Atención completada</div>
-                                        <div style={{ fontSize: '11px', color: '#059669', marginTop: '4px' }}>Esta cita ya fue finalizada</div>
+                                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
+                                        <CheckCircle2 size={24} style={{ color: '#059669', margin: '0 auto 8px' }} />
+                                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>Atención completada</div>
+                                        <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>Esta cita ya fue finalizada</div>
                                     </div>
                                 )}
                             </div>
                         </div>
+
+                        {/* ─── HISTORIAL DOCUMENTAL (ancho completo) ─── */}
+                        {selectedCita.pacienteId && (
+                            <div style={{ padding: '0 20px 16px' }}>
+                                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <div style={{ padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <FileText size={13} style={{ color: '#9ca3af' }} />
+                                            <span style={{ fontSize: '12px', fontWeight: 700, color: '#111' }}>Historial documental</span>
+                                            {!loadingHistorialDocumentos && historialDocumentos.length > 0 && (
+                                                <span style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', background: '#f3f4f6', border: '1px solid #e5e7eb', padding: '2px 8px', borderRadius: '6px' }}>
+                                                    {historialDocumentos.length}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => navigate('/enfermeria/expediente', {
+                                                state: {
+                                                    pacienteId: selectedCita.pacienteId,
+                                                    pacienteNombre: selectedCita.paciente,
+                                                    citaId: selectedCita.id,
+                                                    openedFrom: 'enfermeria_agenda',
+                                                    from: '/enfermeria/dashboard',
+                                                }
+                                            })}
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#fff', color: '#111', fontSize: '10px', fontWeight: 700, cursor: 'pointer' }}
+                                        >
+                                            <ExternalLink size={11} /> Ver expediente
+                                        </button>
+                                    </div>
+
+                                    <div style={{ padding: '10px 12px', maxHeight: '240px', overflowY: 'auto' }}>
+                                        {loadingHistorialDocumentos ? (
+                                            <div style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '16px 8px' }}>
+                                                Cargando documentos del paciente…
+                                            </div>
+                                        ) : historialDocumentos.length === 0 ? (
+                                            <div style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '16px 8px', lineHeight: 1.5 }}>
+                                                Sin plantillas, recetas ni archivos registrados para este paciente.
+                                            </div>
+                                        ) : (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                {historialDocumentos.slice(0, 20).map((doc) => {
+                                                    const categoria = getDocumentoCategoria(doc);
+                                                    const esCitaActual = doc.citaId && doc.citaId === selectedCita.id;
+                                                    return (
+                                                        <div
+                                                            key={doc.id}
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'space-between',
+                                                                gap: '10px',
+                                                                padding: '8px 10px',
+                                                                borderRadius: '8px',
+                                                                border: `1px solid ${categoria.border}`,
+                                                                background: categoria.bg
+                                                            }}
+                                                        >
+                                                            <div style={{ minWidth: 0, flex: 1 }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '3px' }}>
+                                                                    <span style={{ fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: categoria.color }}>
+                                                                        {categoria.label}
+                                                                    </span>
+                                                                    {esCitaActual && (
+                                                                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '1px 6px', borderRadius: '9999px' }}>
+                                                                            Esta cita
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {doc.plantillaNombre || doc.nombre}
+                                                                </div>
+                                                                <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px' }}>
+                                                                    {formatDocumentoFecha(doc.generadoAt)}
+                                                                    {doc.autor ? ` · ${doc.autor}` : ''}
+                                                                    {doc.formato ? ` · ${doc.formato.toUpperCase()}` : ''}
+                                                                </div>
+                                                            </div>
+                                                            {doc.archivoUrl ? (
+                                                                <a
+                                                                    href={doc.archivoUrl}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', background: '#fff', color: '#374151', fontSize: '10px', fontWeight: 700, textDecoration: 'none', flexShrink: 0 }}
+                                                                >
+                                                                    <Download size={12} /> Abrir
+                                                                </a>
+                                                            ) : (
+                                                                <span style={{ fontSize: '10px', color: '#9ca3af', fontWeight: 600, flexShrink: 0 }}>Sin archivo</span>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                                {historialDocumentos.length > 20 && (
+                                                    <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center', paddingTop: '4px' }}>
+                                                        Mostrando los 20 más recientes de {historialDocumentos.length}. Usa “Ver expediente” para el historial completo.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -3287,6 +3607,21 @@ const handleGuardarCita = async (e) => {
                 enfermeraNombre={user?.nombre || "Enfermería"} 
             />
         )}
+
+        <ServiciosEnfermeriaModal
+            open={showServiciosModal}
+            onClose={() => setShowServiciosModal(false)}
+            citas={citas}
+            currentDate={currentDate}
+            onChangeDate={(delta, exactDate) => {
+                if (exactDate instanceof Date && !Number.isNaN(exactDate.getTime())) {
+                    setCurrentDate(exactDate);
+                    return;
+                }
+                if (typeof delta === 'number' && delta !== 0) cambiarDia(delta);
+            }}
+            sucursalNombre={sucursalPredeterminada?.nombre || sessionSucursal?.nombre || user?.sucursal || ''}
+        />
         </div>
     </>
   );
@@ -3345,35 +3680,45 @@ const InfoRow = ({ icon, label, value, truncate, tone = 'neutral' }) => {
     );
 };
 
-const ActionBtn = ({ icon, label, sub, done, loading, onClick, disabled, color = 'slate' }) => {
-    const colors = {
-        emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', hover: 'hover:border-emerald-300 hover:shadow-emerald-100', icon: 'text-emerald-600', iconBg: 'bg-emerald-100', groupIcon: 'group-hover:bg-emerald-50 group-hover:text-emerald-600' },
-        green:   { bg: 'bg-green-50', border: 'border-green-200', hover: 'hover:border-green-300 hover:shadow-green-100', icon: 'text-green-600', iconBg: 'bg-green-100', groupIcon: 'group-hover:bg-green-50 group-hover:text-green-600' },
-        indigo:  { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-indigo-300 hover:shadow-indigo-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-indigo-50 group-hover:text-indigo-600' },
-        blue:    { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-blue-300 hover:shadow-blue-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-blue-50 group-hover:text-blue-600' },
-        orange:  { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-orange-300 hover:shadow-orange-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-orange-50 group-hover:text-orange-600' },
-        teal:    { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-teal-300 hover:shadow-teal-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-teal-50 group-hover:text-teal-600' },
-        amber:   { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-amber-300 hover:shadow-amber-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-amber-50 group-hover:text-amber-600' },
-        violet:  { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-violet-300 hover:shadow-violet-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-violet-50 group-hover:text-violet-600' },
-        slate:   { bg: 'bg-white', border: 'border-slate-200', hover: 'hover:border-blue-300 hover:shadow-blue-100', icon: 'text-slate-500', iconBg: 'bg-slate-100', groupIcon: 'group-hover:bg-blue-50 group-hover:text-blue-600' },
-    };
-    const c = colors[color] || colors.slate;
-    return (
-        <button
-            onClick={onClick}
-            disabled={disabled || loading}
-            className={`group flex flex-col items-center justify-center gap-1.5 p-2.5 rounded-xl border transition-all active:scale-[0.96] text-center ${done ? c.bg + ' ' + c.border : 'bg-white border-slate-200 ' + c.hover + ' hover:shadow-md'}`}
-        >
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${done ? c.iconBg + ' ' + c.icon : 'bg-slate-100 text-slate-500 ' + c.groupIcon}`}>
-                {loading ? <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"/> : icon}
-            </div>
-            <div>
-                <p className={`text-[10px] font-bold ${done ? (color === 'emerald' ? 'text-emerald-700' : 'text-green-700') : 'text-slate-700'}`}>{done ? `${label} ✓` : label}</p>
-                <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>
-            </div>
-        </button>
-    );
-};
+const ActionBtn = ({ icon, label, sub, done, loading, onClick, disabled }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled || loading}
+        style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 4,
+            padding: '10px 8px',
+            borderRadius: 6,
+            border: `1px solid ${done ? '#111' : '#e5e7eb'}`,
+            background: done ? '#fafafa' : '#fff',
+            cursor: disabled || loading ? 'not-allowed' : 'pointer',
+            opacity: disabled ? 0.55 : 1,
+            textAlign: 'center',
+            fontFamily: 'inherit',
+            transition: 'border-color .15s, background .15s',
+        }}
+    >
+        {loading ? (
+            <span style={{
+                width: 14,
+                height: 14,
+                border: '2px solid #e5e7eb',
+                borderTopColor: '#111',
+                borderRadius: '50%',
+                display: 'inline-block',
+                animation: 'spin .7s linear infinite',
+            }} />
+        ) : (
+            <span style={{ color: '#6b7280', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</span>
+        )}
+        <p style={{ fontSize: 10, fontWeight: 700, color: '#111', margin: 0 }}>{done ? `${label} ✓` : label}</p>
+        <p style={{ fontSize: 9, color: '#9ca3af', margin: 0 }}>{sub}</p>
+    </button>
+);
 
 const CardCita = ({ cita, onClick, navigate }) => {
     const ahora = new Date();
