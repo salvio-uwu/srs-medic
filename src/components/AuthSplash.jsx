@@ -73,6 +73,26 @@ const CSS = `
   .as-status .spin { animation: as-spin 0.8s linear infinite; }
   @keyframes as-spin { to { transform: rotate(360deg); } }
 
+  .as-actions {
+    margin-top: 22px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .as-btn {
+    appearance: none; border: none; cursor: pointer;
+    border-radius: 12px; padding: 12px 16px;
+    font-size: 13px; font-weight: 700; font-family: inherit;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .as-btn:active { transform: scale(0.98); }
+  .as-btn-primary {
+    background: #1d4ed8; color: #fff;
+  }
+  .as-btn-primary:hover { opacity: 0.92; }
+  .as-btn-ghost {
+    background: transparent; color: #64748b;
+    border: 1px solid #e2e8f0;
+  }
+  .as-btn-ghost:hover { background: #f8fafc; }
+
   .as-footer {
     margin-top: 26px; padding-top: 18px; border-top: 1px solid #f1f5f9;
     font-size: 11px; color: #b0bec5;
@@ -86,36 +106,83 @@ const CSS = `
   }
 `;
 
-export default function AuthSplash() {
+export default function AuthSplash({
+  status = 'Verificando sesion',
+  subtitle = 'Preparando el sistema de gestion clinica.',
+  onRetry = null,
+  onLogout = null,
+  busy = true,
+}) {
   const [mounted, setMounted] = useState(false);
+  const [working, setWorking] = useState(false);
+  const showActions = Boolean(onRetry || onLogout);
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
   }, []);
 
+  const handleRetry = async () => {
+    if (!onRetry || working) return;
+    setWorking(true);
+    try {
+      await onRetry();
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!onLogout || working) return;
+    setWorking(true);
+    try {
+      await onLogout();
+    } finally {
+      setWorking(false);
+    }
+  };
+
   return (
     <>
       <style>{CSS}</style>
-      <div className="as-shell" role="status" aria-live="polite" aria-busy="true">
+      <div className="as-shell" role="status" aria-live="polite" aria-busy={busy && !showActions}>
         <div className="as-orb" style={{ width: 500, height: 500, top: '-150px', left: '-100px', background: 'rgba(37,99,235,0.18)' }} />
-        <div className="as-orb" style={{ width: 380, height: 380, bottom: '-90px', right: '-70px', background: 'rgba(13,148,136,0.14)' }} />
+        <div className="as-orb" style={{ width: 380, height: 380, bottom: '-90px', right: '-70px', background: 'rgba(13,148,166,0.14)' }} />
         <div className="as-orb" style={{ width: 200, height: 200, top: '38%', right: '8%', background: 'rgba(99,102,241,0.10)' }} />
 
         <div className={'as-card' + (mounted ? ' in' : '')}>
           <img src={logoImg} alt="Centro Medico Santa Cruz" className="as-logo" />
           <h1 className="as-clinica">Centro Medico Santa Cruz</h1>
-          <p className="as-sub">Preparando el sistema de gestion clinica.</p>
+          <p className="as-sub">{subtitle}</p>
 
-          <div className="as-bar-track" aria-hidden="true">
-            <div className="as-bar-fill" />
-          </div>
+          {!showActions && (
+            <div className="as-bar-track" aria-hidden="true">
+              <div className="as-bar-fill" />
+            </div>
+          )}
           <div className="as-status">
-            <svg className="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            Verificando sesion
+            {!showActions && (
+              <svg className="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            )}
+            {status}
           </div>
+
+          {showActions && (
+            <div className="as-actions">
+              {onRetry && (
+                <button type="button" className="as-btn as-btn-primary" onClick={handleRetry} disabled={working}>
+                  {working ? 'Reintentando...' : 'Reintentar'}
+                </button>
+              )}
+              {onLogout && (
+                <button type="button" className="as-btn as-btn-ghost" onClick={handleLogout} disabled={working}>
+                  Cerrar sesion
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="as-footer">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

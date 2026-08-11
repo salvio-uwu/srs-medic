@@ -1,18 +1,21 @@
 // src/context/AuthContext.jsx
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import {
   IDLE_ACTIVITY_THROTTLE_MS,
   IDLE_CHECK_MS,
   IDLE_LIMIT_MS,
   LOGOUT_REASON_KEY,
+  clearFreshLogin,
   clearLastActivity,
   getLastActivity,
   isIdleExpired,
+  markFreshLogin,
   markLogoutReason,
   setLastActivity,
+  setLoginInflight,
 } from '../utils/sessionIdle';
 import {
   registrarEntrada,
@@ -22,6 +25,18 @@ import {
 import AuthSplash from '../components/AuthSplash';
 
 const AuthContext = createContext();
+
+const PROFILE_FETCH_MS = 4000;
+const LOGOUT_SIDE_EFFECT_MS = 2000;
+const SIGNOUT_MS = 5000;
+
+const withTimeout = (promise, ms) =>
+  Promise.race([
+    promise,
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    }),
+  ]);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -73,13 +88,60 @@ const clearProfileCache = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState(null);
   const userRef = useRef(null);
   userRef.current = user;
+  const loggingOutRef = useRef(false);
+  const hydrateProfileRef = useRef(null);
 
   const login = async (email, password) => {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    setLastActivity(userCredential.user.uid);
-    return userCredential.user;
+    setLoginInflight(true);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      markFreshLogin(userCredential.user.uid);
+      setProfileError(null);
+      return userCredential.user;
+    } finally {
+      setLoginInflight(false);
+    }
+  };
+
+  const applyProfile = useCallback((currentUser, profileData) => {
+    const merged = { ...currentUser, ...profileData };
+    writeProfileCache(currentUser.uid, profileData);
+    setUser(merged);
+    if (isProfileHydrated(merged)) {
+      setProfileError(null);
+      setLoading(false);
+    }
+    return merged;
+  }, []);
+
+  const fetchProfileOnce = useCallback(async (currentUser) => {
+    const userDocRef = doc(db, 'users', currentUser.uid);
+    try {
+      const snap = await withTimeout(getDoc(userDocRef), PROFILE_FETCH_MS);
+      if (!snap || typeof snap.exists !== 'function') {
+        setProfileError('timeout');
+        setLoading(false);
+        return null;
+      }
+      const profileData = snap.exists() ? snap.data() : {};
+      return applyProfile(currentUser, profileData);
+    } catch (error) {
+      console.error('Error leyendo perfil (getDoc):', error);
+      setProfileError('fetch');
+      setLoading(false);
+      return null;
+    }
+  }, [applyProfile]);
+
+  hydrateProfileRef.current = async () => {
+    const current = auth.currentUser;
+    if (!current || loggingOutRef.current) return;
+    setProfileError(null);
+    setLoading(true);
+    await fetchProfileOnce(current);
   };
 
   // Mantiene sincronizado el perfil (users/{uid}) para reflejar cambios de consultorio al instante.
@@ -114,14 +176,18 @@ export const AuthProvider = ({ children }) => {
           initialNullTimer = null;
         }
 
-        // Sesión expirada por inactividad mientras la pestaña/laptop estaba dormida
+        // Sesión expirada por inactividad (con gracia de login / inflight)
         if (isIdleExpired(currentUser.uid)) {
+          loggingOutRef.current = true;
           markLogoutReason('idle');
           clearLastActivity(currentUser.uid);
+          clearFreshLogin(currentUser.uid);
           clearProfileCache();
           signOut(auth).catch(() => {});
           setUser(null);
+          setProfileError(null);
           setLoading(false);
+          loggingOutRef.current = false;
           return;
         }
 
@@ -137,9 +203,19 @@ export const AuthProvider = ({ children }) => {
 
         if (cachedProfile && isProfileHydrated({ ...currentUser, ...cachedProfile })) {
           setLoading(false);
+          setProfileError(null);
         }
 
         const userDocRef = doc(db, 'users', currentUser.uid);
+
+        // Lectura puntual: no depender solo del Listen (se rompe tras sleep).
+        fetchProfileOnce(currentUser).then((merged) => {
+          if (merged) {
+            lastProfile = merged;
+            lastProfileUid = currentUser.uid;
+          }
+        });
+
         // Canal de Firestore atorado (Safari/iOS, red inestable): nunca dejar
         // el splash infinito. Si el perfil no llega pronto, liberar la UI con
         // el usuario disponible; el snapshot corrige al conectar.
@@ -147,23 +223,32 @@ export const AuthProvider = ({ children }) => {
         profileReleaseTimer = setTimeout(() => {
           profileReleaseTimer = null;
           setLoading(false);
+          setProfileError((err) => {
+            const prev = userRef.current;
+            if (prev?.uid === currentUser.uid && !isProfileHydrated(prev)) {
+              return err || 'timeout';
+            }
+            return err;
+          });
         }, 6000);
+
         unsubscribeProfile = onSnapshot(
           userDocRef,
           (snap) => {
+            if (loggingOutRef.current) return;
             clearProfileReleaseTimer();
             const profileData = snap.exists() ? snap.data() : {};
             lastProfile = profileData;
             lastProfileUid = currentUser.uid;
-            writeProfileCache(currentUser.uid, profileData);
-            setUser({ ...currentUser, ...profileData });
-            setLoading(false);
+            applyProfile(currentUser, profileData);
           },
           (error) => {
             clearProfileReleaseTimer();
             console.error('Error sincronizando perfil:', error);
             if (lastProfile && lastProfileUid === currentUser.uid) {
               setUser({ ...currentUser, ...lastProfile });
+            } else {
+              setProfileError('listen');
             }
             setLoading(false);
           }
@@ -183,6 +268,7 @@ export const AuthProvider = ({ children }) => {
           lastProfileUid = null;
           clearProfileCache();
           setUser(null);
+          setProfileError(null);
           setLoading(false);
         }, graceMs);
       }
@@ -195,13 +281,54 @@ export const AuthProvider = ({ children }) => {
       if (unsubscribeProfile) unsubscribeProfile();
       unsubscribeAuth();
     };
-  }, []);
+  }, [applyProfile, fetchProfileOnce]);
+
+  // Al volver de sleep: refrescar token si la sesión sigue válida (no idle).
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+
+    let refreshing = false;
+    const softRecover = async () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      if (loggingOutRef.current) return;
+      if (isIdleExpired(uid, IDLE_LIMIT_MS)) return;
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const current = auth.currentUser;
+        if (current) {
+          await current.getIdToken(true);
+        }
+      } catch {
+        // Token refresh falló (Identity Toolkit 400): no forzar logout aquí.
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') softRecover();
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', softRecover);
+    window.addEventListener('pageshow', softRecover);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', softRecover);
+      window.removeEventListener('pageshow', softRecover);
+    };
+  }, [user?.uid]);
 
   const logout = useCallback(async () => {
+    loggingOutRef.current = true;
     const current = userRef.current;
     clearProfileCache();
     if (current?.uid) {
       clearLastActivity(current.uid);
+      clearFreshLogin(current.uid);
       const motivo = (() => {
         try {
           return sessionStorage.getItem(LOGOUT_REASON_KEY) || 'logout';
@@ -209,9 +336,11 @@ export const AuthProvider = ({ children }) => {
           return 'logout';
         }
       })();
-      await registrarSalida(current, motivo).catch((error) => {
-        console.error('Error registrando salida de asistencia:', error);
-      });
+      // No bloquear el cierre si la red está caída (post-sleep).
+      await withTimeout(
+        registrarSalida(current, motivo).catch(() => {}),
+        LOGOUT_SIDE_EFFECT_MS
+      );
       setDoc(doc(db, 'users', current.uid), {
         isOnline: false,
         statusOperativo: 'offline',
@@ -229,12 +358,17 @@ export const AuthProvider = ({ children }) => {
         consultorioUbicacion: '',
         consultorioRecurrenteId: '',
         consultorioRecurrente: ''
-      }, { merge: true }).catch((error) => {
-        console.error('Error en logout:', error);
-      });
+      }, { merge: true }).catch(() => {});
     }
-    await signOut(auth);
+    await withTimeout(signOut(auth).catch(() => {}), SIGNOUT_MS);
     setUser(null);
+    setProfileError(null);
+    setLoading(false);
+    loggingOutRef.current = false;
+  }, []);
+
+  const retryProfile = useCallback(async () => {
+    if (hydrateProfileRef.current) await hydrateProfileRef.current();
   }, []);
 
   // Cierre por inactividad (pestaña ignorada / laptop apagada al despertar)
@@ -246,6 +380,7 @@ export const AuthProvider = ({ children }) => {
     let loggingOut = false;
 
     const touch = () => {
+      if (loggingOutRef.current) return;
       const now = Date.now();
       if (now - lastTouchWrite < IDLE_ACTIVITY_THROTTLE_MS) return;
       lastTouchWrite = now;
@@ -253,14 +388,16 @@ export const AuthProvider = ({ children }) => {
     };
 
     const expireIfNeeded = async () => {
-      if (loggingOut) return;
+      if (loggingOut || loggingOutRef.current) return;
       if (!isIdleExpired(uid, IDLE_LIMIT_MS)) return;
       loggingOut = true;
+      loggingOutRef.current = true;
       markLogoutReason('idle');
       try {
         await logout();
       } catch {
         loggingOut = false;
+        loggingOutRef.current = false;
       }
     };
 
@@ -291,7 +428,7 @@ export const AuthProvider = ({ children }) => {
   }, [user?.uid, logout]);
 
   const cambiarEstadoOperativo = async (estado, datosExtra = {}) => {
-    if (!user?.uid) return;
+    if (!user?.uid || loggingOutRef.current) return;
 
     const updateData = {
       statusOperativo: estado,
@@ -318,6 +455,7 @@ export const AuthProvider = ({ children }) => {
 
     if (uid && profileHydrated) {
       const reportarPresencia = async () => {
+        if (loggingOutRef.current) return;
         try {
           const payload = {
             lastSeen: new Date().toISOString(),
@@ -352,9 +490,33 @@ export const AuthProvider = ({ children }) => {
     };
   }, [user?.uid, profileHydrated]);
 
+  const showBootSplash = loading;
+  const showProfileStuck =
+    !loading && user && !isProfileHydrated(user);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, cambiarEstadoOperativo }}>
-      {loading ? <AuthSplash /> : children}
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        loading,
+        profileError,
+        retryProfile,
+        cambiarEstadoOperativo,
+      }}
+    >
+      {showBootSplash ? (
+        <AuthSplash />
+      ) : showProfileStuck ? (
+        <AuthSplash
+          status="No se pudo cargar el perfil. Revisa tu conexión."
+          onRetry={retryProfile}
+          onLogout={logout}
+        />
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   );
 };

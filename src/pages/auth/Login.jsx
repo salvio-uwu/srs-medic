@@ -420,10 +420,9 @@ const Login = () => {
       const userData = await login(email, password);
       if (userData) {
         showToast('Credenciales verificadas. Accediendo...', 'success');
-        // El useEffect de user?.rol se encarga de cambiar a step 'portal'
+        // El useEffect de user?.rol navega a /inicio al hidratar el perfil.
       }
     } catch (err) {
-      setSubmitting(false);
       if (['auth/invalid-credential', 'auth/user-not-found', 'auth/wrong-password'].includes(err.code)) {
         showToast('Credenciales no reconocidas.');
       } else if (err.code === 'auth/too-many-requests') {
@@ -431,6 +430,8 @@ const Login = () => {
       } else {
         showToast('Error de conexion.');
       }
+    } finally {
+      setSubmitting(false);
     }
   };
 

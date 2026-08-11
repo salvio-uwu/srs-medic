@@ -14,6 +14,7 @@ import ChatPanel from './components/ChatPanel';
 import ChatNotificationToast from './components/ChatNotificationToast';
 import { PanicLauncherButton, PanicAlertOverlay, usePanicSystem } from './components/PanicButton';
 import { useAuth, isProfileHydrated } from './context/AuthContext';
+import AuthSplash from './components/AuthSplash';
 import { hasPermission } from './services/permissionService';
 import { buildLastMessageSignature, isNewSignature, getMillis } from './shared/chatSignatureCache';
 
@@ -778,16 +779,20 @@ const normalizeRole = (role = '') => String(role || '').toLowerCase().normalize(
 // React to unmount/remount children (including ExpedienteClinico), resetting all state.
 const GuestRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user && !isProfileHydrated(user)) return null;
+  if (loading) return <AuthSplash />;
+  if (user && !isProfileHydrated(user)) {
+    return <AuthSplash status="Cargando perfil" />;
+  }
   if (user) return <Navigate to="/inicio" replace />;
   return children;
 };
 
 const RequireAuth = ({ children }) => {
   const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user && !isProfileHydrated(user)) return null;
+  if (loading) return <AuthSplash />;
+  if (user && !isProfileHydrated(user)) {
+    return <AuthSplash status="Cargando perfil" />;
+  }
   if (!user) return <Navigate to="/login" replace />;
   return children;
 };
@@ -795,8 +800,10 @@ const RequireAuth = ({ children }) => {
 // permissionId puede ser un string o un arreglo (basta con tener uno de los permisos)
 const PermissionRoute = ({ permissionId, fallbackRoles, children }) => {
   const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user && !isProfileHydrated(user)) return null;
+  if (loading) return <AuthSplash />;
+  if (user && !isProfileHydrated(user)) {
+    return <AuthSplash status="Cargando perfil" />;
+  }
   if (!user) return <Navigate to="/login" replace />;
   const permissionIds = Array.isArray(permissionId) ? permissionId : [permissionId];
   const allowed = permissionIds.some((id) => hasPermission(user, id, fallbackRoles));
@@ -863,17 +870,21 @@ function App() {
   const { updateAvailable, notes, postponeUpdate } = useAppVersion();
   const audioCtxRef = useRef(null);
 
-  // Sonido de notificación al detectar una nueva versión
+  // Sonido de notificación al detectar una nueva versión (solo si AudioContext ya desbloqueado)
   useEffect(() => {
     if (!updateAvailable) return;
 
     const playSound = async () => {
       try {
-        if (!audioCtxRef.current) {
-          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-        }
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        // No crear AudioContext sin gesto: evita el warning de autoplay y falla en silencio.
+        if (!audioCtxRef.current) return;
         const ctx = audioCtxRef.current;
-        if (ctx.state === 'suspended') await ctx.resume();
+        if (ctx.state === 'suspended') {
+          try { await ctx.resume(); } catch { return; }
+        }
+        if (ctx.state !== 'running') return;
 
         const now = ctx.currentTime;
 

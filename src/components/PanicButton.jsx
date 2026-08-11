@@ -494,43 +494,55 @@ export const usePanicSystem = () => {
     stopAllSound();
     alertActiveRef.current = true;
 
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      console.log('[PÁNICO] AudioContext creado, estado:', audioCtxRef.current.state);
-    }
-
-    const ensureRunning = () => {
-      if (!audioCtxRef.current) return;
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        console.log('[PÁNICO] AudioContext suspendido, intentando resume()');
-        ctx.resume().then(() => {
-          console.log('[PÁNICO] AudioContext resume exitoso, estado:', ctx.state);
-        }).catch((e) => {
-          console.warn('[PÁNICO] Error al resumir AudioContext:', e);
-        });
+    const ensureCtx = () => {
+      if (!audioCtxRef.current) {
+        try {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        } catch {
+          return null;
+        }
       }
+      return audioCtxRef.current;
     };
 
-    ensureRunning();
+    const ensureRunning = async () => {
+      const ctx = ensureCtx();
+      if (!ctx) return null;
+      if (ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch {
+          return null;
+        }
+      }
+      return ctx.state === 'running' ? ctx : null;
+    };
 
-    const tick = () => {
+    const tick = async () => {
       if (!alertActiveRef.current) return;
-      ensureRunning();
-      playAlertCycle(audioCtxRef.current, audioCtxRef.current.currentTime);
+      const ctx = await ensureRunning();
+      if (ctx) {
+        playAlertCycle(ctx, ctx.currentTime);
+      }
       soundTimerRef.current = setTimeout(tick, CYCLE_TOTAL * 1000);
     };
 
     tick();
   }, [stopAllSound]);
 
-  // Desbloquear AudioContext
+  // Desbloquear AudioContext solo tras gesto del usuario (nunca en mount).
   useEffect(() => {
     const unlock = () => {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume().catch(() => {});
+        }
+      } catch {
+        // noop
       }
-      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
       window.removeEventListener('click', unlock);
       window.removeEventListener('touchstart', unlock);
       window.removeEventListener('keydown', unlock);
