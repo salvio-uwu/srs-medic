@@ -577,6 +577,25 @@ if [ ! -d "dist" ] || [ -z "$(ls -A dist 2>/dev/null)" ]; then
 fi
 
 echo -e "   ${GREEN}${SYM_OK}${RESET}  ${WHITE}Build local exitoso${RESET}"
+
+# Incluir APK Android en el sitio (si existe en releases/)
+APK_SRC=""
+if [ -f "releases/SRS-Medic.apk" ]; then
+    APK_SRC="releases/SRS-Medic.apk"
+elif [ -f "SRS-Medic.apk" ]; then
+    APK_SRC="SRS-Medic.apk"
+elif [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+    APK_SRC="android/app/build/outputs/apk/debug/app-debug.apk"
+fi
+if [ -n "$APK_SRC" ]; then
+    mkdir -p dist/descargas
+    cp "$APK_SRC" dist/descargas/SRS-Medic.apk
+    echo -e "   ${GREEN}${SYM_OK}${RESET}  ${WHITE}APK incluido en dist/descargas/${RESET}"
+    echo -e "     ${DIM}Fuente: ${APK_SRC} ($(du -sh "$APK_SRC" | awk '{print $1}'))${RESET}"
+else
+    echo -e "   ${YELLOW}${SYM_SKIP}${RESET}  ${DIM}Sin APK en releases/ — omitiendo /descargas/SRS-Medic.apk${RESET}"
+fi
+
 ARCHIVOS_DIST=$(find dist -type f | wc -l | tr -d ' ')
 TAMANO_DIST=$(du -sh dist | awk '{print $1}')
 echo -e "     ${DIM}Artefactos: ${ARCHIVOS_DIST} archivos (${TAMANO_DIST})${RESET}"

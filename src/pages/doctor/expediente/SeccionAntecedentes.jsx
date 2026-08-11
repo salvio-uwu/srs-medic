@@ -38,23 +38,28 @@ const SeccionAntecedentes = ({
 
   // --- AQUÍ EMPIEZAN LOS RENDERS...
   // --- ESTILOS ---
-  const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-full w-full flex flex-col overflow-hidden";
+  const sectionClass = "bg-white p-3 sm:p-5 md:p-6 rounded-2xl border border-slate-200 shadow-sm w-full flex flex-col overflow-visible lg:h-full lg:min-h-0 lg:overflow-hidden";
   const labelClass = "text-[11px] font-semibold text-slate-500 uppercase mb-1.5 ml-1 block tracking-wider";
   const inputClass = "w-full p-3 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-400 transition-colors text-sm font-medium text-slate-700 placeholder:text-slate-400";
-  const headerClass = "text-[13px] font-semibold text-blue-800 uppercase tracking-widest mb-6 border-b border-slate-200 pb-2 flex items-center gap-2";
-  const tableHeaderClass = "bg-slate-50 py-3 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-widest border-b border-slate-200";
+  const headerClass = "text-[13px] font-semibold text-blue-800 uppercase tracking-widest mb-4 sm:mb-6 border-b border-slate-200 pb-2 flex items-center gap-2";
+  const tableHeaderClass = "bg-slate-50 py-3 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200";
   const tableRowClass = "py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors items-center";
+  const negadosBannerClass = "bg-amber-50 p-3 sm:p-4 rounded-2xl border border-amber-200 mb-4 sm:mb-6 w-full shrink-0";
+  const negadosLabelClass = "flex items-start sm:items-center gap-3 cursor-pointer";
+  const negadosHintClass = "block sm:inline text-xs text-amber-600 sm:ml-1 mt-0.5 sm:mt-0";
 
   // --- RENDERS DE SECCIONES NUEVAS ---
 
   const renderCie10 = () => (
     <div className={sectionClass}>
       <h4 className={headerClass}><CheckCircle size={16} className="text-blue-500"/> Enfermedades del CIE-10</h4>
-      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.cie10_preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.cie10_preguntados_y_negados', e.target.checked)} />
-          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
-          <span className="text-xs text-amber-600 ml-1">— El paciente niega enfermedades CIE-10</span>
+      <div className={negadosBannerClass}>
+        <label className={negadosLabelClass}>
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded mt-0.5 sm:mt-0 shrink-0" checked={expediente.antecedentes.cie10_preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.cie10_preguntados_y_negados', e.target.checked)} />
+          <span className="min-w-0">
+            <span className="font-bold text-sm text-amber-800 block sm:inline">Preguntados y negados</span>
+            <span className={negadosHintClass}>— El paciente niega enfermedades CIE-10</span>
+          </span>
         </label>
       </div>
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0">
@@ -99,12 +104,12 @@ const SeccionAntecedentes = ({
         </div>
       </div>
       <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
-        <div className="grid grid-cols-[100px_1fr_50px] bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
+        <div className="grid grid-cols-[72px_1fr_40px] md:grid-cols-[100px_1fr_50px] bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
           <span>Código</span><span>Descripción</span><span></span>
         </div>
         <div className="flex-1 overflow-auto custom-scrollbar">
           {(expediente.antecedentes.cie10 || []).map((enf, i) => (
-            <div key={i} className="grid grid-cols-[100px_1fr_50px] py-3 border-b border-slate-50 items-center">
+            <div key={i} className="grid grid-cols-[72px_1fr_40px] md:grid-cols-[100px_1fr_50px] py-3 border-b border-slate-50 items-center">
               <span className="text-center font-bold text-blue-600 text-xs">{enf.code}</span>
               <span className="px-4 text-xs font-medium text-slate-700 uppercase">{enf.description}</span>
               <button onClick={() => updateCampo('antecedentes.cie10', expediente.antecedentes.cie10.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>
@@ -228,7 +233,7 @@ const renderPerinatales = () => (
               </div>
            </div>
 
-           <div className="grid grid-cols-2 gap-4">
+           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>* Tipo de nacimiento</label>
                 <div className="relative">
@@ -261,7 +266,7 @@ const renderPerinatales = () => (
           Sobre el bebé
         </h5>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
            <div>
               <label className={labelClass}>* Peso (Kg)</label>
               <input 
@@ -616,7 +621,7 @@ const renderPsicomotor = () => {
                    {/* Metodos Anticonceptivos */}
                    <div className="bg-teal-50/50 p-4 rounded-xl border border-teal-100">
                       <label className="text-xs font-bold text-teal-700 uppercase mb-3 block">Métodos anticonceptivos</label>
-                      <div className="grid grid-cols-2 gap-y-2 gap-x-4 mb-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 mb-4">
                          {['Implante','Mirena','Kyleena','DIU plata','DIU cobre'].map(m => {
                             const k = m.toLowerCase().replace(' ', '_');
                             return (
@@ -657,47 +662,73 @@ const renderPsicomotor = () => {
 
   // --- RENDERS ORIGINALES (RECUPERADOS) ---
 
-  const renderHereditarios = () => (
+  const renderHereditarios = () => {
+    const famCols = [
+      { key: 'mama', label: 'Mamá' },
+      { key: 'papa', label: 'Papá' },
+      { key: 'hermanos', label: 'Hnos' },
+      { key: 'tios', label: 'Tíos' },
+      { key: 'primos', label: 'Primos' },
+      { key: 'abuelos', label: 'Abuelos' },
+    ];
+    const enfermedades = Object.keys(expediente.antecedentes.hereditarios || {}).filter(k => k !== 'otros');
+    const gridCols = 'grid-cols-[minmax(7rem,9.5rem)_repeat(6,minmax(3.5rem,1fr))]';
+
+    return (
     <div className={sectionClass}>
       <h4 className={headerClass}><Activity size={16} className="text-blue-500"/> Antecedentes Heredofamiliares</h4>
-      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full shrink-0">
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={expediente.antecedentes.hereditarios?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.hereditarios.preguntados_y_negados', e.target.checked)} />
-          <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
-          <span className="text-xs text-amber-600 ml-1">— El paciente niega antecedentes heredofamiliares</span>
+      <div className={negadosBannerClass}>
+        <label className={negadosLabelClass}>
+          <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded mt-0.5 sm:mt-0 shrink-0" checked={expediente.antecedentes.hereditarios?.preguntados_y_negados || false} onChange={e => updateCampo('antecedentes.hereditarios.preguntados_y_negados', e.target.checked)} />
+          <span className="min-w-0">
+            <span className="font-bold text-sm text-amber-800 block sm:inline">Preguntados y negados</span>
+            <span className={negadosHintClass}>— El paciente niega antecedentes heredofamiliares</span>
+          </span>
         </label>
       </div>
-      <div className="flex-1 w-full overflow-hidden flex flex-col border border-slate-200 rounded-2xl">
-        <div className="flex bg-slate-50 border-b border-slate-200 shrink-0">
-          <div className={`${tableHeaderClass} w-48 text-left pl-6`}>Padecimiento</div>
-          {['Mamá','Papá','Hnos','Tíos','Primos','Abuelos'].map(f => (
-            <div key={f} className={`${tableHeaderClass} flex-1`}>{f}</div>
-          ))}
-        </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
-          {Object.keys(expediente.antecedentes.hereditarios || {}).filter(k => k !== 'otros').map((enf) => (
-            <div key={enf} className={`flex ${tableRowClass}`}>
-              <div className="w-48 pl-6 text-xs font-bold text-slate-700 capitalize">{enf.replace('_', ' ')}</div>
-              {['mama','papa','hermanos','tios','primos','abuelos'].map(fam => (
-                <div key={fam} className="flex-1 flex justify-center">
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 accent-blue-600 rounded border-slate-300 cursor-pointer"
-                    checked={expediente.antecedentes.hereditarios?.[enf]?.[fam] || false}
-                    onChange={e => updateCampo(`antecedentes.hereditarios.${enf}.${fam}`, e.target.checked)}
-                  />
-                </div>
-              ))}
+
+      <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm mb-4 pb-14 sm:pb-0">
+        <div className="min-w-[36rem]">
+          <div className={`grid ${gridCols} bg-slate-50 border-b border-slate-200 sticky top-0 z-[1]`}>
+            <div className="sticky left-0 z-[2] bg-slate-50 px-3 sm:px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wide border-r border-slate-200">
+              Padecimiento
             </div>
-          ))}
+            {famCols.map((f) => (
+              <div key={f.key} className="px-1 py-3 text-center text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                {f.label}
+              </div>
+            ))}
+          </div>
+          <div className="bg-white">
+            {enfermedades.map((enf) => (
+              <div key={enf} className={`grid ${gridCols} border-b border-slate-50 hover:bg-slate-50/80 transition-colors`}>
+                <div className="sticky left-0 z-[1] bg-white px-3 sm:px-4 py-3 text-xs font-bold text-slate-700 capitalize border-r border-slate-100 flex items-center">
+                  {enf.replace('_', ' ')}
+                </div>
+                {famCols.map((fam) => (
+                  <div key={fam.key} className="flex items-center justify-center py-2.5 min-h-[44px]">
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5 accent-blue-600 rounded border-slate-300 cursor-pointer"
+                      checked={expediente.antecedentes.hereditarios?.[enf]?.[fam.key] || false}
+                      onChange={e => updateCampo(`antecedentes.hereditarios.${enf}.${fam.key}`, e.target.checked)}
+                      aria-label={`${enf.replace('_', ' ')} — ${fam.label}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="mt-6 shrink-0">
+
+      <div className="mt-2 sm:mt-4 shrink-0">
         <label className={labelClass}>Otros Antecedentes</label>
         <textarea className={`${inputClass} h-20 resize-none`} value={expediente.antecedentes.hereditarios?.otros || ''} onChange={e => updateCampo('antecedentes.hereditarios.otros', e.target.value)} />
       </div>
     </div>
-  );
+    );
+  };
 
   const renderNoPatologicos = () => (
     <div className={sectionClass}>
@@ -854,32 +885,33 @@ const renderPsicomotor = () => {
       <div className={sectionClass}>
         <h4 className={`${headerClass} text-rose-600 border-rose-100`}><FlaskConical size={16} /> Registro de Alergias</h4>
 
-        {/* Preguntados y negados */}
-        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-6 w-full">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded" checked={negados} onChange={e => updateCampo('antecedentes.alergias.preguntados_y_negados', e.target.checked)} />
-            <span className="font-bold text-sm text-amber-800">Preguntados y negados</span>
-            <span className="text-xs text-amber-600 ml-1">— El paciente niega cualquier alergia</span>
+        <div className={negadosBannerClass}>
+          <label className={negadosLabelClass}>
+            <input type="checkbox" className="w-5 h-5 accent-amber-600 rounded mt-0.5 sm:mt-0 shrink-0" checked={negados} onChange={e => updateCampo('antecedentes.alergias.preguntados_y_negados', e.target.checked)} />
+            <span className="min-w-0">
+              <span className="font-bold text-sm text-amber-800 block sm:inline">Preguntados y negados</span>
+              <span className={negadosHintClass}>— El paciente niega cualquier alergia</span>
+            </span>
           </label>
         </div>
 
         {!negados && (
           <>
             {/* Formulario de registro */}
-            <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">
-              <div className="flex gap-6 mb-4">
+            <div className="bg-slate-50 p-3 sm:p-5 rounded-2xl border border-slate-200 mb-4 sm:mb-6 shrink-0 w-full">
+              <div className="flex flex-wrap gap-4 mb-4">
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={!expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', false)} /> Categoría</label>
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-slate-600"><input type="radio" name="al" className="w-4 h-4 accent-blue-600" checked={expediente.antecedentes.alergias?.buscar_sustancia} onChange={() => updateCampo('antecedentes.alergias.buscar_sustancia', true)} /> Sustancia</label>
               </div>
-              <div className="flex gap-4 items-end">
-                <div className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-end">
+                <div className="flex-1 min-w-0">
                   {!expediente.antecedentes.alergias?.buscar_sustancia ? (
                     <select className={`${inputClass} bg-white`} value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })}><option value="">Seleccionar...</option>{CATS.map(c => <option key={c}>{c}</option>)}</select>
                   ) : (
                     <input className={`${inputClass} bg-white`} placeholder="Nombre de sustancia..." value={tempAlergia.nombre} onChange={e => setTempAlergia({ nombre: e.target.value })} />
                   )}
                 </div>
-                <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">AGREGAR</button>
+                <button onClick={() => { if(tempAlergia.nombre) { updateCampo('antecedentes.alergias.lista', [...(expediente.antecedentes.alergias?.lista || []), { sustancia: tempAlergia.nombre }]); setTempAlergia({ nombre: '' }); } }} className="bg-blue-600 text-white px-6 sm:px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all active:scale-95 w-full sm:w-auto shrink-0">AGREGAR</button>
               </div>
             </div>
 
@@ -923,13 +955,13 @@ const renderPsicomotor = () => {
         </label>
       </div>
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6 shrink-0 w-full">
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div><label className={labelClass}>Vacuna</label><input className={inputClass} placeholder="Ej. Influenza" value={tempVacuna.nombre} onChange={e => setTempVacuna({...tempVacuna, nombre: e.target.value})} /></div>
           <div><label className={labelClass}>Edad / Fecha</label><input className={inputClass} placeholder="Ej. 2 meses" value={tempVacuna.fecha} onChange={e => setTempVacuna({...tempVacuna, fecha: e.target.value})} /></div>
         </div>
-        <div className="flex gap-4 items-end">
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-end">
           <div className="flex-1"><label className={labelClass}>Notas</label><input className={inputClass} value={tempVacuna.nota} onChange={e => setTempVacuna({...tempVacuna, nota: e.target.value})} /></div>
-          <button onClick={() => { if(tempVacuna.nombre) { updateCampo('antecedentes.vacunas.lista', [...(expediente.antecedentes.vacunas?.lista || []), tempVacuna]); setTempVacuna({ nombre: '', fecha: '', nota: '', seAplicoAqui: false }); } }} className="bg-blue-600 text-white px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95">REGISTRAR</button>
+          <button onClick={() => { if(tempVacuna.nombre) { updateCampo('antecedentes.vacunas.lista', [...(expediente.antecedentes.vacunas?.lista || []), tempVacuna]); setTempVacuna({ nombre: '', fecha: '', nota: '', seAplicoAqui: false }); } }} className="bg-blue-600 text-white px-6 sm:px-8 h-[46px] rounded-xl font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-600 transition-all active:scale-95 shrink-0">REGISTRAR</button>
         </div>
       </div>
       <div className="flex-1 w-full border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
@@ -1076,16 +1108,17 @@ const renderCirugias = () => {
           </div>
 
           {/* TABLA DE HISTORIAL DE CIRUGÍAS */}
-          <div className="border border-slate-200 rounded-3xl overflow-hidden bg-white shadow-sm flex flex-col mb-4">
-            <div className="grid grid-cols-[140px_1fr_180px_50px] bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
-              <span>Fecha</span><span>Procedimiento</span><span>Médico</span><span></span>
+          <div className="border border-slate-200 rounded-3xl overflow-x-auto overflow-y-hidden bg-white shadow-sm flex flex-col mb-4">
+            <div className="min-w-[320px] md:min-w-0">
+            <div className="grid grid-cols-[84px_1fr_40px] md:grid-cols-[140px_1fr_180px_50px] bg-slate-50 py-3 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 shrink-0">
+              <span>Fecha</span><span>Procedimiento</span><span className="hidden md:block">Médico</span><span></span>
             </div>
             <div className="flex-1 overflow-y-auto max-h-[350px] custom-scrollbar">
               {lista.map((c, i) => (
-                <div key={c.id || i} className="grid grid-cols-[140px_1fr_180px_50px] py-4 border-b border-slate-50 items-center hover:bg-slate-50/50 transition-colors group">
+                <div key={c.id || i} className="grid grid-cols-[84px_1fr_40px] md:grid-cols-[140px_1fr_180px_50px] py-4 border-b border-slate-50 items-center hover:bg-slate-50/50 transition-colors group">
                   <span className="text-center text-xs font-bold text-slate-400">{c.fechaRegistro}</span>
-                  <span className="px-6 text-xs font-bold text-blue-900 uppercase truncate">{c.procedimiento}</span>
-                  <span className="text-center text-[10px] font-bold text-slate-500 uppercase">{c.medico}</span>
+                  <span className="px-3 md:px-6 text-xs font-bold text-blue-900 uppercase truncate">{c.procedimiento}</span>
+                  <span className="hidden md:block text-center text-[10px] font-bold text-slate-500 uppercase">{c.medico}</span>
                   <div className="flex justify-center">
                     <button 
                       onClick={() => updateCampo('antecedentes.cirugias.lista', lista.filter((_, idx) => idx !== i))}
@@ -1101,6 +1134,7 @@ const renderCirugias = () => {
                   No se han registrado procedimientos quirúrgicos previos.
                 </div>
               )}
+            </div>
             </div>
           </div>
 
@@ -1132,37 +1166,38 @@ const renderCirugias = () => {
   const opcionesVisibles = todasLasOpciones.filter(op => op.visible);
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex flex-col w-full min-h-0 overflow-visible lg:h-full lg:overflow-hidden">
       {/* --- BARRA SUPERIOR CON BOTÓN SIGUIENTE --- */}
       {onNextStep && (
-        <div className="shrink-0 flex items-center justify-end px-4 py-2 bg-white border-b border-slate-100">
+        <div className="shrink-0 flex items-center justify-between gap-3 px-3 sm:px-4 py-2 bg-white border-b border-slate-100">
+          <p className="text-[11px] text-slate-400 font-medium truncate min-w-0">Historial clínico</p>
           <button 
             onClick={onNextStep}
-            className="group flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-full font-bold text-xs shadow-md shadow-blue-600/25 transition-all active:scale-[0.97]"
+            className="group flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-full font-bold text-xs shadow-md shadow-blue-600/25 transition-all active:scale-[0.97] shrink-0"
           >
-            Consulta
+            Ir a consulta
             <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
           </button>
         </div>
       )}
-    <div className="flex flex-1 w-full gap-6 overflow-hidden">
+    <div className="flex flex-col lg:flex-row flex-1 min-h-0 w-full gap-2 sm:gap-3 lg:gap-6 overflow-visible lg:overflow-hidden p-2 sm:p-0">
       {/* --- 2. USA opcionesVisibles AQUÍ --- */}
-      <div className="w-56 flex flex-col gap-2 shrink-0 bg-slate-50/50 p-2 rounded-2xl border border-slate-100 overflow-y-auto custom-scrollbar">
+      <div className="w-full lg:w-56 flex flex-row lg:flex-col gap-1.5 sm:gap-2 shrink-0 bg-slate-50/50 p-1.5 sm:p-2 rounded-2xl border border-slate-100 overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto custom-scrollbar">
         {opcionesVisibles.map(item => (
           <button key={item.id} onClick={() => setActiveSubTab(item.id)}
-            className={`p-3.5 rounded-xl flex items-center gap-3 text-xs font-bold transition-all ${
+            className={`px-2.5 py-2 lg:p-3.5 rounded-xl flex items-center gap-2 lg:gap-3 text-[11px] sm:text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                 activeSubTab === item.id 
                 ? 'bg-white text-blue-600 shadow-sm border border-slate-200 ring-2 ring-blue-50' 
                 : 'text-slate-400 hover:bg-white/60 hover:text-slate-600'
             }`}
           >
-            <span className={activeSubTab === item.id ? 'text-blue-500' : 'text-slate-400'}>{item.icon}</span>
-            {item.label}
+            <span className={`shrink-0 ${activeSubTab === item.id ? 'text-blue-500' : 'text-slate-400'}`}>{item.icon}</span>
+            <span className="truncate">{item.label}</span>
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-hidden h-full flex flex-col bg-slate-50/30">
+      <div className="flex-1 min-h-0 overflow-visible flex flex-col bg-slate-50/30 lg:overflow-y-auto lg:h-full lg:custom-scrollbar">
         {activeSubTab === 'hereditarios' && renderHereditarios()}
         {activeSubTab === 'padres' && renderPadres()}
         {activeSubTab === 'cie10' && renderCie10()}

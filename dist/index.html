@@ -6,7 +6,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png?v=2" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Centro Medico Santa Cruz</title>
     <script>
       // ── Recuperación automática tras deploys en caliente ──
@@ -48,10 +48,25 @@
         });
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-RVD-RUz8.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-5j50NYuK.css">
+    <script type="module" crossorigin src="/assets/index-4tlvcC9e.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DfGJF_qu.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Splash estático hasta que React monte (carga del bundle JS) -->
+      <div id="boot-splash" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(140deg,#eef4fb 0%,#ddeeff 55%,#e8f3fd 100%);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;position:relative;overflow:hidden;">
+        <style>
+          @keyframes boot-bar { 0% { transform: translateX(-100%); } 100% { transform: translateX(280%); } }
+          @keyframes boot-fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        </style>
+        <div style="position:relative;z-index:1;width:min(420px,100%);text-align:center;animation:boot-fade .5s ease-out both;">
+          <img src="/logo_azul.png" alt="Centro Médico Santa Cruz" style="display:block;width:min(300px,72vw);height:auto;margin:0 auto 22px;object-fit:contain;" />
+          <div style="font-size:.9rem;color:#64748b;font-weight:500;margin-bottom:26px;">Cargando aplicación…</div>
+          <div style="height:8px;border-radius:999px;background:rgba(37,99,235,.12);overflow:hidden;">
+            <div style="height:100%;width:42%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#0ea5e9,#14b8a6);animation:boot-bar 1.4s ease-in-out infinite;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

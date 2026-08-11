@@ -3,10 +3,74 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import html2canvas from 'html2canvas';
+import { toCanvas as htmlToImageToCanvas } from 'html-to-image';
 import jsPDF from 'jspdf';
 import { X, ChevronDown } from 'lucide-react';
 import { uploadDocumentoPDF } from '../services/documentStorageService';
+import {
+  isCapacitorNative,
+  sharePdfBlobNative,
+} from '../services/nativePdfShare';
 import { FIELD_GROUPS, FIELD_LIBRARY } from '../pages/admin/PlantillasDocumentos';
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* Helpers de entorno para captura/impresión                           */
+/* ═══════════════════════════════════════════════════════════════════ */
+const isWebKitBrowser = () => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /AppleWebKit/i.test(ua) && !/Chrome|CriOS|Chromium|Edg/i.test(ua);
+};
+
+const isMobileLikeDevice = () => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPad|iPod|Mobile|Tablet|Silk/i.test(ua)) return true;
+  const touchPoints = Number(navigator.maxTouchPoints || 0);
+  if (touchPoints > 1) {
+    // iPadOS y Android en modo "sitio de escritorio" se anuncian como
+    // desktop (Mac/Linux), pero su puntero primario sigue siendo táctil.
+    if (/Mac/i.test(ua)) return true;
+    try {
+      if (window.matchMedia('(pointer: coarse)').matches) return true;
+    } catch {
+      // matchMedia no disponible: seguir con el resto de señales.
+    }
+  }
+  return false;
+};
+
+// En WebKit la rasterización del foreignObject o la subida a Storage pueden
+// no resolver nunca; todo paso del pipeline de PDF lleva límite de tiempo.
+const withTimeout = (promise, ms, label = 'operación') =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label}: tiempo agotado tras ${ms}ms`)), ms);
+    }),
+  ]);
+
+// Detecta capturas vacías (canvas prácticamente blanco) muestreando píxeles.
+const isCanvasNearlyBlank = (canvas) => {
+  try {
+    if (!canvas || !canvas.width || !canvas.height) return true;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return false;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let nonWhite = 0;
+    const stride = 40 * 4;
+    for (let i = 0; i < data.length; i += stride) {
+      if (data[i + 3] === 0) continue;
+      if (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 240) {
+        nonWhite += 1;
+        if (nonWhite > 40) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /* ═══════════════════════════════════════════════════════════════════ */
 /* TableEditor — edición real de celdas para secciones con <table>    */
@@ -500,6 +564,7 @@ const PlantillaDinamicaModal = ({
   const page = schema?.page || { width: 816, height: 1056 };
   const printPageRef = useRef(null);
   const printScrollRef = useRef(null);
+  const printPortalRef = useRef(null);
   const signatureCanvasRef = useRef(null);
   const isSigningRef = useRef(false);
   const lastPointRef = useRef(null);
@@ -1580,9 +1645,13 @@ const PlantillaDinamicaModal = ({
 
   // ── PDF / Print helpers ────────────────────────────────────────────
   const waitForPrintableAssets = async () => {
-    const container = printPageRef.current;
-    if (!container) return;
-    const images = Array.from(container.querySelectorAll('img'));
+    const containers = [printPageRef.current, printPortalRef.current].filter(
+      Boolean
+    );
+    if (containers.length === 0) return;
+    const images = containers.flatMap((container) =>
+      Array.from(container.querySelectorAll('img'))
+    );
     await Promise.all(
       images.map((img) => {
         if (img.complete && img.naturalWidth > 0) return Promise.resolve();
@@ -1661,56 +1730,26 @@ const PlantillaDinamicaModal = ({
       windowHeight: captureHeight,
       scrollX: 0,
       scrollY: 0,
+      // El portal de impresión vive fuera de pantalla (left:-99999, 0x0,
+      // overflow hidden); en el documento clonado hay que restaurarlo y
+      // ocultar el resto para que html2canvas pueda pintarlo completo.
+      onclone: options?.isolatePrintRoot
+        ? (clonedDoc) => {
+            const root = clonedDoc.querySelector('.tpl-print-root');
+            if (!root) return;
+            clonedDoc.body.style.margin = '0';
+            Array.from(clonedDoc.body.children).forEach((child) => {
+              if (child !== root) child.style.display = 'none';
+            });
+            root.style.position = 'static';
+            root.style.left = 'auto';
+            root.style.top = 'auto';
+            root.style.width = 'auto';
+            root.style.height = 'auto';
+            root.style.overflow = 'visible';
+          }
+        : undefined,
     });
-  };
-
-  const trimCanvasWhitespace = (sourceCanvas, threshold = 248) => {
-    if (!sourceCanvas) return sourceCanvas;
-    try {
-      const width = Number(sourceCanvas.width || 0);
-      const height = Number(sourceCanvas.height || 0);
-      if (width <= 0 || height <= 0) return sourceCanvas;
-      const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-      if (!sourceCtx) return sourceCanvas;
-      const pixels = sourceCtx.getImageData(0, 0, width, height).data;
-      let minX = width, minY = height, maxX = -1, maxY = -1;
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const idx = (y * width + x) * 4;
-          const alpha = pixels[idx + 3];
-          if (alpha === 0) continue;
-          const r = pixels[idx], g = pixels[idx + 1], b = pixels[idx + 2];
-          if (r >= threshold && g >= threshold && b >= threshold) continue;
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
-      }
-      if (maxX < minX || maxY < minY) return sourceCanvas;
-      const cropWidth = Math.max(1, maxX - minX + 1);
-      const cropHeight = Math.max(1, maxY - minY + 1);
-      if (cropWidth / width > 0.985 && cropHeight / height > 0.985)
-        return sourceCanvas;
-      const trimmedCanvas = document.createElement('canvas');
-      trimmedCanvas.width = cropWidth;
-      trimmedCanvas.height = cropHeight;
-      const trimmedCtx = trimmedCanvas.getContext('2d');
-      if (!trimmedCtx) return sourceCanvas;
-      trimmedCtx.drawImage(
-        sourceCanvas,
-        minX, minY, cropWidth, cropHeight,
-        0, 0, cropWidth, cropHeight
-      );
-      return trimmedCanvas;
-    } catch {
-      return sourceCanvas;
-    }
-  };
-
-  const prepareCanvasForPdf = (canvas) => {
-    if (!canvas) return canvas;
-    return isRecipeTemplate ? trimCanvasWhitespace(canvas) : canvas;
   };
 
   const addCanvasToPdfPage = (pdfDoc, canvas) => {
@@ -1741,50 +1780,185 @@ const PlantillaDinamicaModal = ({
     rests.forEach(({ sel, span }) => { if (span.parentNode) span.parentNode.replaceChild(sel, span); });
   };
 
+  // En pantalla el escalado a carta de documentos generales solo se aplica
+  // vía CSS de @media print; para capturar hay que aplicarlo inline.
+  const applyPrintScaleForCapture = (node) => {
+    if (printScale >= 1) return null;
+    const canvasEl = node.querySelector('.tpl-print-canvas');
+    if (!canvasEl) return null;
+    const prev = {
+      transform: canvasEl.style.transform,
+      transformOrigin: canvasEl.style.transformOrigin,
+    };
+    canvasEl.style.transform = `scale(${printScale})`;
+    canvasEl.style.transformOrigin = 'top left';
+    return () => {
+      canvasEl.style.transform = prev.transform;
+      canvasEl.style.transformOrigin = prev.transformOrigin;
+    };
+  };
+
+  const capturePrintableNode = async (node) => {
+    if (!node) return null;
+    const restoreSelects = flattenSelectsInEl(node);
+    const restoreScale = applyPrintScaleForCapture(node);
+    try {
+      // Motor principal: SVG foreignObject (html-to-image). A diferencia de
+      // html2canvas, usa el motor de render real del navegador, por lo que
+      // respeta baselines de texto, line-clamp, transforms anidados y z-index
+      // exactamente igual que la vista previa.
+      try {
+        const renderOnce = () =>
+          htmlToImageToCanvas(node, {
+            width: finalPrintWidth,
+            height: finalPrintHeight,
+            pixelRatio: 2,
+            backgroundColor: '#ffffff',
+          });
+        const canvas = await withTimeout(
+          (async () => {
+            // WebKit (Safari/iOS) puede omitir imágenes o fuentes en el primer
+            // render de un foreignObject; un render de calentamiento lo estabiliza.
+            if (isWebKitBrowser()) await renderOnce();
+            return renderOnce();
+          })(),
+          10000,
+          'captura foreignObject'
+        );
+        if (!isCanvasNearlyBlank(canvas)) return canvas;
+      } catch (foreignObjectErr) {
+        console.warn(
+          'Captura foreignObject falló; usando html2canvas como respaldo:',
+          foreignObjectErr
+        );
+      }
+      return await withTimeout(
+        captureElementAsCanvas(node, 2, {
+          width: finalPrintWidth,
+          height: finalPrintHeight,
+          isolatePrintRoot: printPortalRef.current?.contains(node) || false,
+        }),
+        15000,
+        'captura html2canvas'
+      );
+    } finally {
+      restoreScale?.();
+      restoreSelectsInEl(restoreSelects);
+    }
+  };
+
+  // Páginas limpias del portal de impresión (sin borde, sombra ni "Corte
+  // aquí" de la vista previa). Fallback: páginas visibles del modal.
+  const getPrintPageNodes = () => {
+    const portalPages = printPortalRef.current
+      ? Array.from(
+          printPortalRef.current.querySelectorAll('.tpl-print-page-out')
+        )
+      : [];
+    if (portalPages.length > 0) return portalPages;
+    const previewPages = printScrollRef.current
+      ? Array.from(printScrollRef.current.querySelectorAll('.tpl-print-page'))
+      : [];
+    if (previewPages.length > 0) return previewPages;
+    return printPageRef.current ? [printPageRef.current] : [];
+  };
+
+  const buildDocumentPdf = async () => {
+    await waitForPrintableAssets();
+    const pageNodes = getPrintPageNodes();
+    if (pageNodes.length === 0) return null;
+    const pdfDoc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'pt',
+      format: 'letter',
+      compress: true,
+    });
+    let addedPages = 0;
+    for (const pageNode of pageNodes) {
+      const canvas = await capturePrintableNode(pageNode);
+      if (!canvas) continue;
+      if (addedPages > 0) pdfDoc.addPage('letter', 'portrait');
+      addCanvasToPdfPage(pdfDoc, canvas);
+      addedPages += 1;
+    }
+    return addedPages > 0 ? pdfDoc : null;
+  };
+
   const openPrintWindow = async (mode = 'print') => {
     const originalTitle = document.title;
+    // Capacitor (APK) y móviles: window.print() falla o imprime en blanco;
+    // se genera PDF y se entrega por sheet nativo o pestaña/descarga.
+    const nativeApp = isCapacitorNative();
+    const mobilePrint = mode === 'print' && (nativeApp || isMobileLikeDevice());
+    // La pestaña debe abrirse de forma síncrona dentro del gesto del usuario;
+    // tras un await, Safari bloquearía window.open como popup.
+    // En Capacitor no hay pestañas útiles: se usa Share nativo.
+    let mobilePrintTab = null;
+    if (mobilePrint && !nativeApp) {
+      try {
+        mobilePrintTab = window.open('', '_blank');
+        if (mobilePrintTab) {
+          mobilePrintTab.document.write(
+            '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Generando documento…</title></head>' +
+            '<body style="margin:0;font-family:system-ui,sans-serif;background:#f8fafc;color:#334155;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:12px;">' +
+            '<div style="font-size:15px;font-weight:600;">Generando documento…</div>' +
+            '<div style="font-size:12px;color:#94a3b8;">Esta pestaña mostrará el PDF en unos segundos.</div>' +
+            '</body></html>'
+          );
+          mobilePrintTab.document.close();
+        }
+      } catch {
+        mobilePrintTab = null;
+      }
+    }
     if (mode === 'print') setIsPrinting(true);
     try {
-      await waitForPrintableAssets();
       const docBaseName =
         plantilla?.nombre || (isRecipeTemplate ? 'Receta medica' : 'Documento medico');
       const docNombre = hasManualEdits
         ? `${docBaseName} (editado)`
         : docBaseName;
 
+      if (mode === 'pdf' || mobilePrint) {
+        onNotify?.('Generando PDF, espera un momento…', 'info');
+      }
+
+      // El PDF se necesita para subirlo al expediente, descargarlo,
+      // Capacitor o entregar en móvil; en impresión de escritorio web
+      // sin paciente basta esperar assets e imprimir directo.
+      const needsPdf =
+        Boolean(pacienteId) || mode === 'pdf' || mobilePrint || nativeApp;
+      let pdfDoc = null;
+      if (needsPdf) {
+        try {
+          pdfDoc = await buildDocumentPdf();
+        } catch (captureErr) {
+          console.warn('No se pudo generar el PDF del documento:', captureErr);
+        }
+      } else {
+        await waitForPrintableAssets();
+      }
+      const pdfBlob = pdfDoc ? pdfDoc.output('blob') : null;
+
       let archivoUrl = '';
       let archivoPath = '';
-      if (pacienteId && printPageRef.current) {
+      if (pacienteId && pdfBlob) {
         try {
-          const _rFb = flattenSelectsInEl(printPageRef.current);
-          const rawCanvas = await captureElementAsCanvas(
-            printPageRef.current,
-            2,
-            { width: finalPrintWidth, height: finalPrintHeight }
+          const result = await withTimeout(
+            uploadDocumentoPDF({
+              pacienteId,
+              pdfBlob,
+              nombre: docNombre,
+              tipo: isRecipeTemplate ? 'receta' : 'documento',
+            }),
+            20000,
+            'subida del PDF a Storage'
           );
-          restoreSelectsInEl(_rFb);
-          const canvas = prepareCanvasForPdf(rawCanvas);
-          if (!canvas)
-            throw new Error('No fue posible capturar el documento en canvas.');
-          const capturePdf = new jsPDF({
-            orientation: 'portrait',
-            unit: 'pt',
-            format: 'letter',
-            compress: true,
-          });
-          addCanvasToPdfPage(capturePdf, canvas);
-          const pdfBlob = capturePdf.output('blob');
-          const result = await uploadDocumentoPDF({
-            pacienteId,
-            pdfBlob,
-            nombre: docNombre,
-            tipo: isRecipeTemplate ? 'receta' : 'documento',
-          });
           archivoUrl = result.url;
           archivoPath = result.storagePath;
         } catch (uploadErr) {
           console.warn(
-            'No se pudo capturar/subir el PDF al expediente:',
+            'No se pudo subir el PDF al expediente:',
             uploadErr
           );
         }
@@ -1795,52 +1969,77 @@ const PlantillaDinamicaModal = ({
         nombre: docNombre,
         plantillaId: plantilla?.id || '',
         plantillaNombre: plantilla?.nombre || '',
-        formato: mode === 'pdf' ? 'pdf_download' : 'impresion',
+        formato:
+          mode === 'pdf'
+            ? 'pdf_download'
+            : nativeApp
+            ? 'impresion_nativa'
+            : 'impresion',
         origen: 'plantilla_dinamica',
         editadoManualmente: hasManualEdits,
         archivoUrl,
         archivoPath,
       });
 
-      if (mode === 'pdf') {
-        const pageElements = printScrollRef.current
-          ? Array.from(
-              printScrollRef.current.querySelectorAll('.tpl-print-page')
-            )
-          : printPageRef.current
-          ? [printPageRef.current]
-          : [];
-        if (pageElements.length === 0) {
-          onNotify?.(
-            'No se encontró contenido para generar el PDF.',
-            'error'
-          );
+      if (mode === 'pdf' || mobilePrint) {
+        if (!pdfDoc || !pdfBlob) {
+          mobilePrintTab?.close();
+          onNotify?.('No se pudo generar el PDF. Intenta de nuevo.', 'error');
+          setIsPrinting(false);
           return;
         }
-        onNotify?.('Generando PDF, espera un momento…', 'info');
-        const downloadPdf = new jsPDF({
-          orientation: 'portrait',
-          unit: 'pt',
-          format: 'letter',
-          compress: true,
-        });
-        for (let i = 0; i < pageElements.length; i++) {
-          const pageEl = pageElements[i];
-          const _rPdf = flattenSelectsInEl(pageEl);
-          const rawPageCanvas = await captureElementAsCanvas(pageEl, 2, {
-            width: finalPrintWidth,
-            height: finalPrintHeight,
-          });
-          restoreSelectsInEl(_rPdf);
-          const pageCanvas = prepareCanvasForPdf(rawPageCanvas);
-          if (!pageCanvas) continue;
-          if (i > 0) downloadPdf.addPage('letter', 'portrait');
-          addCanvasToPdfPage(downloadPdf, pageCanvas);
+
+        // APK / Capacitor: sheet nativo (Imprimir, Drive, WhatsApp, etc.)
+        if (nativeApp) {
+          try {
+            await withTimeout(
+              sharePdfBlobNative(pdfBlob, docNombre),
+              30000,
+              'compartir PDF nativo'
+            );
+            onNotify?.(
+              'Documento listo. Elige Imprimir o una app para abrirlo.',
+              'success'
+            );
+          } catch (shareErr) {
+            console.warn('Share nativo falló; descargando PDF:', shareErr);
+            const safeFileName = docNombre
+              .replace(/[^\w\sáéíóúÁÉÍÓÚñÑ-]/g, '_')
+              .trim();
+            pdfDoc.save(`${safeFileName}.pdf`);
+            onNotify?.(
+              'No se pudo abrir el menú nativo; PDF descargado.',
+              'info'
+            );
+          }
+          setIsPrinting(false);
+          return;
+        }
+
+        if (mobilePrint) {
+          if (mobilePrintTab) {
+            mobilePrintTab.location.href = URL.createObjectURL(pdfBlob);
+            onNotify?.(
+              'PDF listo. Usa el botón compartir/imprimir de la nueva pestaña.',
+              'success'
+            );
+          } else {
+            const safeFileName = docNombre
+              .replace(/[^\w\sáéíóúÁÉÍÓÚñÑ-]/g, '_')
+              .trim();
+            pdfDoc.save(`${safeFileName}.pdf`);
+            onNotify?.(
+              'PDF descargado. Ábrelo desde tus archivos para imprimirlo.',
+              'success'
+            );
+          }
+          setIsPrinting(false);
+          return;
         }
         const safeFileName = docNombre
           .replace(/[^\w\sáéíóúÁÉÍÓÚñÑ-]/g, '_')
           .trim();
-        downloadPdf.save(`${safeFileName}.pdf`);
+        pdfDoc.save(`${safeFileName}.pdf`);
         onNotify?.('PDF descargado correctamente.', 'success');
         return;
       }
@@ -1863,9 +2062,10 @@ const PlantillaDinamicaModal = ({
     } catch (error) {
       console.error('Error preparando impresion/PDF:', error);
       onNotify?.('Error generando el documento para imprimir.', 'error');
+      mobilePrintTab?.close();
       document.body.classList.remove('printing-plantilla');
       document.documentElement.classList.remove('printing-plantilla');
-      document.title = document.title;
+      document.title = originalTitle;
       setIsPrinting(false);
     }
   };
@@ -2260,9 +2460,9 @@ const PlantillaDinamicaModal = ({
         </div>
       )}
 
-      {/* ── Print portal (solo @media print) ── */}
+      {/* ── Print portal (@media print y fuente de captura PDF) ── */}
       {createPortal(
-        <div className="tpl-print-root" aria-hidden="true">
+        <div className="tpl-print-root" aria-hidden="true" ref={printPortalRef}>
           {isRecipeTemplate && recipeContentPages.length > 1 ? (
             recipeContentPages.map((pageOverrides, rpIdx) => {
               recipePageOverridesRef.current = pageOverrides;

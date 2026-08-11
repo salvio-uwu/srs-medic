@@ -27,7 +27,8 @@ const STYLES = `
   .app-shell {
     font-family: 'DM Sans', 'Sora', system-ui, sans-serif;
     display: flex;
-    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
     overflow: hidden;
     background: #f7f8fa;
     color: #111;
@@ -349,6 +350,19 @@ const STYLES = `
     flex: 1;
     overflow: auto;
     min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Expediente a pantalla completa: el scroll lo maneja el expediente, no el shell */
+  .app-shell.expediente-mode .app-content {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .app-shell.expediente-mode .app-content > * {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
   }
 
   .app-mobile-fab-menu {
@@ -503,7 +517,7 @@ const AppShell = () => {
   return (
     <>
       <style>{STYLES}</style>
-      <div className={`app-shell${loggingOut ? ' logging-out' : ''}${!hideChrome && !isMobile ? ' with-rail' : ''}`}>
+      <div className={`app-shell${loggingOut ? ' logging-out' : ''}${!hideChrome && !isMobile ? ' with-rail' : ''}${hideChrome ? ' expediente-mode' : ''}`}>
         {loggingOut && (
           <div className="app-logout-overlay" role="status" aria-live="polite">
             <div className="app-logout-card">

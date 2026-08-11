@@ -1326,7 +1326,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         recognition.start();
     };
 
-    const glassCard = "bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col";
+    const glassCard = "bg-white border border-slate-200 shadow-sm rounded-2xl flex flex-col min-h-0";
     const inputStyle = "w-full p-3 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-400 transition-colors text-sm text-slate-700 placeholder:text-slate-400";
     const labelStyle = "text-[11px] font-semibold text-slate-500 uppercase mb-1.5 ml-1 block tracking-wide";
     const buttonPrimary = "bg-blue-600 text-white hover:bg-blue-700";
@@ -1336,7 +1336,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     // ==========================================
 
     const renderPadecimiento = () => (
-        <div className={`${glassCard} min-h-full p-6`}>
+        <div className={`${glassCard} w-full p-6 lg:h-full`}>
             <div className="flex justify-between items-center mb-6 shrink-0">
                 <div className="flex items-center gap-4">
                     <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100"><FileText size={24} /></div>
@@ -1345,9 +1345,9 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                 <button title="Dictado por voz" onClick={toggleDictado} className={`p-3 rounded-lg transition-colors flex items-center gap-2 ${isListening ? 'bg-rose-500 text-white' : 'bg-slate-50 border border-slate-200 text-slate-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'}`}><Mic size={20} /></button>
             </div>
 
-            <div className="flex-1 grid grid-cols-2 gap-4 min-h-[350px]">
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0 lg:min-h-[350px]">
                 <div className="flex flex-col">
-                    <textarea className="flex-1 w-full p-5 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 text-base leading-relaxed focus:bg-white focus:border-blue-300 transition-colors resize-none"
+                    <textarea className="flex-1 w-full min-h-[180px] p-4 lg:p-5 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-700 text-base leading-relaxed focus:bg-white focus:border-blue-300 transition-colors resize-none"
                         placeholder="¿Cuál es el motivo de la consulta hoy?" value={expediente.consulta.padecimiento} onChange={e => updateCampo('consulta.padecimiento', e.target.value)} />
 
                     {relacionados.length > 0 && (
@@ -1366,7 +1366,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                     )}
                 </div>
 
-                <div className="flex flex-col bg-slate-50 border border-slate-200 rounded-xl p-3 overflow-hidden">
+                <div className="flex flex-col bg-slate-50 border border-slate-200 rounded-xl p-3 overflow-hidden max-h-72 lg:max-h-none">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sintomatología rápida</p>
                     <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5">
                         {categoriasConItems.map((cat) => (
@@ -1393,18 +1393,18 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     );
 
     const renderExploracion = () => (
-        <div className="flex h-full w-full gap-6">
-            <div className="w-64 flex flex-col gap-3 shrink-0 bg-white p-4 rounded-2xl border border-slate-200 h-full overflow-y-auto shadow-sm">
+        <div className="flex flex-col lg:flex-row w-full min-h-0 gap-3 lg:gap-6 lg:h-full">
+            <div className="w-full lg:w-64 flex flex-row lg:flex-col gap-2 lg:gap-3 shrink-0 bg-white p-2 lg:p-4 rounded-2xl border border-slate-200 lg:h-full overflow-x-auto lg:overflow-y-auto shadow-sm">
                 {[{ id: 'signos', l: 'Signos Vitales', i: <Activity size={18} /> }, { id: 'colesterol', l: 'Bioquímica', i: <Droplet size={18} /> }, { id: 'fisica', l: 'Exploración Física', i: <Eye size={18} /> }, { id: 'glucosa', l: 'Glucometría', i: <FlaskConical size={18} /> }].map(it => (
-                    <button key={it.id} onClick={() => setActiveExploracion(it.id)} className={`p-3 rounded-lg flex items-center gap-3 text-sm font-semibold transition-colors ${activeExploracion === it.id ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-slate-600 hover:bg-slate-50 border border-transparent'}`}>
+                    <button key={it.id} onClick={() => setActiveExploracion(it.id)} className={`p-2.5 lg:p-3 rounded-lg flex items-center gap-2 lg:gap-3 text-xs lg:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 ${activeExploracion === it.id ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-slate-600 hover:bg-slate-50 border border-transparent'}`}>
                         <span className={activeExploracion === it.id ? 'text-indigo-500' : ''}>{it.i}</span> {it.l}
                     </button>
                 ))}
 
-                <div className="flex-1"></div>
+                <div className="hidden lg:block flex-1"></div>
 
                 {resumenAlergiasPaciente.tieneAlergias && (
-                    <div className="bg-rose-50 border border-rose-100 p-4 rounded-xl shadow-sm">
+                    <div className="hidden lg:block bg-rose-50 border border-rose-100 p-4 rounded-xl shadow-sm">
                         <div className="flex items-center gap-2 mb-2 text-rose-600">
                             <AlertTriangle size={18} />
                             <span className="text-xs font-black uppercase tracking-wider">Alergias</span>
@@ -1416,8 +1416,8 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                 )}
             </div>
 
-            <div className={`${glassCard} flex-1`}>
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+            <div className={`${glassCard} flex-1 min-h-0`}>
+                <div className="p-4 md:p-8 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:custom-scrollbar">
                     {activeExploracion === 'signos' && (
                         <div className="space-y-8">
                             <div>
@@ -1443,7 +1443,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                 <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex gap-2 border-b border-slate-100 pb-2">
                                     <Scissors className="rotate-90 text-indigo-500" /> Antropometría
                                 </h4>
-                                <div className="grid grid-cols-3 gap-5">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
                                     <div>
                                         <label className={labelStyle}>Peso (kg)</label>
                                         <input
@@ -1623,7 +1623,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             </div>
 
                             <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col mt-2">
-                                <div className="grid grid-cols-[120px_1fr_100px_50px] bg-blue-50/60 py-3 px-6 text-left text-[11px] font-black text-blue-800 tracking-wide border-b border-slate-200 shrink-0">
+                                <div className="grid grid-cols-[90px_1fr_84px_40px] md:grid-cols-[120px_1fr_100px_50px] bg-blue-50/60 py-3 px-3 md:px-6 text-left text-[11px] font-black text-blue-800 tracking-wide border-b border-slate-200 shrink-0">
                                     <span>Fecha</span>
                                     <span>Categoría</span>
                                     <span className="text-center">Glucosa</span>
@@ -1631,7 +1631,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                                 </div>
                                 <div className="flex-1 overflow-y-auto max-h-[220px] custom-scrollbar">
                                     {expediente.consulta.exploracion.glucosa.lista.map((g, i) => (
-                                        <div key={i} className="grid grid-cols-[120px_1fr_100px_50px] py-3 px-6 border-b border-slate-50 items-center hover:bg-slate-50 transition-colors">
+                                        <div key={i} className="grid grid-cols-[90px_1fr_84px_40px] md:grid-cols-[120px_1fr_100px_50px] py-3 px-3 md:px-6 border-b border-slate-50 items-center hover:bg-slate-50 transition-colors">
                                             <span className="text-sm font-medium text-slate-600">
                                                 {g.fecha.split('-').reverse().join('/')}
                                             </span>
@@ -1671,10 +1671,10 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     );
 
     const renderDiagnostico = () => (
-        <div className="flex gap-6 h-full w-full relative">
+        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 lg:h-full w-full relative overflow-y-auto lg:overflow-visible custom-scrollbar">
 
             {/* --- COLUMNA IZQUIERDA: DIAGNÓSTICO Y AGREGAR RECETA --- */}
-            <div className="w-1/2 flex flex-col gap-6 h-full">
+            <div className="w-full lg:w-1/2 flex flex-col gap-4 lg:gap-6 lg:h-full">
                 <div className={`${glassCard} flex-1 flex flex-col`}>
                     <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
 
@@ -2146,10 +2146,10 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             </div>
 
             {/* --- COLUMNA DERECHA: RECETA LISTA --- */}
-            <div className="w-1/2 flex flex-col gap-6">
+            <div className="w-full lg:w-1/2 flex flex-col gap-4 lg:gap-6">
                 <div className={`${glassCard} flex-1 flex flex-col`}>
                     <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center"><span className="text-xs font-semibold text-slate-500 uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Receta Actual</span><span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-md text-[10px] font-semibold">{expediente.consulta.diagnostico.tratamiento_lista?.length || 0} items</span></div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar min-h-[160px]">
                         {expediente.consulta.diagnostico.tratamiento_lista?.map((m, i) => (
                             <div key={i} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm group hover:border-indigo-200 transition-all">
                                 {editandoMedIndex === i ? (
@@ -2283,8 +2283,8 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         };
 
         return (
-            <div className="flex h-full w-full gap-6">
-                <div className="w-80 shrink-0 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+            <div className="flex flex-col lg:flex-row lg:h-full w-full gap-4 lg:gap-6 overflow-y-auto lg:overflow-visible custom-scrollbar">
+                <div className="w-full lg:w-80 shrink-0 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
                     <div className="flex items-center gap-3 mb-3">
                         <div className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
                             <ClipboardList size={18} />
@@ -2303,7 +2303,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                         onChange={(e) => setBusquedaProcedimiento(e.target.value)}
                     />
 
-                    <div className="mt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-2">
+                    <div className="mt-3 flex-1 min-h-0 max-h-64 lg:max-h-none overflow-y-auto custom-scrollbar space-y-2">
                         {catalogoProcedimientosLoading && (
                             <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">Cargando catalogo de procedimientos...</div>
                         )}
@@ -2481,8 +2481,8 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     };
 
     const renderReferenciaMedica = () => (
-        <div className="flex h-full w-full gap-6">
-            <div className="w-80 shrink-0 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+        <div className="flex flex-col lg:flex-row lg:h-full w-full gap-4 lg:gap-6 overflow-y-auto lg:overflow-visible custom-scrollbar">
+            <div className="w-full lg:w-80 shrink-0 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
                 <div className="flex items-center gap-3 mb-3">
                     <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
                         <Link2 size={18} />
@@ -2500,7 +2500,7 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                     onChange={(e) => setBusquedaReferencia(e.target.value)}
                 />
 
-                <div className="mt-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-2">
+                <div className="mt-3 flex-1 min-h-0 max-h-64 lg:max-h-none overflow-y-auto custom-scrollbar space-y-2">
                     {catalogoReferenciasMedicasLoading && (
                         <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">Cargando catálogo de referencias...</div>
                     )}
@@ -2654,20 +2654,20 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     );
 
     const renderEstudios = () => (
-        <div className="flex h-full w-full gap-6">
-            <div className="w-64 flex flex-col gap-3 shrink-0 bg-white p-4 rounded-2xl border border-slate-200 h-full">
+        <div className="flex flex-col lg:flex-row w-full min-h-0 gap-3 lg:gap-6 lg:h-full">
+            <div className="w-full lg:w-64 flex flex-row lg:flex-col gap-2 lg:gap-3 shrink-0 bg-white p-2 lg:p-4 rounded-2xl border border-slate-200 lg:h-full overflow-x-auto lg:overflow-visible">
                 {estudiosTabs.map((tab) => (
-                    <button key={tab.id} onClick={() => setActiveEstudiosTab(tab.id)} className={`p-3 rounded-lg flex flex-col items-center gap-1.5 text-xs font-semibold transition-colors border text-center ${activeEstudiosTab === tab.id ? 'bg-blue-50 text-blue-700 border-blue-200' : 'text-slate-600 hover:bg-slate-50 border-transparent'}`}>
+                    <button key={tab.id} onClick={() => setActiveEstudiosTab(tab.id)} className={`p-2.5 lg:p-3 rounded-lg flex flex-row lg:flex-col items-center gap-2 lg:gap-1.5 text-xs font-semibold transition-colors border text-center whitespace-nowrap shrink-0 ${activeEstudiosTab === tab.id ? 'bg-blue-50 text-blue-700 border-blue-200' : 'text-slate-600 hover:bg-slate-50 border-transparent'}`}>
                         {tab.icon}
                         <span>{tab.label}</span>
                     </button>
                 ))}
             </div>
-            <div className={`${glassCard} flex-1`}>
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+            <div className={`${glassCard} flex-1 min-h-0`}>
+                <div className="p-4 md:p-8 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:custom-scrollbar">
                     <h3 className="font-black text-xl mb-6 text-slate-800 tracking-tight">{tituloTabEstudios}</h3>
                     {esTabPaquete ? (
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {paquetesCatalogo.map((p) => (
                                 <label key={p.id} className="flex gap-4 items-center p-4 bg-white border border-slate-100 rounded-2xl cursor-pointer hover:border-indigo-200 hover:shadow-md transition-all group">
                                     <div className="relative flex items-center justify-center">
@@ -2783,23 +2783,25 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
     const nextConsultaTab = nextConsultaMap[activeConsulta] || null;
 
     return (
-        <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50 relative">
+        <div className="flex flex-col w-full min-h-0 overflow-visible bg-slate-50 relative lg:flex-1 lg:h-full lg:overflow-hidden">
             <div className="absolute inset-0 bg-slate-50 -z-10 pointer-events-none" />
 
             {/* TABS HEADER */}
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-8 shrink-0 z-20 h-16 gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                    <div className="flex items-center gap-6 overflow-x-auto">
+            <div className="flex flex-col gap-2 border-b border-slate-200 bg-white px-2 sm:px-3 md:px-6 shrink-0 z-20 py-2 sticky top-0 lg:static">
+                <div className="flex items-center gap-2 min-w-0 w-full">
+                    <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3 overflow-x-auto max-w-full pb-0.5 flex-1 min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         {tabsConsulta.map((t) => (
-                            <button title={t.l} key={t.id} onClick={() => setActiveConsulta(t.id)} className={`py-2 px-4 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border whitespace-nowrap ${activeConsulta === t.id ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} {t.l.toUpperCase()}</button>
+                            <button title={t.l} key={t.id} onClick={() => setActiveConsulta(t.id)} className={`py-2 px-2.5 md:px-3.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border whitespace-nowrap shrink-0 ${activeConsulta === t.id ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700 border-transparent'}`}>{t.i} <span className="hidden lg:inline">{t.l.toUpperCase()}</span></button>
                         ))}
                     </div>
+                </div>
 
+                <div className="flex items-center justify-between gap-2 w-full">
                     {/* Indicador persistente de alergias */}
-                    <div className="relative shrink-0" ref={alergiaPopoverRef}>
+                    <div className="relative shrink-0 min-w-0" ref={alergiaPopoverRef}>
                         <button
                             onClick={() => setShowAlergiaPopover(!showAlergiaPopover)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-wide whitespace-nowrap cursor-pointer transition-colors max-w-full ${
                                 resumenAlergiasPaciente.preguntadosNegados
                                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                                     : resumenAlergiasPaciente.tieneAlergias
@@ -2808,16 +2810,16 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             }`}
                         >
                             {resumenAlergiasPaciente.preguntadosNegados ? (
-                                <><CheckCircle size={12} /> Sin alergias</>
+                                <><CheckCircle size={12} /> <span className="truncate">Sin alergias</span></>
                             ) : resumenAlergiasPaciente.tieneAlergias ? (
-                                <><AlertTriangle size={12} /> {resumenAlergiasPaciente.items.length} {resumenAlergiasPaciente.items.length === 1 ? 'alergia' : 'alergias'}</>
+                                <><AlertTriangle size={12} className="shrink-0" /> <span className="truncate">{resumenAlergiasPaciente.items.length} {resumenAlergiasPaciente.items.length === 1 ? 'alergia' : 'alergias'}</span></>
                             ) : (
-                                <><Info size={12} /> No verificado</>
+                                <><Info size={12} /> <span className="truncate">No verificado</span></>
                             )}
                         </button>
 
                         {showAlergiaPopover && (
-                            <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                            <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2rem))] bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
                                 <div className={`px-4 py-3 border-b ${
                                     resumenAlergiasPaciente.preguntadosNegados
                                         ? 'bg-emerald-50 border-emerald-100'
@@ -2860,44 +2862,44 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
                             </div>
                         )}
                     </div>
-                </div>
 
-                {activeConsulta === 'procedimientos' || activeConsulta === 'referencia_medica' ? (
-                    <button
-                        onClick={() => onPrintRecetaSalir?.()}
-                        className={`px-6 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
-                    >
-                        <Printer size={16} /> Imprimir receta
-                    </button>
-                ) : (activeConsulta === 'diagnostico' || activeConsulta === 'estudios') && nextConsultaTab ? (
-                    <div className="flex items-center gap-2 shrink-0">
+                    {activeConsulta === 'procedimientos' || activeConsulta === 'referencia_medica' ? (
                         <button
-                            onClick={() => (onPrintReceta ?? onPrintRecetaSalir)?.()}
-                            className="px-4 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 shadow-sm"
-                            title="Imprimir receta sin salir"
+                            onClick={() => onPrintRecetaSalir?.()}
+                            className={`px-3 sm:px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
                         >
-                            <Printer size={15} />
-                            <span className="hidden sm:inline">Imprimir</span>
+                            <Printer size={16} /> <span className="hidden sm:inline">Imprimir receta</span>
                         </button>
+                    ) : (activeConsulta === 'diagnostico' || activeConsulta === 'estudios') && nextConsultaTab ? (
+                        <div className="flex items-center gap-2 shrink-0">
+                            <button
+                                onClick={() => (onPrintReceta ?? onPrintRecetaSalir)?.()}
+                                className="px-3 sm:px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 shadow-sm"
+                                title="Imprimir receta sin salir"
+                            >
+                                <Printer size={15} />
+                                <span className="hidden sm:inline">Imprimir</span>
+                            </button>
+                            <button
+                                onClick={() => setActiveConsulta(nextConsultaTab)}
+                                className={`px-3 sm:px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm ${buttonPrimary}`}
+                            >
+                                Siguiente <ArrowLeft size={16} className="rotate-180" />
+                            </button>
+                        </div>
+                    ) : nextConsultaTab ? (
                         <button
                             onClick={() => setActiveConsulta(nextConsultaTab)}
-                            className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm ${buttonPrimary}`}
+                            className={`px-3 sm:px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
                         >
-                            Siguiente <ArrowLeft size={17} className="rotate-180" />
+                            Siguiente <ArrowLeft size={16} className="rotate-180" />
                         </button>
-                    </div>
-                ) : nextConsultaTab ? (
-                    <button
-                        onClick={() => setActiveConsulta(nextConsultaTab)}
-                        className={`px-6 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all shadow-sm shrink-0 ${buttonPrimary}`}
-                    >
-                        Siguiente <ArrowLeft size={18} className="rotate-180" />
-                    </button>
-                ) : null}
+                    ) : null}
+                </div>
             </div>
 
             {/* CONTENIDO PRINCIPAL */}
-            <div className="flex-1 p-6 overflow-hidden w-full relative z-10">
+            <div className="w-full p-3 md:p-6 overflow-visible relative z-10 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:custom-scrollbar">
                 {activeConsulta === 'padecimiento' && renderPadecimiento()}
                 {activeConsulta === 'exploracion' && renderExploracion()}
                 {activeConsulta === 'diagnostico' && renderDiagnostico()}
@@ -2907,8 +2909,8 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
             </div>
 
             {/* --- TOAST --- */}
-            <div className={`fixed bottom-8 right-8 z-[100] transition-all duration-500 transform ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0'}`}>
-                <div className={`px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 backdrop-blur-xl border border-white/20 ${toast.type === 'error' ? 'bg-rose-500/90 text-white' : 'bg-slate-900/90 text-white'}`}>
+            <div className={`fixed bottom-4 left-4 right-4 sm:left-auto sm:right-8 sm:bottom-8 z-[100] transition-all duration-500 transform ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0'}`}>
+                <div className={`px-4 sm:px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 sm:gap-4 backdrop-blur-xl border border-white/20 ${toast.type === 'error' ? 'bg-rose-500/90 text-white' : 'bg-slate-900/90 text-white'}`}>
                     {toast.type === 'error' ? <AlertTriangle size={24} /> : <CheckCircle size={24} className="text-emerald-400" />}
                     <span className="font-bold text-sm tracking-wide">{toast.message}</span>
                 </div>

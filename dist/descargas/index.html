@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Descargar app — Centro Medico Santa Cruz</title>
+  <link rel="icon" href="/favicon.png" />
+  <style>
+    :root {
+      --azul: #0b63d6;
+      --azul-oscuro: #084a9e;
+      --texto: #0f172a;
+      --muted: #64748b;
+      --fondo: #f1f5f9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--texto);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #dbeafe 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #e0f2fe 0%, transparent 50%),
+        var(--fondo);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    main {
+      width: min(28rem, 100%);
+      text-align: center;
+    }
+    img.logo {
+      width: 5.5rem;
+      height: 5.5rem;
+      object-fit: contain;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      line-height: 1.25;
+      margin: 0 0 0.5rem;
+      font-weight: 700;
+    }
+    p {
+      margin: 0 0 1.25rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding: 0.95rem 1.25rem;
+      border-radius: 0.85rem;
+      background: var(--azul);
+      color: #fff;
+      font-weight: 700;
+      font-size: 1rem;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(11, 99, 214, 0.28);
+    }
+    a.btn:hover { background: var(--azul-oscuro); }
+    ol {
+      text-align: left;
+      margin: 1.5rem 0 0;
+      padding: 1rem 1rem 1rem 2rem;
+      background: #fff;
+      border-radius: 0.85rem;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    }
+    ol li { margin: 0.35rem 0; }
+    .nota {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <img class="logo" src="/favicon.png" alt="Centro Medico Santa Cruz" />
+    <h1>Centro Medico Santa Cruz</h1>
+    <p>Instala la app Android. Tras instalarla, se actualiza sola cuando publicamos el sistema (no hace falta reinstalar).</p>
+    <a class="btn" href="/descargas/SRS-Medic.apk" download="Centro-Medico-Santa-Cruz.apk">
+      Descargar APK
+    </a>
+    <ol>
+      <li>Toca <strong>Descargar APK</strong>.</li>
+      <li>Abre el archivo descargado.</li>
+      <li>Si Android lo pide, permite instalar desde el navegador.</li>
+      <li>Abre <strong>Centro Medico Santa Cruz</strong> e inicia sesión.</li>
+    </ol>
+    <p class="nota">Solo Android. Requiere conexión a internet.</p>
+  </main>
+</body>
+</html>

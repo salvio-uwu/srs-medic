@@ -127,11 +127,13 @@ const STYLES = `
     font-family: 'DM Sans', system-ui, sans-serif;
     background: var(--bg);
     color: var(--slate-800);
-    height: 100vh;
+    height: 100%;
+    max-height: 100dvh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     position: relative;
+    min-height: 0;
   }
 
   /* OPTIMIZACIÓN: Se eliminó el pseudo-elemento ::before con gradientes pesados */
@@ -364,6 +366,7 @@ const STYLES = `
     /* Arriba 12px, Derecha 24px, Abajo 24px, Izquierda 24px */
     padding: 12px 24px 24px 24px; 
     display: flex; gap: 20px;
+    min-height: 0;
   }
 
   /* ── PANELS ── */
@@ -533,6 +536,7 @@ const STYLES = `
     flex: 1; display: flex; flex-direction: column;
     overflow: hidden;
     border-radius: var(--radius-lg);
+    min-height: 0;
   }
   .timeline-header {
     padding: 20px 28px;
@@ -616,6 +620,8 @@ const STYLES = `
     background: white;
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     scroll-behavior: smooth;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* ── EMPTY STATE ── */
@@ -1498,10 +1504,11 @@ const STYLES = `
 
   /* ── TOAST ── */
   .toast {
-    position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+    position: fixed; top: max(16px, env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
     z-index: 200; display: flex; align-items: center; gap: 10px;
-    padding: 12px 20px; border-radius: 50px; box-shadow: var(--shadow-lg);
-    font-size: 13px; font-weight: 700; white-space: nowrap;
+    padding: 12px 16px; border-radius: 50px; box-shadow: var(--shadow-lg);
+    font-size: 13px; font-weight: 700; white-space: normal;
+    max-width: min(420px, calc(100vw - 24px));
     animation: toast-in .25s cubic-bezier(.4,0,.2,1);
     border: 1px solid;
   }
@@ -1696,6 +1703,17 @@ const STYLES = `
   @media (max-width: 640px) {
     .agenda-root {
       height: 100dvh;
+    }
+    .weekly-scroll {
+      min-width: 560px;
+    }
+    .weekly-day-head,
+    .weekly-header-cell {
+      font-size: 10px;
+      padding: 8px 2px;
+    }
+    .timeline-panel {
+      min-height: 360px;
     }
     .app-header {
       padding: 8px 10px;
@@ -1939,6 +1957,7 @@ const Agenda = () => {
   const prevCitasLength                     = useRef(0);
   const timelineBodyRef                     = useRef(null);
   const timelineSlotRefs                    = useRef({});
+  const mainContentRef                      = useRef(null);
   const [toast, setToast]                   = useState(null);
   const [vista, setVista]                   = useState('dashboard');
   const [timelineFiltro, setTimelineFiltro] = useState('all');
@@ -2317,6 +2336,9 @@ const Agenda = () => {
 
   /* ── NOTIFICATIONS ── */
   useEffect(() => {
+    // iOS Safari no expone la API Notification en páginas web normales;
+    // referenciarla directo lanza ReferenceError y tumba toda la Agenda.
+    if (typeof Notification === 'undefined') return;
     if (Notification.permission !== "granted" && Notification.permission !== "denied")
       Notification.requestPermission();
   }, []);
@@ -3511,11 +3533,45 @@ const Agenda = () => {
     : null;
 
   const scrollToSlotKey = (slotKey, behavior = 'smooth') => {
-    const container = timelineBodyRef.current;
     const targetNode = timelineSlotRefs.current?.[slotKey];
-    if (!container || !targetNode) return false;
-    const top = targetNode.offsetTop - (container.clientHeight / 2) + (targetNode.clientHeight / 2);
-    container.scrollTo({ top: Math.max(0, top), behavior });
+    if (!targetNode) return false;
+
+    const canScroll = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      const oy = style.overflowY;
+      const scrollable = oy === 'auto' || oy === 'scroll' || oy === 'overlay';
+      return scrollable && el.scrollHeight > el.clientHeight + 4;
+    };
+
+    const findScrollParent = (el) => {
+      let node = el.parentElement;
+      while (node && node !== document.body) {
+        if (canScroll(node)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    };
+
+    // Desktop: .timeline-body desborda. Móvil (≤1200px): el scroll real es .main-content.
+    const preferred = [timelineBodyRef.current, mainContentRef.current, findScrollParent(targetNode)]
+      .find((el) => canScroll(el));
+
+    if (!preferred) {
+      // Último recurso: scrollIntoView (útil en WebView si aún no midió overflow)
+      try {
+        targetNode.scrollIntoView({ behavior, block: 'center', inline: 'nearest' });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    const parentRect = preferred.getBoundingClientRect();
+    const targetRect = targetNode.getBoundingClientRect();
+    const top = preferred.scrollTop + (targetRect.top - parentRect.top)
+      - (preferred.clientHeight / 2) + (targetRect.height / 2);
+    preferred.scrollTo({ top: Math.max(0, top), behavior });
     return true;
   };
 
@@ -3526,13 +3582,16 @@ const Agenda = () => {
       scrollToSlotKey(slotKey, behavior);
     };
 
+    // En móvil el layout flex tarda un frame más en tener alturas reales.
     runScroll('auto');
     const frameId = requestAnimationFrame(() => runScroll('smooth'));
     const timeoutId = setTimeout(() => runScroll('smooth'), 160);
+    const retryId = setTimeout(() => runScroll('smooth'), 450);
 
     return () => {
       cancelAnimationFrame(frameId);
       clearTimeout(timeoutId);
+      clearTimeout(retryId);
     };
   };
 
@@ -3859,7 +3918,7 @@ const Agenda = () => {
         </header>
 
         {/* ══ MAIN ════════════════════════════════════════════════ */}
-        <div className="main-content">
+        <div className="main-content" ref={mainContentRef}>
 
           {/* ── VISTA DÍA ─────────────────────────────────────── */}
           {vista === 'dashboard' && (
@@ -5238,7 +5297,7 @@ const Agenda = () => {
                           <label
                             key={item.value}
                             onClick={() => setNuevaCita(prev => ({ ...prev, formaPago: item.value }))}
-                            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 select-none text-xs font-bold ${
+                            className={`flex items-center justify-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg border-2 cursor-pointer transition-all duration-200 select-none text-[11px] sm:text-xs font-bold ${
                               checked
                                 ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-500/10'
                                 : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'

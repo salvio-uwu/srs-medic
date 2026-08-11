@@ -15,8 +15,12 @@ try {
   releaseNotes = Array.isArray(notesData.notes) ? notesData.notes : []
 } catch { /* sin notas, se omite */ }
 
+// Capacitor (APK) necesita rutas relativas; el deploy web sigue con base '/'.
+const isCapacitorBuild = process.env.CAPACITOR === '1'
+
 // https://vite.dev/config/
 export default defineConfig({
+  base: isCapacitorBuild ? './' : '/',
   plugins: [
     react(),
     {

@@ -3712,35 +3712,35 @@ const ExpedienteClinico = () => {
   };
 
   return (
-    <div className="h-screen w-full bg-[#f8fafc] flex flex-col overflow-hidden text-slate-800 font-sans selection:bg-blue-100 relative">
+    <div className="h-full min-h-0 w-full bg-[#f8fafc] flex flex-col overflow-hidden text-slate-800 font-sans selection:bg-blue-100 relative">
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
 
       {/* --- TOAST --- */}
       {notification && <ToastNotification msg={notification.msg} type={notification.type} onClose={() => setNotification(null)} />}
 
       {/* --- HEADER --- */}
-      <header className="bg-white/80 backdrop-blur-md px-3 py-1.5 border-b border-slate-200/60 flex justify-between items-center z-50 shadow-sm print:hidden sticky top-0">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="bg-white/80 backdrop-blur-md px-2 sm:px-3 py-1.5 border-b border-slate-200/60 flex flex-wrap justify-between items-center gap-y-2 gap-x-2 z-50 shadow-sm print:hidden sticky top-0 shrink-0 pt-[max(0.375rem,env(safe-area-inset-top))]">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 basis-[min(100%,18rem)] lg:basis-auto lg:flex-none">
           <button
             onClick={handleSalir}
             disabled={loading}
-            className="group relative overflow-hidden bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 shadow-md shadow-blue-600/20 transition-all active:scale-[0.95] disabled:opacity-50 disabled:shadow-none text-xs"
+            className="group relative overflow-hidden bg-blue-600 hover:bg-blue-700 text-white px-2.5 sm:px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 shadow-md shadow-blue-600/20 transition-all active:scale-[0.95] disabled:opacity-50 disabled:shadow-none text-xs shrink-0"
           >
             <ArrowLeft size={14} />
-            <span>{loading ? '...' : isHistoricalReviewMode ? 'Volver' : 'Salir'}</span>
+            <span className="hidden sm:inline">{loading ? '...' : isHistoricalReviewMode ? 'Volver' : 'Salir'}</span>
           </button>
 
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <div className="relative flex-shrink-0">
               <AvatarPaciente sexo={pacienteData?.sexo} fechaNacimiento={pacienteData?.fechaNacimiento} size="md" />
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></div>
             </div>
 
             <div className="flex flex-col min-w-0">
-              <h1 className="text-sm font-bold leading-tight text-slate-800 tracking-tight truncate max-w-[220px]" title={pacienteNombre}>
+              <h1 className="text-sm font-bold leading-tight text-slate-800 tracking-tight truncate max-w-[140px] sm:max-w-[220px] md:max-w-[280px]" title={pacienteNombre}>
                 {pacienteNombre || 'Cargando...'}
               </h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                 <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-px rounded border border-blue-100 tracking-wide normal-case">
                   {formatearEdadTexto(pacienteData?.fechaNacimiento || expediente.px_info.fecha_nacimiento, expediente.px_info.edad || '--')}
                 </span>
@@ -3829,15 +3829,15 @@ const ExpedienteClinico = () => {
         </div>
 
         {/* ── NAVEGACIÓN PRINCIPAL ── */}
-        <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
+        <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl order-3 w-full sm:order-none sm:w-auto justify-center">
           <HeaderTab icon={<Activity size={15} />} label="Resumen" active={activeMainTab === 'resumen'} visited={visitedTabs.has('resumen')} onClick={() => handleTabChange('resumen')} color="emerald" />
-          <div className={`w-4 h-px ${visitedTabs.has('antecedentes') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
+          <div className={`hidden sm:block w-4 h-px ${visitedTabs.has('antecedentes') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
           <HeaderTab icon={<ClipboardList size={15} />} label="Historial" active={activeMainTab === 'antecedentes'} visited={visitedTabs.has('antecedentes')} onClick={() => handleTabChange('antecedentes')} color="violet" />
-          <div className={`w-4 h-px ${visitedTabs.has('consulta') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
+          <div className={`hidden sm:block w-4 h-px ${visitedTabs.has('consulta') ? 'bg-slate-400' : 'bg-slate-300'}`}></div>
           <HeaderTab icon={<Stethoscope size={15} />} label="Consulta" active={activeMainTab === 'consulta'} visited={visitedTabs.has('consulta')} onClick={() => handleTabChange('consulta')} color="blue" />
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
 
           {/* ── ESTADO DEL PACIENTE ── */}
           <div className="relative">
@@ -3858,7 +3858,7 @@ const ExpedienteClinico = () => {
             {showMenuQx && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowMenuQx(false)}></div>
-                <div className="absolute top-full right-0 mt-2 w-96 bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/8 z-20 overflow-hidden animate-in fade-in zoom-in-95 origin-top-right border border-slate-200">
+                <div className="absolute top-full right-0 mt-2 w-[min(24rem,calc(100vw-1rem))] bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/8 z-20 overflow-hidden animate-in fade-in zoom-in-95 origin-top-right border border-slate-200">
 
                   {/* Header del panel */}
                   <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
@@ -3998,10 +3998,10 @@ const ExpedienteClinico = () => {
             onClick={handleGuardar}
             disabled={loading}
             title={isHistoricalReviewMode ? 'Guardar consulta histórica' : 'Finalizar consulta'}
-            className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-xs transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 disabled:opacity-50"
+            className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg font-bold text-xs transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 disabled:opacity-50"
           >
             <CheckCircle2 size={14} />
-            <span>{loading ? '...' : isHistoricalReviewMode ? 'Guardar consulta' : 'Finalizar'}</span>
+            <span className="hidden sm:inline">{loading ? '...' : isHistoricalReviewMode ? 'Guardar' : 'Finalizar'}</span>
           </button>
 
         </div>
@@ -4028,12 +4028,12 @@ const ExpedienteClinico = () => {
       )}
 
       {/* --- LAYOUT PRINCIPAL --- */}
-      <div className="flex-1 flex overflow-hidden relative print:hidden">
-        <main className="flex-1 overflow-hidden relative bg-slate-50/50 p-2 md:p-4 print:p-0">
-          <div className="w-full h-full bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-hidden">
-            <div className="flex-1 flex flex-col h-full w-full">
+      <div className="flex-1 flex min-h-0 overflow-hidden relative print:hidden">
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden relative bg-slate-50/50 p-2 md:p-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] print:p-0 exp-mobile-scroll">
+          <div className="w-full min-h-full lg:h-full lg:min-h-0 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 overflow-visible lg:overflow-hidden">
+            <div className="flex-1 flex flex-col min-h-0 w-full lg:h-full">
               {activeMainTab === 'consulta' && (
-                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                <div className="w-full min-h-0 lg:flex-1 lg:h-full animate-in fade-in duration-300">
                   <SeccionConsulta
                     key={pacienteId}
                     expediente={expediente}
@@ -4049,7 +4049,7 @@ const ExpedienteClinico = () => {
                 </div>
               )}
               {activeMainTab === 'antecedentes' && (
-                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                <div className="w-full min-h-0 lg:flex-1 lg:h-full animate-in fade-in duration-300">
                   <SeccionAntecedentes
                     key={pacienteId}
                     expediente={expediente}
@@ -4065,7 +4065,7 @@ const ExpedienteClinico = () => {
                 </div>
               )}
               {activeMainTab === 'resumen' && (
-                <div className="flex-1 h-full w-full animate-in fade-in duration-300">
+                <div className="w-full min-h-0 lg:flex-1 lg:h-full animate-in fade-in duration-300">
                   <SeccionResumen
                     key={pacienteId}
                     expediente={expediente}
@@ -4616,11 +4616,11 @@ const HeaderTab = ({ icon, label, active, visited, onClick, color }) => {
   const c = colors[color] || colors.blue;
   const state = active ? 'active' : visited ? 'visited' : 'idle';
   return (
-    <button onClick={onClick} title={label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${c[state]}`}>
+    <button onClick={onClick} title={label} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-1 sm:flex-none justify-center ${c[state]}`}>
       {state === 'visited' && !active ? (
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
       ) : icon}
-      <span className="hidden md:inline">{label}</span>
+      <span className="text-[10px] sm:text-xs">{label}</span>
     </button>
   );
 };

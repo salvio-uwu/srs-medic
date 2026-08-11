@@ -1726,9 +1726,9 @@ const handleGuardarCita = async (e) => {
       {/* --- FAB TRIGGER MÓVIL --- */}
       <button
         type="button"
-        className="md:hidden fixed bottom-5 left-5 z-[95] w-14 h-14 rounded-2xl bg-slate-900 text-white shadow-xl shadow-slate-900/30 flex items-center justify-center active:scale-90 transition-all"
+        className="md:hidden fixed z-[95] w-14 h-14 rounded-2xl bg-slate-900 text-white shadow-xl shadow-slate-900/30 flex items-center justify-center active:scale-90 transition-all"
         onClick={() => setShowMobileNav(true)}
-        style={{ WebkitTapHighlightColor: 'transparent' }}
+        style={{ WebkitTapHighlightColor: 'transparent', left: 'max(1.25rem, env(safe-area-inset-left))', bottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}
       >
         <MoreHorizontal size={24} />
       </button>
@@ -2339,7 +2339,7 @@ const handleGuardarCita = async (e) => {
                             <label className={labelStyle}>Fecha</label>
                             <input type="date" className={inputStyle} value={nuevaCita.fecha} onChange={e => setNuevaCita({...nuevaCita, fecha: e.target.value})} />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <div>
                                 <label className={labelStyle}>Inicio</label>
                                 <input
@@ -2577,11 +2577,11 @@ const handleGuardarCita = async (e) => {
 
         {/* ═══ MODAL FLOTANTE DETALLE ═══ */}
         {selectedCita && (
-            <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '12px' : '24px' }} onClick={cerrarDetalleCita}>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobile ? '0' : '24px' }} onClick={cerrarDetalleCita}>
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.4)', backdropFilter: 'blur(4px)' }} />
 
                 <div 
-                    style={{ position: 'relative', background: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 12px 40px rgba(0,0,0,.12)', width: '100%', maxWidth: '1080px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalIn .25s ease-out' }}
+                    style={{ position: 'relative', background: '#fff', borderRadius: isMobile ? '16px 16px 0 0' : '8px', border: '1px solid #e5e7eb', boxShadow: '0 12px 40px rgba(0,0,0,.12)', width: '100%', maxWidth: '1080px', maxHeight: isMobile ? '94dvh' : '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalIn .25s ease-out', marginTop: isMobile ? 'auto' : undefined }}
                     onClick={e => e.stopPropagation()}
                 >
                     {/* ─── HEADER ─── */}
@@ -3059,7 +3059,7 @@ const handleGuardarCita = async (e) => {
                             <input type="date" value={reprogramarData.fecha} onChange={e => setReprogramarData(p => ({ ...p, fecha: e.target.value }))}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50"/>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Hora Inicio</label>
                                 <input type="time" value={reprogramarData.hora} onChange={e => setReprogramarData(p => ({ ...p, hora: e.target.value, horaFin: sumarMinutos(e.target.value, INTERVALO_MINUTOS) }))}
@@ -3507,8 +3507,9 @@ const handleGuardarCita = async (e) => {
                                 </p>
                             </div>
                         ) : (
-                            <div className="overflow-x-auto">
-                                <table className="min-w-[1360px] w-full border-collapse text-sm">
+                            <div className="overflow-x-auto -mx-2 px-2">
+                                <p className="sm:hidden text-[10px] text-slate-400 mb-2 px-1">Desliza horizontalmente para ver todos los signos →</p>
+                                <table className="min-w-[720px] md:min-w-[1360px] w-full border-collapse text-sm">
                                     <thead>
                                         <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                                             <th className="px-2 py-2.5 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-200">Hora</th>

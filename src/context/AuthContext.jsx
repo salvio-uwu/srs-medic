@@ -19,6 +19,7 @@ import {
   registrarSalida,
   touchActividad,
 } from '../services/asistenciaService';
+import AuthSplash from '../components/AuthSplash';
 
 const AuthContext = createContext();
 
@@ -37,6 +38,38 @@ export const isProfileHydrated = (user) => {
   return false;
 };
 
+// Cache persistente del perfil (users/{uid}) para hidratar la sesión al
+// instante en recargas, sin esperar el primer onSnapshot de Firestore.
+// Firestore sigue siendo la fuente de verdad: el snapshot lo refresca al llegar.
+const PROFILE_CACHE_KEY = 'srs_auth_profile_cache_v1';
+
+const readProfileCache = () => {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.uid && parsed.profile ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeProfileCache = (uid, profile) => {
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ uid, profile, savedAt: Date.now() }));
+  } catch {
+    // Storage bloqueado (modo privado) o lleno: seguir sin cache.
+  }
+};
+
+const clearProfileCache = () => {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {
+    // noop
+  }
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -53,9 +86,21 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let unsubscribeProfile = null;
     let initialNullTimer = null;
+    let profileReleaseTimer = null;
     // Cache en memoria: onAuthStateChanged puede re-emitir el usuario (refresco de token)
     let lastProfile = null;
     let lastProfileUid = null;
+
+    const clearProfileReleaseTimer = () => {
+      if (profileReleaseTimer) {
+        clearTimeout(profileReleaseTimer);
+        profileReleaseTimer = null;
+      }
+    };
+
+    // Pase lo que pase (auth sin responder, red caída), el splash no puede
+    // ser infinito: a los 8s se libera la UI con el estado que haya.
+    const hardStopTimer = setTimeout(() => setLoading(false), 8000);
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       if (unsubscribeProfile) {
@@ -73,6 +118,7 @@ export const AuthProvider = ({ children }) => {
         if (isIdleExpired(currentUser.uid)) {
           markLogoutReason('idle');
           clearLastActivity(currentUser.uid);
+          clearProfileCache();
           signOut(auth).catch(() => {});
           setUser(null);
           setLoading(false);
@@ -83,7 +129,10 @@ export const AuthProvider = ({ children }) => {
           setLastActivity(currentUser.uid);
         }
 
-        const cachedProfile = lastProfileUid === currentUser.uid ? lastProfile : null;
+        const diskCache = readProfileCache();
+        const cachedProfile =
+          (lastProfileUid === currentUser.uid ? lastProfile : null) ||
+          (diskCache?.uid === currentUser.uid ? diskCache.profile : null);
         setUser(cachedProfile ? { ...currentUser, ...cachedProfile } : currentUser);
 
         if (cachedProfile && isProfileHydrated({ ...currentUser, ...cachedProfile })) {
@@ -91,40 +140,58 @@ export const AuthProvider = ({ children }) => {
         }
 
         const userDocRef = doc(db, 'users', currentUser.uid);
+        // Canal de Firestore atorado (Safari/iOS, red inestable): nunca dejar
+        // el splash infinito. Si el perfil no llega pronto, liberar la UI con
+        // el usuario disponible; el snapshot corrige al conectar.
+        clearProfileReleaseTimer();
+        profileReleaseTimer = setTimeout(() => {
+          profileReleaseTimer = null;
+          setLoading(false);
+        }, 6000);
         unsubscribeProfile = onSnapshot(
           userDocRef,
           (snap) => {
+            clearProfileReleaseTimer();
             const profileData = snap.exists() ? snap.data() : {};
             lastProfile = profileData;
             lastProfileUid = currentUser.uid;
+            writeProfileCache(currentUser.uid, profileData);
             setUser({ ...currentUser, ...profileData });
             setLoading(false);
           },
           (error) => {
+            clearProfileReleaseTimer();
             console.error('Error sincronizando perfil:', error);
             if (lastProfile && lastProfileUid === currentUser.uid) {
               setUser({ ...currentUser, ...lastProfile });
-              setLoading(false);
             }
+            setLoading(false);
           }
         );
         return;
       }
 
-      // Firebase puede emitir null antes de restaurar sesión desde IndexedDB (pestaña nueva)
+      // Firebase puede emitir null antes de restaurar sesión desde IndexedDB
+      // (pestaña nueva). Sin cache local no hay sesión previa en este equipo:
+      // mostrar login casi de inmediato. Con cache, dar un margen corto a la
+      // restauración antes de rendirse (antes eran 5s fijos para todos).
       if (!initialNullTimer) {
+        const graceMs = readProfileCache() ? 1500 : 250;
         initialNullTimer = setTimeout(() => {
           initialNullTimer = null;
           lastProfile = null;
           lastProfileUid = null;
+          clearProfileCache();
           setUser(null);
           setLoading(false);
-        }, 5000);
+        }, graceMs);
       }
     });
 
     return () => {
+      clearTimeout(hardStopTimer);
       if (initialNullTimer) clearTimeout(initialNullTimer);
+      clearProfileReleaseTimer();
       if (unsubscribeProfile) unsubscribeProfile();
       unsubscribeAuth();
     };
@@ -132,6 +199,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(async () => {
     const current = userRef.current;
+    clearProfileCache();
     if (current?.uid) {
       clearLastActivity(current.uid);
       const motivo = (() => {
@@ -286,7 +354,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={{ user, login, logout, loading, cambiarEstadoOperativo }}>
-      {!loading && children}
+      {loading ? <AuthSplash /> : children}
     </AuthContext.Provider>
   );
 };

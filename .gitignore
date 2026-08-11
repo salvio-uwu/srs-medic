@@ -23,4 +23,14 @@ node_modules
 *.sln
 *.sw?
 srs-feacb*.json
+srs-medic-debug.apk
+SRS-Medic.apk
+releases/*.apk
+public/descargas/*.apk
+dist/descargas/*.apk
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/captures/
     

@@ -1,0 +1,2 @@
+# Coloca aquí SRS-Medic.apk (generado con: npm run android:apk)
+# deploy.sh lo copia a dist/descargas/ al publicar.

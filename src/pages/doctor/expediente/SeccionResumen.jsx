@@ -761,14 +761,14 @@ const SeccionResumen = ({
         procesarDocumentoParaPaciente(file);
     };
 
-    const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-full w-full flex flex-col overflow-hidden";
+    const sectionClass = "bg-white p-6 rounded-2xl border border-slate-200 shadow-sm w-full flex flex-col overflow-visible lg:h-full lg:min-h-0 lg:overflow-hidden";
     const unifiedTimeline = buildUnifiedTimeline();
 
   return (
-    <div className="flex-1 flex flex-col h-full w-full overflow-hidden bg-white rounded-2xl shadow-sm border border-slate-200 relative">
+    <div className="flex flex-col w-full min-h-0 overflow-visible bg-white rounded-2xl shadow-sm border border-slate-200 relative lg:flex-1 lg:h-full lg:overflow-hidden">
       
       {/* TABS SUPERIORES */}
-            <div className="flex border-b border-slate-200 bg-white px-6 shrink-0 gap-4 overflow-x-auto w-full items-center">
+            <div className="flex border-b border-slate-200 bg-white px-6 shrink-0 gap-4 overflow-x-auto w-full items-center sticky top-0 z-10 lg:static">
                 <button onClick={() => setActiveResumenTab('consulta_previa')} className={`py-3 px-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-2 shrink-0 ${activeResumenTab === 'consulta_previa' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-blue-700'}`}>
             <History size={16} /> LÍNEA DE TIEMPO
         </button>
@@ -787,13 +787,13 @@ const SeccionResumen = ({
       </div>
 
       {/* ÁREA DE TRABAJO */}
-            <div className="flex-1 p-6 overflow-hidden bg-slate-50/30 w-full flex flex-col">
+            <div className="w-full p-3 sm:p-6 overflow-visible bg-slate-50/30 flex flex-col lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:custom-scrollbar">
         
         {/* --- VISTA 1: HISTORIAL --- */}
         {activeResumenTab === 'consulta_previa' && (
-          <div className="flex h-full w-full gap-6">
+          <div className="flex flex-col lg:flex-row h-full w-full gap-4 lg:gap-6 min-h-0">
             
-            <div className="flex-[3] flex flex-col h-full">
+            <div className="flex-[3] flex flex-col min-h-0 lg:h-full">
                 <div 
                     className={`${sectionClass} relative transition-all duration-200 ${dragOverHistorial ? 'border-2 border-teal-500 shadow-lg shadow-teal-500/20 bg-teal-50/50' : ''}`}
                     onDragOver={handleDragOverHistorial}
@@ -828,7 +828,7 @@ const SeccionResumen = ({
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between mb-4 shrink-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 shrink-0">
                         <div className="flex items-center gap-3">
                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl"><History size={20}/></div>
                             <div>
@@ -948,14 +948,14 @@ const SeccionResumen = ({
             </div>
 
             {/* PANEL DERECHO: NOTAS PERSONALES */}
-            <div className="flex-1 flex flex-col h-full">
+            <div className="flex-1 flex flex-col min-h-[200px] lg:min-h-0 lg:h-full">
                 <div className={sectionClass}>
                     <div className="flex items-center gap-3 mb-4 shrink-0">
                         <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl"><FileText size={20}/></div>
                         <div><h3 className="font-bold text-slate-800 text-lg leading-none">Notas personales</h3><p className="text-xs text-slate-400 mt-1">Privadas y confidenciales</p></div>
                     </div>
                     <textarea 
-                        className="flex-1 w-full p-5 bg-white border-2 border-teal-500/20 rounded-2xl outline-none text-slate-700 text-sm resize-none focus:border-teal-500 transition-all leading-relaxed shadow-sm placeholder:italic placeholder:text-slate-300"
+                        className="flex-1 w-full min-h-[140px] p-4 sm:p-5 bg-white border-2 border-teal-500/20 rounded-2xl outline-none text-slate-700 text-sm resize-none focus:border-teal-500 transition-all leading-relaxed shadow-sm placeholder:italic placeholder:text-slate-300"
                         placeholder="Escribe recordatorios médicos aquí..."
                         value={expediente.resumen.notas_previas}
                         onChange={(e) => updateCampo('resumen.notas_previas', e.target.value)}
@@ -1132,24 +1132,24 @@ const SeccionResumen = ({
                 const tieneGlucosa = cs.consulta?.exploracion?.glucosa?.lista?.length > 0;
 
                 return (
-                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4">
-                    <div className="bg-white w-full max-w-4xl max-h-[92%] rounded-2xl shadow-lg flex flex-col overflow-hidden">
-                <div className="px-8 py-5 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                    <div>
-                        <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{cs.tipoNota || 'Consulta General'}</h2>
-                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2"><Calendar size={14}/> {cs.fechaFormato} <span className="w-1 h-1 bg-slate-300 rounded-full"></span> <Clock size={14}/> {cs.horaFormato}</p>
+                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                    <div className="bg-white w-full max-w-4xl max-h-[94dvh] sm:max-h-[92%] rounded-t-2xl sm:rounded-2xl shadow-lg flex flex-col overflow-hidden">
+                <div className="px-4 sm:px-8 py-4 sm:py-5 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                    <div className="min-w-0">
+                        <h2 className="text-lg sm:text-xl font-black text-slate-800 uppercase tracking-tight truncate">{cs.tipoNota || 'Consulta General'}</h2>
+                        <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-2 flex-wrap"><Calendar size={14}/> {cs.fechaFormato} <span className="w-1 h-1 bg-slate-300 rounded-full"></span> <Clock size={14}/> {cs.horaFormato}</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         {onCargarConsultaHistorica && (
                             <button
                                 onClick={() => {
                                     onCargarConsultaHistorica(cs);
                                     setConsultaSeleccionada(null);
                                 }}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
+                                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
                                 title="Carga esta consulta en el expediente actual sin generar una nueva visita"
                             >
-                                <CheckCircle size={14}/> Cargar consulta
+                                <CheckCircle size={14}/> <span>Cargar</span>
                             </button>
                         )}
                         {onImprimirReceta && diag.tratamiento_lista?.length > 0 && (
@@ -1158,17 +1158,17 @@ const SeccionResumen = ({
                                     onImprimirReceta(cs);
                                     setConsultaSeleccionada(null);
                                 }}
-                                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
+                                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md"
                                 title="Imprime la receta médica con los datos de esta consulta"
                             >
-                                <Printer size={14}/> Imprimir receta
+                                <Printer size={14}/> <span className="hidden sm:inline">Imprimir receta</span>
                             </button>
                         )}
 
-                        <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200"><X size={24}/></button>
+                        <button onClick={() => setConsultaSeleccionada(null)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400 hover:text-red-500 shadow-sm border border-transparent hover:border-slate-200 ml-auto sm:ml-0"><X size={24}/></button>
                     </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-6">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar space-y-6">
 
                     {/* Meta: Costo y Duración */}
                     {(cs.costo || cs.duracionRealMin) && (
@@ -1196,7 +1196,7 @@ const SeccionResumen = ({
                                 {cs.px_info?.es_embarazada && (
                                     <div className="bg-pink-50 border border-pink-200 rounded-xl p-4">
                                         <p className="text-[10px] font-black text-pink-500 uppercase tracking-widest mb-2">Embarazo activo en esta consulta</p>
-                                        <div className="grid grid-cols-3 gap-2">
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                             <div className="text-center">
                                                 <p className="text-[9px] font-black text-pink-400 uppercase">FUM</p>
                                                 <p className="text-xs font-bold text-pink-800">{cs.px_info.fum || '--'}</p>
@@ -1259,11 +1259,11 @@ const SeccionResumen = ({
                     {/* Signos Vitales - Grid completo */}
                     <div>
                         <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Signos Vitales</h4>
-                        <div className="grid grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
                             {vitalesGrid.map((s, i) => (
                                 <div key={i} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
                                     <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{s.l}</p>
-                                    <p className="text-lg font-black text-slate-700">{s.v || '--'} <span className="text-[10px] font-normal text-slate-400">{s.u}</span></p>
+                                    <p className="text-base sm:text-lg font-black text-slate-700">{s.v || '--'} <span className="text-[10px] font-normal text-slate-400">{s.u}</span></p>
                                 </div>
                             ))}
                         </div>
@@ -1273,7 +1273,7 @@ const SeccionResumen = ({
                     {tieneColesterol && (
                         <div>
                             <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Laboratorios</h4>
-                            <div className="grid grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
                                 {[{l:'Triglicéridos', v: cs.consulta.exploracion.colesterol.trigliceridos}, {l:'Colesterol', v: cs.consulta.exploracion.colesterol.colesterol}, {l:'HbA1c', v: cs.consulta.exploracion.colesterol.hba1c}].map((s, i) => s.v ? (
                                     <div key={i} className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-center">
                                         <p className="text-[10px] font-black text-purple-400 uppercase mb-1">{s.l}</p>
