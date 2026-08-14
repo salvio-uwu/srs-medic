@@ -240,6 +240,23 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
     }
     setSaving(true);
 
+    // Caducidad obligatoria cuando hay existencia (>0) — evita "—" en Lomas y otras
+    const faltaCadMat = plantillaMaterial.some((item) => {
+      const cant = sucursalMaterialData[item.id]?.cantidadExistente;
+      const cad = sucursalMaterialData[item.id]?.caducidad;
+      return cant && String(cant).trim() !== '' && Number(cant) > 0 && !cad;
+    });
+    const faltaCadMed = plantillaMedicamento.some((item) => {
+      const cant = sucursalMedicamentoData[item.id]?.cantidadExistente;
+      const cad = sucursalMedicamentoData[item.id]?.caducidad;
+      return cant && String(cant).trim() !== '' && Number(cant) > 0 && !cad;
+    });
+    if (faltaCadMat || faltaCadMed) {
+      showToast('Captura la fecha de caducidad en todos los artículos con existencia.', 'error');
+      setSaving(false);
+      return;
+    }
+
     // Determinar si TODOS los campos están llenos
     const allMatFilled = plantillaMaterial.every(item => sucursalMaterialData[item.id]?.cantidadExistente);
     const allMedFilled = plantillaMedicamento.every(item => sucursalMedicamentoData[item.id]?.cantidadExistente);

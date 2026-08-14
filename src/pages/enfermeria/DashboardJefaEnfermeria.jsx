@@ -162,13 +162,24 @@ const DashboardJefaEnfermeria = () => {
     if (!['aprobado', 'rechazado'].includes(decision)) return;
     if (reg.estadoAprobacion === decision) return;
     const nombre = user?.nombre || user?.displayName || user?.email || 'Jefatura';
+    let comentario = '';
+    if (decision === 'rechazado') {
+      comentario = window.prompt('Motivo / comentario (obligatorio si no se aprueba):', reg.comentarioAprobacion || '') || '';
+      if (!comentario.trim()) {
+        showToast('Indica un comentario para dejarlo pendiente/rechazado.', 'warning');
+        return;
+      }
+    } else {
+      comentario = window.prompt('Comentario opcional de aprobación:', '') || '';
+    }
     setAprobandoId(reg.id);
     try {
       await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
         estadoAprobacion: decision,
         aprobadoPor: user?.uid || user?.id || null,
         aprobadoPorNombre: nombre,
-        aprobadoAt: serverTimestamp()
+        aprobadoAt: serverTimestamp(),
+        comentarioAprobacion: comentario.trim() || null,
       });
 
       let entradaCreada = null;
@@ -205,7 +216,8 @@ const DashboardJefaEnfermeria = () => {
         }
       }
 
-      // Recepción o Salida aprobada genera Entrada en el destino (una sola vez)
+      // Recepción o Salida aprobada genera Entrada en el destino (una sola vez).
+      // Si enfermería ya generó entrada al guardar la Salida, no duplicar.
       const generaEntrada = decision === 'aprobado'
         && !reg.entradaGeneradaId
         && (areaNorm === 'Recepción' || (areaNorm === 'Salida' && (det.sucursalDestino || '').trim()));
@@ -234,6 +246,8 @@ const DashboardJefaEnfermeria = () => {
             tipo_movimiento: 'Entrada',
             criterio_empaque: !!det.criterio_empaque,
             criterio_etiqueta: !!det.criterio_etiqueta,
+            presentacion: det.presentacion || '',
+            forma: det.forma || '',
             sucursalOrigen,
             sucursalDestino,
             origenRecepcionId: reg.id
@@ -254,6 +268,7 @@ const DashboardJefaEnfermeria = () => {
                 estadoAprobacion: decision,
                 aprobadoPor: user?.uid || user?.id || null,
                 aprobadoPorNombre: nombre,
+                comentarioAprobacion: comentario.trim() || null,
                 stockDescontado: salidaDescontada || b.stockDescontado || false,
                 entradaGeneradaId: entradaCreada?.id || b.entradaGeneradaId || null
               }
@@ -266,7 +281,9 @@ const DashboardJefaEnfermeria = () => {
         ? 'Recepción aprobada. Se generó la Entrada pendiente de inventario.'
         : areaNorm === 'Salida' && entradaCreada
           ? `Traspaso aprobado: ${salidaDescontada ? 'stock descontado del origen y ' : ''}Entrada generada en ${det.sucursalDestino}.`
-          : 'Movimiento aprobado.';
+          : reg.entradaGeneradaId && areaNorm === 'Salida'
+            ? 'Salida aprobada (la entrada en destino ya existía).'
+            : 'Movimiento aprobado.';
 
       showToast(
         decision === 'aprobado' ? successMsg : 'Movimiento no aprobado.',
@@ -349,13 +366,63 @@ const DashboardJefaEnfermeria = () => {
         integradoPorNombre: nombre
       });
 
+      // Sincronizar caducidades_almacen por sucursal destino
+      try {
+        const caducidadRaw = det.caducidad || '';
+        const mesCaducidad = String(caducidadRaw).slice(0, 7);
+        if (mesCaducidad && /^\d{4}-\d{2}$/.test(mesCaducidad) && sucursalDestino) {
+          const cadSnap = await getDocs(query(
+            collection(db, 'caducidades_almacen'),
+            where('sucursal', '==', sucursalDestino),
+            where('mesCaducidad', '==', mesCaducidad)
+          ));
+          const match = cadSnap.docs.find((d) => {
+            const data = d.data() || {};
+            if (data.eliminado) return false;
+            return String(data.lote || '') === String(det.lote || '')
+              && (
+                (det.medicamentoId && data.medicamentoId === det.medicamentoId)
+                || String(data.medicamento || '').toUpperCase() === String(det.compuesto || '').toUpperCase()
+              );
+          });
+          if (match) {
+            await updateDoc(match.ref, {
+              cantidad: (Number(match.data().cantidad) || 0) + cantidad,
+              presentacion: det.presentacion || match.data().presentacion || '',
+              forma: det.forma || match.data().forma || '',
+              actualizadoEn: serverTimestamp(),
+              actualizadoPor: nombre,
+            });
+          } else {
+            await addDoc(collection(db, 'caducidades_almacen'), {
+              codigo: det.numeroAcomodo || '',
+              medicamento: String(det.compuesto || '').toUpperCase(),
+              presentacion: det.presentacion || '',
+              forma: det.forma || '',
+              medicamentoId: det.medicamentoId || null,
+              cantidad,
+              lote: det.lote || '',
+              mesCaducidad,
+              mesLabel: mesCaducidad,
+              sucursal: sucursalDestino,
+              responsableNombre: nombre,
+              responsableId: user?.uid || null,
+              creadoEn: serverTimestamp(),
+              origenBitacoraId: reg.id,
+            });
+          }
+        }
+      } catch (cadErr) {
+        console.warn('No se pudo sincronizar caducidades_almacen', cadErr);
+      }
+
       setBitacorasMes((prev) => prev.map((b) => (
         b.id === reg.id
           ? { ...b, estadoInventario: 'integrado', integradoPorNombre: nombre }
           : b
       )));
 
-      showToast('Entrada aceptada e integrada al inventario.', 'success');
+      showToast('Entrada aceptada e integrada al inventario y caducidades.', 'success');
     } catch (err) {
       console.error(err);
       showToast('No se pudo integrar al inventario.', 'error');
@@ -537,7 +604,11 @@ const DashboardJefaEnfermeria = () => {
 
   const bitacorasFiltradas = useMemo(() => {
     if (!sucursalFiltro) return bitacorasMes;
-    return bitacorasMes.filter(b => b.sucursal === sucursalFiltro);
+    return bitacorasMes.filter((b) => {
+      if (b.sucursal === sucursalFiltro) return true;
+      const d = b.detalles || {};
+      return d.sucursalDestino === sucursalFiltro || d.sucursalOrigen === sucursalFiltro;
+    });
   }, [bitacorasMes, sucursalFiltro]);
 
   const meta = VIEW_META[activeView] || VIEW_META.dashboard;
@@ -1156,7 +1227,7 @@ const DashboardJefaEnfermeria = () => {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                {(activeView === 'temperaturas' || activeView === 'cloro' || activeView === 'limpieza') && catalogoSucursalesJefa.length > 0 && (
+                {(activeView === 'temperaturas' || activeView === 'cloro' || activeView === 'limpieza' || activeView === 'recepcion' || activeView === 'es') && catalogoSucursalesJefa.length > 0 && (
                   <select
                     value={sucursalFiltro}
                     onChange={e => setSucursalFiltro(e.target.value)}
@@ -2095,11 +2166,29 @@ const DashboardJefaEnfermeria = () => {
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Físico</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-20">Pedido</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-24" title="Existencia actual en inventario de la sucursal">Exis. inv.</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Proveedor">Prov</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Traspaso">Trasp</th>
+                                                      <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Pendiente">Pend</th>
                                                     </tr>
                                                   </thead>
                                                   <tbody>
                                                     {filas.map((fila, idx) => {
                                                       const exisInv = existenciaDeInsumo(fila.insumo, pedido.sucursal);
+                                                      const setResolucion = async (valor) => {
+                                                        const nextFilas = filas.map((f, i) => i === idx ? { ...f, resolucion: valor } : f);
+                                                        try {
+                                                          await updateDoc(doc(db, 'bitacoras_operativas', pedido.id), {
+                                                            'detalles.filas': nextFilas,
+                                                          });
+                                                          setPedidosSucursales((prev) => prev.map((p) => (
+                                                            p.id === pedido.id
+                                                              ? { ...p, detalles: { ...(p.detalles || {}), filas: nextFilas } }
+                                                              : p
+                                                          )));
+                                                        } catch {
+                                                          showToast('No se pudo guardar la resolución del insumo.', 'error');
+                                                        }
+                                                      };
                                                       return (
                                                       <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
                                                         <td className="px-3 py-1.5 font-semibold text-slate-800 text-[12px] border-b border-slate-50">
@@ -2113,6 +2202,16 @@ const DashboardJefaEnfermeria = () => {
                                                         }`}>
                                                           {exisInv === null ? 'S/D' : exisInv}
                                                         </td>
+                                                        {['proveedor', 'traspaso', 'pendiente'].map((opt) => (
+                                                          <td key={opt} className="px-2 py-1.5 text-center border-b border-slate-50">
+                                                            <input
+                                                              type="checkbox"
+                                                              className="w-4 h-4 accent-slate-900"
+                                                              checked={fila.resolucion === opt}
+                                                              onChange={() => setResolucion(fila.resolucion === opt ? null : opt)}
+                                                            />
+                                                          </td>
+                                                        ))}
                                                       </tr>
                                                       );
                                                     })}

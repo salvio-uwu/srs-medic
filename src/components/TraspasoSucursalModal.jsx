@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  collection, query, where, getDocs, addDoc, updateDoc, doc,
+  collection, query, where, getDocs, getDoc, addDoc, updateDoc, doc,
   serverTimestamp, increment
 } from 'firebase/firestore';
 import { X, Loader2, ArrowLeftRight, AlertTriangle } from 'lucide-react';
@@ -173,13 +173,60 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
       });
       await updateDoc(salidaRef, { entradaGeneradaId: entradaRef.id });
 
+      // Mover registro de caducidades_almacen a la sucursal destino (si viene de esa vista)
+      if (item.caducidadDocId) {
+        try {
+          const cadRef = doc(db, 'caducidades_almacen', item.caducidadDocId);
+          const existing = await getDoc(cadRef);
+          if (existing.exists()) {
+            const data = existing.data() || {};
+            const cantOrigen = Number(data.cantidad) || 0;
+            if (cant >= cantOrigen) {
+              await updateDoc(cadRef, {
+                eliminado: true,
+                eliminadoPor: nombreUsuario,
+                eliminadoPorId: user?.uid || null,
+                eliminadoPorRol: user?.rol || 'jefa_enfermeria',
+                eliminadoEn: serverTimestamp(),
+                motivoBaja: `Traspaso completo a ${destino}`,
+              });
+            } else {
+              await updateDoc(cadRef, {
+                cantidad: cantOrigen - cant,
+                actualizadoEn: serverTimestamp(),
+                actualizadoPor: nombreUsuario,
+              });
+            }
+            await addDoc(collection(db, 'caducidades_almacen'), {
+              codigo: data.codigo || item.numeroAcomodo || '',
+              medicamento: data.medicamento || item.nombre || '',
+              presentacion: data.presentacion || item.presentacion || '',
+              forma: data.forma || item.forma || '',
+              medicamentoId: data.medicamentoId || item.medicamentoId || null,
+              cantidad: cant,
+              lote: data.lote || item.lote || '',
+              mesCaducidad: data.mesCaducidad || String(item.caducidad || '').slice(0, 7),
+              mesLabel: data.mesLabel || '',
+              sucursal: destino,
+              responsableNombre: nombreUsuario,
+              responsableId: user?.uid || null,
+              creadoEn: serverTimestamp(),
+              origenTraspasoId: item.caducidadDocId,
+            });
+          }
+        } catch (cadErr) {
+          console.error('No se pudo mover caducidades_almacen', cadErr);
+        }
+      }
+
       onDone?.({
         cantidad: cant,
         destino,
         stockDescontado,
         inventarioId: item.inventarioId || null,
+        caducidadDocId: item.caducidadDocId || null,
         msg: stockDescontado
-          ? `Traspaso creado: −${cant} en ${item.sucursalOrigen}, Entrada pendiente en ${destino}.`
+          ? `Traspaso creado: −${cant} en ${item.sucursalOrigen}, Entrada pendiente en ${destino}${item.caducidadDocId ? ' (caducidades actualizadas)' : ''}.`
           : `Traspaso creado hacia ${destino}. No se encontró stock en ${item.sucursalOrigen} para descontar.`
       });
       onClose();

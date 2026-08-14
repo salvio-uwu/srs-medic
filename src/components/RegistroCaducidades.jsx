@@ -106,20 +106,26 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     setLoading(false);
   };
 
-  // ─── Eliminar (soft delete para auditoría) ───
+  // ─── Baja (soft delete — solo para medicamentos que no se pudieron vender, etc.) ───
   const handleEliminar = async (id) => {
+    const motivo = window.prompt('Motivo de baja (caducado, no se pudo vender, merma, etc.):', '') || '';
+    if (!motivo.trim()) {
+      showToast('Indica el motivo de la baja.', 'error');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'caducidades_almacen', id), {
         eliminado: true,
         eliminadoPor: user?.nombre || 'Sin nombre',
         eliminadoPorId: user?.uid || '',
         eliminadoPorRol: user?.rol || '',
-        eliminadoEn: serverTimestamp()
+        eliminadoEn: serverTimestamp(),
+        motivoBaja: motivo.trim(),
       });
-      showToast('Registro eliminado.');
+      showToast('Medicamento dado de baja.');
       setConfirmDelete(null);
     } catch {
-      showToast('Error al eliminar.', 'error');
+      showToast('Error al dar de baja.', 'error');
     }
   };
 
@@ -169,10 +175,12 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
   const handlePrint = () => {
     const rows = registros.map((r, i) => `
       <tr style="${i % 2 === 0 ? '' : 'background:#f8fafc'}">
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.codigo}</td>
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.medicamento}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.codigo || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.medicamento || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.presentacion || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.forma || ''}</td>
         <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;text-align:center;font-weight:700">${r.cantidad}</td>
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.lote}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.lote || ''}</td>
       </tr>
     `).join('');
 
@@ -187,7 +195,14 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
         <p style="margin:4px 0 0;font-size:13px;color:#64748b;font-weight:600">${formatDateMX(mesActivo).toUpperCase()} — ${sucursalActiva.toUpperCase()}</p>
       </div>
       <table>
-        <thead><tr><th style="text-align:left">Código</th><th style="text-align:left">Medicamento</th><th style="text-align:center">Cantidad</th><th style="text-align:left">Lote</th></tr></thead>
+        <thead><tr>
+          <th style="text-align:left">Código</th>
+          <th style="text-align:left">Compuesto</th>
+          <th style="text-align:left">Presentación</th>
+          <th style="text-align:left">Forma farm.</th>
+          <th style="text-align:center">Cantidad</th>
+          <th style="text-align:left">Lote</th>
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <p style="margin-top:16px;font-size:10px;color:#94a3b8;text-align:right">Impreso: ${new Date().toLocaleString('es-MX')}</p>

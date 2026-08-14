@@ -3,12 +3,13 @@ import {
   X, Save, Loader2, Thermometer, Droplet, 
   Sparkles, Package, AlertCircle, ShieldAlert,
   ScanText, Search, CheckCircle2, Activity, MapPin, ChevronDown, ChevronUp, Check, ClipboardList,
-  Menu, Printer, Calendar, CalendarX
+  Menu, Printer, Calendar, CalendarX, Plus, Trash2, Bell
 } from 'lucide-react';
 import { db, functions } from '../config/firebase'; 
-import { collection, addDoc, serverTimestamp, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, serverTimestamp, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useSessionLocation } from '../context/SessionLocationContext';
+import { useAuth } from '../context/AuthContext';
 import BitacoraCarroRojoEnfermeria from '../pages/enfermeria/BitacoraCarroRojoEnfermeria';
 import BitacoraPacientesEnfermeria from './BitacoraPacientesEnfermeria';
 import RegistroKrit from './RegistroKrit';
@@ -191,6 +192,7 @@ const MOVIMIENTOS_FARMACIA = ['Recepción', 'Entrada', 'Salida'];
    COMPONENTE PRINCIPAL
    ═══════════════════════════════════════════════════════════════ */
 const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', standalone = false }) => {
+  const { user } = useAuth();
   const { sessionSucursal } = useSessionLocation();
   const [loading, setLoading] = useState(false);
   const [tipoRegistro, setTipoRegistro] = useState('farmacia');
@@ -238,6 +240,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     observaciones: '',
     criterio_empaque: true,
     criterio_etiqueta: true,
+    aprobadoMercancia: null, // 'si' | 'no' | null (solo Recepción)
     medicamentoId: '',
     numeroAcomodo: '',
     marca: '',
@@ -247,6 +250,12 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     sucursalDestino: ''
   };
   const [formFarmacia, setFormFarmacia] = useState(formFarmaciaInicial);
+  const [loteFarmaciaItems, setLoteFarmaciaItems] = useState([]);
+  const [cabeceraFarmaciaCongelada, setCabeceraFarmaciaCongelada] = useState(false);
+  const [historialFarmacia, setHistorialFarmacia] = useState([]);
+  const [historialPedidos, setHistorialPedidos] = useState([]);
+  const [verHistorialFarmacia, setVerHistorialFarmacia] = useState(false);
+  const [verHistorialPedidos, setVerHistorialPedidos] = useState(false);
   const [pedidoMedicamentoRows, setPedidoMedicamentoRows] = useState([]);
   const [pedidoMedicamentoSearch, setPedidoMedicamentoSearch] = useState('');
 
@@ -548,6 +557,275 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     }
   };
 
+  // ─── FARMACIA: lote de ítems + cabecera congelada ───
+  const limpiarCamposItemFarmacia = () => {
+    setFormFarmacia((prev) => ({
+      ...prev,
+      compuesto: '',
+      presentacion: '',
+      forma: '',
+      lote: '',
+      caducidad: '',
+      cantidad: '',
+      observaciones: '',
+      medicamentoId: '',
+      numeroAcomodo: '',
+      marca: '',
+      laboratorio: '',
+      criterio_empaque: true,
+      criterio_etiqueta: true,
+      aprobadoMercancia: normalizeMovimientoArea(prev.tipo_movimiento) === 'Recepción' ? prev.aprobadoMercancia : null,
+    }));
+  };
+
+  const validarCabeceraFarmacia = () => {
+    const movimiento = normalizeMovimientoArea(formFarmacia.tipo_movimiento);
+    const sucursalDestino = (formFarmacia.sucursalDestino || sucursalActiva || '').trim();
+    const sucursalOrigen = (formFarmacia.sucursalOrigen || '').trim();
+    if (!sucursalDestino) return 'Indica la sucursal destino del movimiento.';
+    if (movimiento === 'Recepción' && !(formFarmacia.proveedor || '').trim()) {
+      return 'Indica de quién/de dónde se recibe (proveedor u origen).';
+    }
+    if ((movimiento === 'Entrada' || movimiento === 'Salida') && !sucursalOrigen) {
+      return movimiento === 'Entrada' ? 'Indica de dónde entra el insumo.' : 'Indica de dónde sale el insumo.';
+    }
+    if (movimiento === 'Recepción' && formFarmacia.aprobadoMercancia !== 'si' && formFarmacia.aprobadoMercancia !== 'no') {
+      return 'Indica si la mercancía queda Aprobada: SI o NO.';
+    }
+    return null;
+  };
+
+  const validarItemFarmacia = () => {
+    if (!formFarmacia.compuesto || !formFarmacia.cantidad || !formFarmacia.caducidad || !formFarmacia.lote) {
+      return 'Llene Compuesto, Cantidad, Lote y Caducidad.';
+    }
+    if (!formFarmacia.medicamentoId) {
+      return 'Selecciona el medicamento desde el catálogo admin (elige una sugerencia).';
+    }
+    return null;
+  };
+
+  const buildFarmaciaDetalles = (itemOverride = null) => {
+    const src = itemOverride || formFarmacia;
+    const movimiento = normalizeMovimientoArea(src.tipo_movimiento || formFarmacia.tipo_movimiento);
+    const sucursalDestino = (src.sucursalDestino || formFarmacia.sucursalDestino || sucursalActiva || '').trim();
+    const sucursalOrigen = (src.sucursalOrigen || formFarmacia.sucursalOrigen || '').trim();
+    const proveedor = (src.proveedor || formFarmacia.proveedor || '').trim();
+    return {
+      tipo_movimiento: movimiento,
+      factura: (src.factura ?? formFarmacia.factura) || '',
+      compuesto: src.compuesto || '',
+      presentacion: src.presentacion || '',
+      forma: src.forma || '',
+      lote: src.lote || '',
+      caducidad: src.caducidad || '',
+      cantidad: src.cantidad || '',
+      observaciones: src.observaciones || '',
+      criterio_empaque: !!src.criterio_empaque,
+      criterio_etiqueta: !!src.criterio_etiqueta,
+      aprobadoMercancia: movimiento === 'Recepción' ? (src.aprobadoMercancia ?? formFarmacia.aprobadoMercancia) : null,
+      medicamentoId: src.medicamentoId || '',
+      numeroAcomodo: src.numeroAcomodo || '',
+      marca: src.marca || '',
+      laboratorio: src.laboratorio || '',
+      sucursalOrigen: movimiento === 'Recepción' ? proveedor : sucursalOrigen,
+      sucursalDestino,
+      proveedor,
+    };
+  };
+
+  const handleAgregarItemFarmacia = () => {
+    if (!sucursalActiva) return showToast('Seleccione una sucursal antes de agregar.', 'error');
+    const errCab = validarCabeceraFarmacia();
+    if (errCab) return showToast(errCab, 'error');
+    const errItem = validarItemFarmacia();
+    if (errItem) return showToast(errItem, 'error');
+    const detalles = buildFarmaciaDetalles();
+    setLoteFarmaciaItems((prev) => [...prev, { ...detalles, _key: `${Date.now()}_${prev.length}` }]);
+    setCabeceraFarmaciaCongelada(true);
+    limpiarCamposItemFarmacia();
+    showToast('Ítem agregado al lote. Puedes seguir agregando o guardar todo.', 'success');
+  };
+
+  const handleQuitarItemLote = (key) => {
+    setLoteFarmaciaItems((prev) => {
+      const next = prev.filter((i) => i._key !== key);
+      if (next.length === 0) setCabeceraFarmaciaCongelada(false);
+      return next;
+    });
+  };
+
+  const guardarDocFarmacia = async (detalles) => {
+    const movimiento = normalizeMovimientoArea(detalles.tipo_movimiento);
+    const sucursalDestino = (detalles.sucursalDestino || '').trim();
+    const aprobadoCaptura = detalles.aprobadoMercancia === 'si';
+    const rechazoCaptura = detalles.aprobadoMercancia === 'no';
+
+    const datosGuardar = {
+      fecha: serverTimestamp(),
+      fechaString: new Date().toLocaleDateString('en-CA'),
+      responsableNombre: enfermeraNombre,
+      sucursal: sucursalDestino || sucursalActiva || sucursal || 'Sin asignar',
+      estado: 'completado',
+      tipo: 'Farmacia',
+      area: movimiento,
+      detalles,
+      estadoAprobacion: rechazoCaptura ? 'rechazado' : 'pendiente',
+      estadoInventario: movimiento === 'Entrada' ? 'pendiente' : null,
+      aprobadoPor: rechazoCaptura ? (user?.uid || null) : null,
+      aprobadoPorNombre: rechazoCaptura ? enfermeraNombre : null,
+      aprobadoAt: rechazoCaptura ? serverTimestamp() : null,
+      comentarioAprobacion: rechazoCaptura ? 'Mercancía marcada NO aprobada en captura de recepción.' : null,
+    };
+
+    const refSalida = await addDoc(collection(db, 'bitacoras_operativas'), datosGuardar);
+
+    // Salida: generar Entrada pendiente en destino para que enfermería revise/apruebe
+    if (movimiento === 'Salida' && (detalles.sucursalDestino || '').trim() && !rechazoCaptura) {
+      const destino = detalles.sucursalDestino.trim();
+      const origen = (detalles.sucursalOrigen || sucursalActiva || '').trim();
+      const refEntrada = await addDoc(collection(db, 'bitacoras_operativas'), {
+        fecha: serverTimestamp(),
+        fechaString: new Date().toLocaleDateString('en-CA'),
+        responsableNombre: enfermeraNombre,
+        sucursal: destino,
+        estado: 'completado',
+        tipo: 'Farmacia',
+        area: 'Entrada',
+        origenRecepcionId: refSalida.id,
+        estadoAprobacion: 'pendiente',
+        estadoInventario: 'pendiente',
+        pendienteRecepcionEnfermeria: true,
+        aprobadoPor: null,
+        aprobadoPorNombre: null,
+        aprobadoAt: null,
+        comentarioAprobacion: null,
+        detalles: {
+          ...detalles,
+          tipo_movimiento: 'Entrada',
+          sucursalOrigen: origen,
+          sucursalDestino: destino,
+          origenRecepcionId: refSalida.id,
+          observaciones: `${detalles.observaciones || ''} [Traspaso desde ${origen}]`.trim(),
+        },
+      });
+      await updateDoc(refSalida, { entradaGeneradaId: refEntrada.id });
+    }
+
+    return { id: refSalida.id, aprobadoCaptura };
+  };
+
+  // Historial farmacia / pedidos para enfermería (ver + imprimir)
+  useEffect(() => {
+    if (!sucursalActiva) return;
+    if (tipoRegistro !== 'farmacia' && tipoRegistro !== 'pedido_medicamento') return;
+    const mes = new Date().toLocaleDateString('en-CA').slice(0, 7);
+    const firstDay = `${mes}-01`;
+    const [y, m] = mes.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).toLocaleDateString('en-CA');
+
+    if (tipoRegistro === 'farmacia') {
+      const qF = query(
+        collection(db, 'bitacoras_operativas'),
+        where('tipo', '==', 'Farmacia'),
+        where('fechaString', '>=', firstDay),
+        where('fechaString', '<=', lastDay)
+      );
+      const unsub = onSnapshot(qF, (snap) => {
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((r) => {
+            const suc = r.sucursal || '';
+            const dest = r.detalles?.sucursalDestino || '';
+            const ori = r.detalles?.sucursalOrigen || '';
+            return suc === sucursalActiva || dest === sucursalActiva || ori === sucursalActiva;
+          })
+          .sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
+        setHistorialFarmacia(rows);
+      }, () => setHistorialFarmacia([]));
+      return () => unsub();
+    }
+
+    const qP = query(
+      collection(db, 'bitacoras_operativas'),
+      where('tipo', '==', 'Pedido de medicamento'),
+      where('fechaString', '>=', firstDay),
+      where('fechaString', '<=', lastDay)
+    );
+    const unsubP = onSnapshot(qP, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((r) => !sucursalActiva || r.sucursal === sucursalActiva)
+        .sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
+      setHistorialPedidos(rows);
+    }, () => setHistorialPedidos([]));
+    return () => unsubP();
+  }, [sucursalActiva, tipoRegistro]);
+
+  const handlePrintFarmaciaHistorial = () => {
+    const rows = historialFarmacia.map((r, i) => {
+      const d = r.detalles || {};
+      const ap = r.estadoAprobacion === 'aprobado' ? 'SI' : r.estadoAprobacion === 'rechazado' ? 'NO' : 'PENDIENTE';
+      return `<tr style="${i % 2 ? 'background:#f8fafc' : ''}">
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.fechaString || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.area || d.tipo_movimiento || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.factura || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.compuesto || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.presentacion || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.forma || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.lote || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;text-align:center">${d.cantidad || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.caducidad || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;font-weight:700">${ap}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.responsableNombre || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:10px">${r.comentarioAprobacion || d.observaciones || ''}</td>
+      </tr>`;
+    }).join('');
+    const w = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800');
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html><head><title>Bitácoras farmacia</title>
+      <style>body{font-family:system-ui,sans-serif;padding:16px}table{width:100%;border-collapse:collapse}
+      th{background:#1e293b;color:#fff;padding:6px 8px;font-size:10px;text-transform:uppercase}@media print{button{display:none}}</style></head><body>
+      <h2 style="margin:0 0 4px">Bitácoras recepción / entradas / salidas</h2>
+      <p style="margin:0 0 12px;color:#64748b;font-size:13px">${sucursalActiva || ''} — ${new Date().toLocaleDateString('es-MX')}</p>
+      <table><thead><tr>
+        <th>Fecha</th><th>Tipo</th><th>Factura</th><th>Compuesto</th><th>Presentación</th><th>Forma</th>
+        <th>Lote</th><th>Cant.</th><th>Caducidad</th><th>Aprobado</th><th>Realizó</th><th>Obs.</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="12" style="padding:12px;text-align:center">Sin registros</td></tr>'}</tbody></table>
+      <div style="text-align:center;margin-top:16px"><button onclick="window.print()" style="background:#1e293b;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:700">Imprimir</button></div>
+      </body></html>`);
+    w.document.close();
+  };
+
+  const handleAprobarEntradaEnfermeria = async (reg, decision, comentario = '') => {
+    if (!reg?.id) return;
+    try {
+      await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+        estadoAprobacion: decision,
+        aprobadoPor: user?.uid || null,
+        aprobadoPorNombre: enfermeraNombre,
+        aprobadoAt: serverTimestamp(),
+        comentarioAprobacion: comentario || (decision === 'rechazado' ? 'Pendiente / incompleto según enfermería' : 'Recibido completo'),
+        pendienteRecepcionEnfermeria: false,
+      });
+      showToast(decision === 'aprobado' ? 'Entrada aceptada.' : 'Entrada marcada pendiente/rechazada.', decision === 'aprobado' ? 'success' : 'warning');
+    } catch {
+      showToast('No se pudo actualizar la entrada.', 'error');
+    }
+  };
+
+  // Alerta de horario faltante temp/cloro
+  const alertaHorarioFaltante = useMemo(() => {
+    if (!sucursalActiva) return null;
+    const hora = new Date().getHours();
+    const msgs = [];
+    if (hora >= 9 && hora < 16 && !progresoHoy.temp_8) msgs.push('Falta temperatura del turno 8:00 a.m.');
+    if (hora >= 17 && hora < 22 && !progresoHoy.temp_16) msgs.push('Falta temperatura del turno 4:00 p.m.');
+    if ((hora >= 22 || hora < 6) && !progresoHoy.temp_22) msgs.push('Falta temperatura del turno 10:00 p.m.');
+    if (hora >= 10 && !progresoHoy.cloro_1) msgs.push('Falta registro de Cloro y PH de hoy.');
+    return msgs.length ? msgs : null;
+  }, [sucursalActiva, progresoHoy]);
+
   // ─── GUARDAR ───
   const handleGuardar = async () => {
     if (!sucursalActiva) { showToast("Seleccione una sucursal antes de guardar.", "error"); return; }
@@ -571,49 +849,38 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         if (!Object.values(formLimpieza.tareas).some(v => v === true)) { setLoading(false); return showToast("Marque al menos una tarea realizada.", "error"); }
         datosGuardar = { ...datosGuardar, tipo: 'Limpieza', area: formLimpieza.area, detalles: formLimpieza.tareas };
       } else if (tipoRegistro === 'farmacia') {
-        if (!formFarmacia.compuesto || !formFarmacia.cantidad || !formFarmacia.caducidad || !formFarmacia.lote) { setLoading(false); return showToast("Llene Compuesto, Cantidad, Lote y Caducidad.", "error"); }
-        if (!formFarmacia.medicamentoId) {
+        // Guardar lote completo (ítems agregados + ítem actual si está completo)
+        const errCab = validarCabeceraFarmacia();
+        if (errCab) { setLoading(false); return showToast(errCab, 'error'); }
+
+        const items = [...loteFarmaciaItems];
+        const errItem = validarItemFarmacia();
+        if (!errItem) {
+          items.push({ ...buildFarmaciaDetalles(), _key: `cur_${items.length}` });
+        } else if (items.length === 0) {
           setLoading(false);
-          return showToast('Selecciona el medicamento desde el catálogo admin (elige una sugerencia).', 'error');
-        }
-        const movimiento = normalizeMovimientoArea(formFarmacia.tipo_movimiento);
-        const sucursalDestino = (formFarmacia.sucursalDestino || sucursalActiva || '').trim();
-        const sucursalOrigen = (formFarmacia.sucursalOrigen || '').trim();
-        if (!sucursalDestino) {
-          setLoading(false);
-          return showToast('Indica la sucursal destino del movimiento.', 'error');
-        }
-        if (movimiento === 'Recepción' && !(formFarmacia.proveedor || '').trim()) {
-          setLoading(false);
-          return showToast('Indica de quién/de dónde se recibe (proveedor u origen).', 'error');
-        }
-        if ((movimiento === 'Entrada' || movimiento === 'Salida') && !sucursalOrigen) {
-          setLoading(false);
-          return showToast(movimiento === 'Entrada' ? 'Indica de dónde entra el insumo.' : 'Indica de dónde sale el insumo.', 'error');
+          return showToast(errItem, 'error');
         }
 
-        const detalles = {
-          ...formFarmacia,
-          tipo_movimiento: movimiento,
-          criterio_empaque: !!formFarmacia.criterio_empaque,
-          criterio_etiqueta: !!formFarmacia.criterio_etiqueta,
-          sucursalOrigen: movimiento === 'Recepción' ? (formFarmacia.proveedor || '').trim() : sucursalOrigen,
-          sucursalDestino,
-          proveedor: (formFarmacia.proveedor || '').trim()
-        };
-
-        datosGuardar = {
-          ...datosGuardar,
-          tipo: 'Farmacia',
-          area: movimiento,
-          sucursal: sucursalDestino || sucursalActiva || sucursal || 'Sin asignar',
-          detalles,
-          estadoAprobacion: 'pendiente',
-          estadoInventario: movimiento === 'Entrada' ? 'pendiente' : null,
-          aprobadoPor: null,
-          aprobadoPorNombre: null,
-          aprobadoAt: null
-        };
+        for (const item of items) {
+          const { _key, ...det } = item;
+          await guardarDocFarmacia(det);
+        }
+        showToast(
+          items.length > 1
+            ? `${items.length} movimientos guardados en el lote.`
+            : 'Registro guardado exitosamente.',
+          'success'
+        );
+        setLoteFarmaciaItems([]);
+        setCabeceraFarmaciaCongelada(false);
+        setFormFarmacia({
+          ...formFarmaciaInicial,
+          tipo_movimiento: formFarmacia.tipo_movimiento,
+          sucursalDestino: formFarmacia.sucursalDestino || sucursalActiva || '',
+        });
+        setLoading(false);
+        return;
       } else if (tipoRegistro === 'pedido_medicamento') {
         if (pedidoMedicamentoRows.length === 0) {
           setLoading(false);
@@ -628,7 +895,8 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
           insumo: row.nombre,
           categoria: row.categoria || '',
           fisico: String(row.fisico || '').trim(),
-          pedido: String(row.pedido || '').trim()
+          pedido: String(row.pedido || '').trim(),
+          resolucion: null, // proveedor | traspaso | pendiente (lo marca jefatura)
         }));
 
         datosGuardar = {
@@ -1033,6 +1301,16 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
             {/* ════ FARMACIA ════ */}
             {tipoRegistro === 'farmacia' && (
               <div className="flex flex-col gap-5 flex-1 max-w-5xl w-full mx-auto">
+                {alertaHorarioFaltante && (
+                  <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800">
+                    <Bell size={16} className="shrink-0 mt-0.5"/>
+                    <div className="text-[12px] font-semibold space-y-0.5">
+                      <p className="font-black uppercase tracking-wider text-[10px] text-amber-600">Recordatorio de bitácora</p>
+                      {alertaHorarioFaltante.map((m) => <p key={m}>{m}</p>)}
+                    </div>
+                  </div>
+                )}
+
                 {/* Tipo movimiento + IA Scanner */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                   <div className="flex gap-1 p-1 bg-white rounded-xl border border-slate-200 shrink-0">
@@ -1040,15 +1318,21 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       <button
                         key={mov}
                         type="button"
-                        onClick={() => setFormFarmacia({
-                          ...formFarmacia,
-                          tipo_movimiento: mov,
-                          sucursalDestino: formFarmacia.sucursalDestino || sucursalActiva || '',
-                          sucursalOrigen: mov === 'Recepción' ? '' : formFarmacia.sucursalOrigen
-                        })}
+                        disabled={cabeceraFarmaciaCongelada}
+                        onClick={() => {
+                          if (cabeceraFarmaciaCongelada) return;
+                          setFormFarmacia({
+                            ...formFarmaciaInicial,
+                            tipo_movimiento: mov,
+                            sucursalDestino: formFarmacia.sucursalDestino || sucursalActiva || '',
+                            factura: formFarmacia.factura,
+                            proveedor: mov === 'Recepción' ? formFarmacia.proveedor : '',
+                            sucursalOrigen: mov === 'Recepción' ? '' : formFarmacia.sucursalOrigen,
+                          });
+                        }}
                         className={`whitespace-nowrap px-5 py-2.5 rounded-lg text-[13px] font-bold transition-all ${
                           normalizeMovimientoArea(formFarmacia.tipo_movimiento) === mov ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
-                        }`}
+                        } ${cabeceraFarmaciaCongelada ? 'opacity-60 cursor-not-allowed' : ''}`}
                       >
                         {mov}
                       </button>
@@ -1058,7 +1342,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     <Sparkles size={18} className="text-slate-500 shrink-0"/>
                     <span className="text-[13px] font-semibold text-slate-700">Lectura IA</span>
                     <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={procesarFacturaIA}/>
-                    <button type="button" onClick={() => fileInputRef.current.click()} disabled={iaLoading}
+                    <button type="button" onClick={() => fileInputRef.current.click()} disabled={iaLoading || cabeceraFarmaciaCongelada}
                       className="ml-auto bg-slate-900 text-white px-5 py-2 rounded-lg text-[13px] font-bold hover:bg-slate-800 flex items-center gap-2 shrink-0 transition-all active:scale-95 disabled:opacity-50">
                       {iaLoading ? <Loader2 size={15} className="animate-spin"/> : <ScanText size={15}/>}
                       {iaLoading ? 'Leyendo...' : 'Escanear'}
@@ -1066,13 +1350,21 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                   </div>
                 </div>
 
-                {/* Origen / Destino */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white border border-slate-200 rounded-xl p-4">
+                {/* Cabecera congelable: proveedor/sucursales + factura */}
+                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white border rounded-xl p-4 ${cabeceraFarmaciaCongelada ? 'border-emerald-300 ring-1 ring-emerald-100' : 'border-slate-200'}`}>
+                  {cabeceraFarmaciaCongelada && (
+                    <div className="sm:col-span-2 flex items-center justify-between gap-2 -mt-1 mb-1">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-emerald-700">Cabecera congelada — agrega todos los ítems de la factura</p>
+                      <button type="button" onClick={() => { setCabeceraFarmaciaCongelada(false); setLoteFarmaciaItems([]); }}
+                        className="text-[11px] font-bold text-slate-500 hover:text-rose-600">Descongelar / limpiar lote</button>
+                    </div>
+                  )}
                   {normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' ? (
                     <div>
                       <label className={labelBase}>¿De dónde / proveedor? *</label>
                       <input
                         className={inputBase}
+                        disabled={cabeceraFarmaciaCongelada}
                         placeholder="Ej. Proveedor XYZ…"
                         value={formFarmacia.proveedor}
                         onChange={(e) => setFormFarmacia({ ...formFarmacia, proveedor: e.target.value, sucursalOrigen: e.target.value })}
@@ -1083,6 +1375,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       <label className={labelBase}>{normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Entrada' ? '¿De dónde entra? *' : '¿De dónde sale? *'}</label>
                       <select
                         className={inputBase}
+                        disabled={cabeceraFarmaciaCongelada}
                         value={formFarmacia.sucursalOrigen}
                         onChange={(e) => setFormFarmacia({ ...formFarmacia, sucursalOrigen: e.target.value })}
                       >
@@ -1103,6 +1396,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     </label>
                     <select
                       className={inputBase}
+                      disabled={cabeceraFarmaciaCongelada}
                       value={formFarmacia.sucursalDestino || sucursalActiva || ''}
                       onChange={(e) => setFormFarmacia({ ...formFarmacia, sucursalDestino: e.target.value })}
                     >
@@ -1111,6 +1405,16 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                         <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
                       ))}
                     </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelBase}>Factura</label>
+                    <input
+                      className={inputBase}
+                      disabled={cabeceraFarmaciaCongelada}
+                      placeholder="Nº de factura"
+                      value={formFarmacia.factura}
+                      onChange={(e) => setFormFarmacia({ ...formFarmacia, factura: e.target.value })}
+                    />
                   </div>
                 </div>
 
@@ -1166,34 +1470,54 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                   )}
                 </div>
 
-                {/* Grid de campos — 3 cols */}
+                {/* Grid de campos — sin factura (ya está en cabecera) */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
-                  <div><label className={labelBase}>Factura</label><input className={inputBase} placeholder="Nº de factura" value={formFarmacia.factura} onChange={e => setFormFarmacia({ ...formFarmacia, factura: e.target.value })}/></div>
                   <div><label className={labelBase}>Lote *</label><input className={inputBase} placeholder="Lote de fabricación" value={formFarmacia.lote} onChange={e => setFormFarmacia({ ...formFarmacia, lote: e.target.value })}/></div>
                   <div><label className={labelBase}>Caducidad *</label><input type="date" className={inputBase} value={formFarmacia.caducidad} onChange={e => setFormFarmacia({ ...formFarmacia, caducidad: e.target.value })}/></div>
-                  <div><label className={labelBase}>Presentación</label><input className={inputBase} placeholder="Ej: Caja 30 tabs" value={formFarmacia.presentacion} onChange={e => setFormFarmacia({ ...formFarmacia, presentacion: e.target.value })}/></div>
-                  <div><label className={labelBase}>Forma Farmacéutica</label><input className={inputBase} placeholder="Ej: Tableta" value={formFarmacia.forma} onChange={e => setFormFarmacia({ ...formFarmacia, forma: e.target.value })}/></div>
                   <div>
                     <label className={labelBase}>Cantidad *</label>
                     <input type="number" className={`${inputBase} font-black text-lg text-blue-700 bg-blue-50/50 border-blue-200 focus:border-blue-400`} placeholder="Cajas / Pzas"
                       value={formFarmacia.cantidad} onChange={e => setFormFarmacia({ ...formFarmacia, cantidad: e.target.value })}/>
                   </div>
+                  <div><label className={labelBase}>Presentación</label><input className={inputBase} placeholder="Ej: Caja 30 tabs" value={formFarmacia.presentacion} onChange={e => setFormFarmacia({ ...formFarmacia, presentacion: e.target.value })}/></div>
+                  <div><label className={labelBase}>Forma Farmacéutica</label><input className={inputBase} placeholder="Ej: Tableta" value={formFarmacia.forma} onChange={e => setFormFarmacia({ ...formFarmacia, forma: e.target.value })}/></div>
                 </div>
 
-                {/* Criterios + Observaciones — flex-1 para llenar espacio */}
+                {/* Criterios + Aprobado SI/NO + Observaciones */}
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 flex-1 min-h-0">
                   {normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' && (
-                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
-                      <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Criterio de Aceptación</p>
-                      <div className="space-y-3">
-                        <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                          <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_empaque: e.target.checked })}/>
-                          <span className="text-[15px] font-medium text-slate-700">Empaque sin daños físicos</span>
-                        </label>
-                        <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                          <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_etiqueta: e.target.checked })}/>
-                          <span className="text-[15px] font-medium text-slate-700">Etiqueta íntegra y legible</span>
-                        </label>
+                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+                      <div>
+                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Criterio de Aceptación</p>
+                        <div className="space-y-3">
+                          <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
+                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_empaque: e.target.checked })}/>
+                            <span className="text-[15px] font-medium text-slate-700">Empaque sin daños físicos</span>
+                          </label>
+                          <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
+                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_etiqueta: e.target.checked })}/>
+                            <span className="text-[15px] font-medium text-slate-700">Etiqueta íntegra y legible</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-3">Aprobado *</p>
+                        <div className="flex gap-2">
+                          {['si', 'no'].map((v) => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => setFormFarmacia({ ...formFarmacia, aprobadoMercancia: v })}
+                              className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-wider border transition-all ${
+                                formFarmacia.aprobadoMercancia === v
+                                  ? (v === 'si' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-rose-600 text-white border-rose-600')
+                                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              {v === 'si' ? 'SI' : 'NO'}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1201,6 +1525,87 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     <label className={labelBase}>Observaciones</label>
                     <textarea className={`${inputBase} flex-1 min-h-[120px] resize-none`} placeholder="Notas sobre empaque, mermas, etc." value={formFarmacia.observaciones} onChange={e => setFormFarmacia({ ...formFarmacia, observaciones: e.target.value })}/>
                   </div>
+                </div>
+
+                {/* Lote de ítems pendientes de guardar */}
+                {loteFarmaciaItems.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                      <p className="text-[12px] font-black uppercase tracking-wider text-slate-600">{loteFarmaciaItems.length} ítem(s) en el lote</p>
+                    </div>
+                    <ul className="divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                      {loteFarmaciaItems.map((it) => (
+                        <li key={it._key} className="px-4 py-2 flex items-center gap-3 text-[12px]">
+                          <span className="font-bold text-slate-800 flex-1 truncate">{it.compuesto}</span>
+                          <span className="text-slate-500">Lote {it.lote}</span>
+                          <span className="font-black text-blue-700">×{it.cantidad}</span>
+                          <button type="button" onClick={() => handleQuitarItemLote(it._key)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 size={13}/></button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Historial + entradas pendientes de recibir */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => setVerHistorialFarmacia((v) => !v)}
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+                      {verHistorialFarmacia ? 'Ocultar bitácoras' : 'Ver bitácoras del mes'}
+                    </button>
+                    <button type="button" onClick={handlePrintFarmaciaHistorial}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+                      <Printer size={12}/> Imprimir bitácoras
+                    </button>
+                  </div>
+                  {verHistorialFarmacia && (
+                    <div className="overflow-auto max-h-56 rounded-lg border border-slate-100">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider">
+                            <th className="px-2 py-1.5 text-left">Fecha</th>
+                            <th className="px-2 py-1.5 text-left">Tipo</th>
+                            <th className="px-2 py-1.5 text-left">Compuesto</th>
+                            <th className="px-2 py-1.5 text-center">Cant</th>
+                            <th className="px-2 py-1.5 text-center">Aprobado</th>
+                            <th className="px-2 py-1.5 text-left">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historialFarmacia.slice(0, 40).map((r) => {
+                            const d = r.detalles || {};
+                            const pendienteRecibir = r.area === 'Entrada' && r.pendienteRecepcionEnfermeria && r.estadoAprobacion === 'pendiente' && r.sucursal === sucursalActiva;
+                            const ap = r.estadoAprobacion === 'aprobado' ? 'SI' : r.estadoAprobacion === 'rechazado' ? 'NO' : 'PEND';
+                            return (
+                              <tr key={r.id} className="border-t border-slate-50">
+                                <td className="px-2 py-1.5">{r.fechaString}</td>
+                                <td className="px-2 py-1.5 font-semibold">{r.area}</td>
+                                <td className="px-2 py-1.5 truncate max-w-[160px]">{d.compuesto}</td>
+                                <td className="px-2 py-1.5 text-center font-bold">{d.cantidad}</td>
+                                <td className="px-2 py-1.5 text-center font-black">{ap}</td>
+                                <td className="px-2 py-1.5">
+                                  {pendienteRecibir ? (
+                                    <div className="flex gap-1">
+                                      <button type="button" onClick={() => handleAprobarEntradaEnfermeria(r, 'aprobado', 'Recibido completo')}
+                                        className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">Aceptar</button>
+                                      <button type="button" onClick={() => {
+                                        const c = window.prompt('¿Por qué queda pendiente? (incompleto, faltante, etc.)', '') || 'Pendiente de revisión';
+                                        handleAprobarEntradaEnfermeria(r, 'rechazado', c);
+                                      }}
+                                        className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold">Pendiente</button>
+                                    </div>
+                                  ) : (r.comentarioAprobacion || '—')}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {historialFarmacia.length === 0 && (
+                            <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-400">Sin bitácoras este mes</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1226,6 +1631,13 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
+                        onClick={() => setVerHistorialPedidos((v) => !v)}
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors"
+                      >
+                        {verHistorialPedidos ? 'Ocultar pedidos' : 'Ver pedidos'}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setPedidoCompacto((prev) => !prev)}
                         className="hidden sm:flex px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors"
                       >
@@ -1242,6 +1654,48 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       </div>
                     </div>
                   </div>
+                  {verHistorialPedidos && (
+                    <div className="mt-3 overflow-auto max-h-48 rounded-lg border border-slate-100">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 uppercase">
+                            <th className="px-2 py-1.5 text-left">Fecha</th>
+                            <th className="px-2 py-1.5 text-left">Insumos</th>
+                            <th className="px-2 py-1.5 text-left">Resolución jefatura</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historialPedidos.slice(0, 20).map((p) => {
+                            const filas = p.detalles?.filas || [];
+                            return (
+                              <tr key={p.id} className="border-t border-slate-50 align-top">
+                                <td className="px-2 py-1.5 whitespace-nowrap">{p.fechaString}</td>
+                                <td className="px-2 py-1.5">{filas.length} ítem(s)</td>
+                                <td className="px-2 py-1.5">
+                                  {filas.filter((f) => f.pedido).slice(0, 8).map((f, i) => (
+                                    <div key={i} className="flex items-center gap-1.5 py-0.5">
+                                      <span className="truncate max-w-[140px] font-semibold text-slate-700">{f.insumo}</span>
+                                      <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                        f.resolucion === 'proveedor' ? 'bg-blue-50 text-blue-700'
+                                          : f.resolucion === 'traspaso' ? 'bg-violet-50 text-violet-700'
+                                            : f.resolucion === 'pendiente' ? 'bg-amber-50 text-amber-700'
+                                              : 'bg-slate-100 text-slate-400'
+                                      }`}>
+                                        {f.resolucion === 'proveedor' ? 'Prov' : f.resolucion === 'traspaso' ? 'Trasp' : f.resolucion === 'pendiente' ? 'Pend' : '—'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {historialPedidos.length === 0 && (
+                            <tr><td colSpan={3} className="px-3 py-3 text-center text-slate-400">Sin pedidos este mes</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 {pedidoMedicamentoRows.length === 0 ? (
@@ -1634,10 +2088,20 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                     Limpiar
                   </button>
                 )}
+                {tipoRegistro === 'farmacia' && (
+                  <button
+                    type="button"
+                    onClick={handleAgregarItemFarmacia}
+                    disabled={loading || !sucursalActiva}
+                    className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-slate-300 bg-white text-slate-800 text-[10px] sm:text-xs font-bold hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Plus size={14}/> Agregar
+                  </button>
+                )}
                 <button onClick={handleGuardar} disabled={loading || turnoTempBloqueado || !sucursalActiva}
                   className="bg-slate-900 hover:bg-black text-white px-4 sm:px-7 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm disabled:opacity-50 transition-all active:scale-[0.97]">
                   {loading ? <Loader2 size={14} className="animate-spin"/> : <Save size={14} className="sm:w-4 sm:h-4"/>}
-                  {loading ? 'Guardando...' : 'Guardar'}
+                  {loading ? 'Guardando...' : (tipoRegistro === 'farmacia' && loteFarmaciaItems.length > 0 ? `Guardar lote (${loteFarmaciaItems.length}+)` : 'Guardar')}
                 </button>
               </div>
             </div>

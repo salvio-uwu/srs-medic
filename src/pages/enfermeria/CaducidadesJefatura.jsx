@@ -39,7 +39,11 @@ const CaducidadesJefatura = () => {
     lote: reg.lote || '',
     caducidad: reg.mesCaducidad || '',
     cantidadDisponible: Number(reg.cantidad) || 0,
-    sucursalOrigen: reg.sucursal || ''
+    sucursalOrigen: reg.sucursal || '',
+    presentacion: reg.presentacion || '',
+    forma: reg.forma || '',
+    medicamentoId: reg.medicamentoId || null,
+    caducidadDocId: reg.id,
   });
 
   // ─── Cargar sucursales ───
@@ -102,15 +106,18 @@ const CaducidadesJefatura = () => {
     return map;
   }, [registros]);
 
-  // ─── Eliminar (soft delete para auditoría) ───
+  // ─── Baja (solo medicamentos que no se pudieron vender / merma / caducados) ───
   const handleEliminar = async (id) => {
+    const motivo = window.prompt('Motivo de baja (caducado, no se pudo vender, merma, etc.):', '') || '';
+    if (!motivo.trim()) return;
     try {
       await updateDoc(doc(db, 'caducidades_almacen', id), {
         eliminado: true,
         eliminadoPor: user?.nombre || 'Sin nombre',
         eliminadoPorId: user?.uid || '',
         eliminadoPorRol: user?.rol || '',
-        eliminadoEn: serverTimestamp()
+        eliminadoEn: serverTimestamp(),
+        motivoBaja: motivo.trim(),
       });
       setConfirmDelete(null);
     } catch {}
@@ -139,6 +146,8 @@ const CaducidadesJefatura = () => {
         <tr style="${i % 2 === 0 ? '' : 'background:#f8fafc'}">
           <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${escapeHtml(r.codigo)}</td>
           <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${escapeHtml(r.medicamento)}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${escapeHtml(r.presentacion || '')}</td>
+          <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${escapeHtml(r.forma || '')}</td>
           <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;text-align:center;font-weight:700">${r.cantidad}</td>
           <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${escapeHtml(r.lote)}</td>
           <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:10px;color:#64748b">${escapeHtml(r.responsableNombre || '')}</td>
@@ -151,7 +160,9 @@ const CaducidadesJefatura = () => {
           <table style="width:100%;border-collapse:collapse">
             <thead><tr>
               <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Código</th>
-              <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Medicamento</th>
+              <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Compuesto</th>
+              <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Presentación</th>
+              <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Forma farm.</th>
               <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:center">Cantidad</th>
               <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Lote</th>
               <th style="background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155;text-align:left">Responsable</th>
