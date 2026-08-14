@@ -963,7 +963,7 @@ const DashboardJefaEnfermeria = () => {
             </thead>
             <tbody>
               {(() => {
-                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción');
+                const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción');
                 const rows = Math.max(registros.length, 20);
                 return Array.from({ length: rows }).map((_, i) => {
                   const reg = registros[i];
@@ -1026,7 +1026,7 @@ const DashboardJefaEnfermeria = () => {
             </thead>
             <tbody>
               {(() => {
-                const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)));
+                const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)));
                 const rows = Math.max(registros.length, 20);
                 return Array.from({ length: rows }).map((_, i) => {
                   const reg = registros[i];
@@ -1677,7 +1677,7 @@ const DashboardJefaEnfermeria = () => {
 
              {/* --- RECEPCIÓN Y ENTRADAS/SALIDAS (FORMATO OFICIAL) ──────────────────── */}
               {(activeView === 'recepcion' || activeView === 'es') && (() => {
-                  const registros = bitacorasMes.filter(b => b.tipo === 'Farmacia' && (
+                  const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && (
                     activeView === 'recepcion'
                       ? normalizeMovimientoArea(b.area) === 'Recepción'
                       : ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area))
