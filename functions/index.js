@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onRequest } = require("firebase-functions/v2/https");
+const { beforeUserCreated, HttpsError: IdentityHttpsError } = require("firebase-functions/v2/identity");
 const { defineSecret } = require("firebase-functions/params");
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const { google } = require("googleapis");
@@ -10,8 +11,104 @@ const { getAuth } = require("firebase-admin/auth");
 initializeApp();
 const firestoreDb = getFirestore();
 
+const ADMIN_ROLES = new Set(["admin", "admin_maestro", "administrador"]);
+const AUTH_ALLOWLIST_COLLECTION = "auth_registro_permitido";
+
+async function assertAdminCaller(authUid) {
+  if (!authUid) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar esta acción.");
+  }
+
+  const callerDoc = await firestoreDb.collection("users").doc(authUid).get();
+  if (!callerDoc.exists) {
+    throw new HttpsError("permission-denied", "Usuario no encontrado en el sistema.");
+  }
+
+  const callerData = callerDoc.data() || {};
+  const callerRole = String(callerData.rol || "").toLowerCase().trim();
+  if (!ADMIN_ROLES.has(callerRole)) {
+    throw new HttpsError("permission-denied", "Solo un administrador puede realizar esta acción.");
+  }
+
+  return callerData;
+}
+
+function normalizeAuthEmail(email = "") {
+  return String(email || "").trim().toLowerCase();
+}
+
 // 1. Mandamos llamar el secreto que acabas de guardar en la terminal
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
+
+// Modelos vigentes (sep 2026). 1.5 y 2.0 ya están apagados.
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash"];
+
+const GEMINI_SAFETY_OFF = [
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
+
+/**
+ * Genera texto con Gemini (API key). Prueba modelos vigentes en orden.
+ * @param {string} apiKey
+ * @param {string|Array|object} content - string, parts array, o GenerateContentRequest
+ * @param {object} [options]
+ * @returns {Promise<string>}
+ */
+async function generateWithGemini(apiKey, content, options = {}) {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  let lastError = null;
+
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        safetySettings: GEMINI_SAFETY_OFF,
+        ...(options.generationConfig ? { generationConfig: options.generationConfig } : {}),
+      });
+      const result = await model.generateContent(content);
+      const text = result?.response?.text?.() || "";
+      if (text && String(text).trim()) {
+        console.log(`Gemini OK con ${modelName}:`, String(text).slice(0, 60));
+        return String(text).trim();
+      }
+      console.log(`Gemini ${modelName}: respuesta vacía`);
+    } catch (err) {
+      lastError = err;
+      console.log(`Gemini ${modelName} falló:`, String(err?.message || err).slice(0, 140));
+    }
+  }
+
+  throw lastError || new Error("Ningún modelo Gemini disponible");
+}
+
+/** Normaliza payload de askGemini (texto y/o imagen). */
+function buildGeminiContent(data = {}) {
+  const { prompt, inlineData, mimeType, imageBase64, imageMimeType } = data;
+
+  // Formato legacy de factura: prompt = [texto, { inlineData }]
+  if (Array.isArray(prompt)) {
+    return prompt;
+  }
+
+  const imagePayload = inlineData || imageBase64 || null;
+  const imageMime = mimeType || imageMimeType || "image/jpeg";
+
+  if (imagePayload) {
+    return [
+      String(prompt || ""),
+      { inlineData: { data: String(imagePayload), mimeType: imageMime } },
+    ];
+  }
+
+  if (prompt == null || prompt === "") {
+    return null;
+  }
+
+  return String(prompt);
+}
 
 // Secretos para WhatsApp Business Cloud API
 const whatsappToken = defineSecret("WHATSAPP_TOKEN");
@@ -100,17 +197,6 @@ exports.analizarMedicamento = onCall(
 
     try {
       // 2. Inicializamos la IA *adentro* de la función usando el secreto
-      const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash",
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
-      });
-
       const textoAlergias = normalizarAlergiasParaIA(
         historialAlergias,
         sinAlergiasConfirmadas === true
@@ -175,9 +261,7 @@ exports.analizarMedicamento = onCall(
         { "riesgo": true/false, "nivel": "alto|medio|ninguno", "tipo": "alergia_directa|reaccion_cruzada|interaccion_farmacologica|ninguno", "mensaje": "Si riesgo=false deja vacío. Si riesgo=true explica brevemente con la evidencia específica." }
       `;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let text = response.text();
+      let text = await generateWithGemini(geminiApiKey.value(), prompt);
 
       // Limpieza de JSON
       text = text.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -248,16 +332,11 @@ exports.analizarBitacora = onCall(
     `;
 
     try {
-      const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
       const imagePart = {
         inlineData: { data: base64Image, mimeType: mimeType || "image/jpeg" }
       };
 
-      const result = await model.generateContent([prompt, imagePart]);
-      const text = result.response.text();
-
+      const text = await generateWithGemini(geminiApiKey.value(), [prompt, imagePart]);
       return { result: text };
 
     } catch (error) {
@@ -282,9 +361,6 @@ exports.generarBoletinMedicoSeguro = onCall(
     const fuentesPermitidas = Object.keys(FUENTES_MEDICAS_OFICIALES);
 
     try {
-      const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
       const prompt = `
         Eres un editor clínico para médicos generales en México.
         Genera ${limite} notas breves de actualización médica no sensacionalistas.
@@ -310,9 +386,7 @@ exports.generarBoletinMedicoSeguro = onCall(
         ]
       `;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let text = response.text();
+      let text = await generateWithGemini(geminiApiKey.value(), prompt);
 
       text = text.replace(/```json/g, "").replace(/```/g, "").trim();
       const start = text.indexOf("[");
@@ -392,57 +466,25 @@ exports.askGemini = onCall(
       throw new HttpsError("unauthenticated", "No autorizado.");
     }
 
-    const { prompt } = request.data;
-    if (!prompt) throw new HttpsError("invalid-argument", "Falta el prompt.");
-
-    console.log("askGemini: prompt:", prompt.slice(0, 80));
-
-    // Vertex AI — usa la cuenta de servicio del proyecto, no API key
-    try {
-      const { VertexAI } = require("@google-cloud/vertexai");
-      const vertexAI = new VertexAI({
-        project: "srs-feacb",
-        location: "us-central1",
-      });
-
-      // Probar modelos de Vertex AI en orden
-      const vertexModels = ["gemini-2.0-flash-001", "gemini-1.5-flash-001", "gemini-1.5-pro-001", "gemini-2.0-flash", "gemini-1.5-flash"];
-
-      for (const modelName of vertexModels) {
-        try {
-          console.log("askGemini: probando Vertex AI", modelName);
-          const generativeModel = vertexAI.getGenerativeModel({ model: modelName });
-          const result = await generativeModel.generateContent(prompt);
-          const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-          if (text) {
-            console.log("askGemini: ÉXITO Vertex AI", modelName, "->", text.slice(0, 60));
-            return { result: text };
-          }
-          console.log("askGemini: Vertex AI", modelName, "respuesta vacía");
-        } catch (e) {
-          console.log("askGemini: Vertex AI", modelName, "falló:", String(e?.message || e).slice(0, 100));
-        }
-      }
-
-      throw new Error("Vertex AI: ningún modelo disponible");
-    } catch (vertexError) {
-      console.error("askGemini: Vertex AI falló:", String(vertexError?.message || vertexError).slice(0, 120));
-
-      // Fallback: intentar Generative Language API con la API key
-      try {
-        const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        return { result: result.response.text() };
-      } catch (genError) {
-        console.error("askGemini: API key fallback también falló:", String(genError?.message || genError).slice(0, 100));
-      }
-
-      throw new HttpsError("internal", "Error Gemini: " + (vertexError.message || String(vertexError)));
+    const content = buildGeminiContent(request.data || {});
+    if (!content) {
+      throw new HttpsError("invalid-argument", "Falta el prompt.");
     }
-});
 
+    const preview = Array.isArray(content)
+      ? String(content[0] || "").slice(0, 80)
+      : String(content).slice(0, 80);
+    console.log("askGemini: prompt:", preview);
+
+    try {
+      const text = await generateWithGemini(geminiApiKey.value(), content);
+      return { result: text };
+    } catch (error) {
+      console.error("askGemini: falló:", String(error?.message || error).slice(0, 200));
+      throw new HttpsError("internal", "Error Gemini: " + (error?.message || String(error)));
+    }
+  }
+);
 // ============================================================================
 // FUNCIÓN 5: CREACIÓN DE SESIÓN REAL DE GOOGLE MEET
 // ============================================================================
@@ -904,6 +946,107 @@ exports.resetUserPassword = onCall(
 );
 
 // ============================================================================
+// FUNCIÓN 8b: BLOQUEO DE AUTORREGISTRO PÚBLICO (Auth blocking)
+// Solo permite crear cuentas si existe un permiso temporal en
+// auth_registro_permitido/{email}, escrito por crearUsuarioStaff (Admin SDK).
+// Requiere Firebase Authentication with Identity Platform en el proyecto.
+// ============================================================================
+exports.beforeUserCreatedBlockPublicSignup = beforeUserCreated(async (event) => {
+  const email = normalizeAuthEmail(event.data?.email);
+  if (!email) {
+    throw new IdentityHttpsError("invalid-argument", "Correo requerido para el registro.");
+  }
+
+  const allowRef = firestoreDb.collection(AUTH_ALLOWLIST_COLLECTION).doc(email);
+  const allowSnap = await allowRef.get();
+
+  if (!allowSnap.exists) {
+    throw new IdentityHttpsError(
+      "permission-denied",
+      "El registro público está deshabilitado. Contacte al administrador del sistema."
+    );
+  }
+
+  await allowRef.delete();
+});
+
+// ============================================================================
+// FUNCIÓN 8c: ALTA DE USUARIO POR ADMIN (sin autorregistro público)
+// Crea la cuenta en Auth + documento users/{uid} desde servidor.
+// ============================================================================
+exports.crearUsuarioStaff = onCall(async (request) => {
+  const callerData = await assertAdminCaller(request.auth?.uid);
+
+  const { email, password, profile } = request.data || {};
+  if (!email || !password || !profile || typeof profile !== "object") {
+    throw new HttpsError("invalid-argument", "Se requiere correo, contraseña y perfil del usuario.");
+  }
+  if (typeof password !== "string" || password.length < 6) {
+    throw new HttpsError("invalid-argument", "La contraseña debe tener al menos 6 caracteres.");
+  }
+
+  const normalizedEmail = normalizeAuthEmail(email);
+  const allowRef = firestoreDb.collection(AUTH_ALLOWLIST_COLLECTION).doc(normalizedEmail);
+  let newUid = null;
+
+  try {
+    await allowRef.set({
+      by: request.auth.uid,
+      byEmail: callerData.email || "",
+      createdAt: FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+    });
+
+    const userRecord = await getAuth().createUser({
+      email: normalizedEmail,
+      password,
+      displayName: String(profile.nombre || profile.nombres || "").trim() || normalizedEmail,
+      emailVerified: false,
+    });
+    newUid = userRecord.uid;
+
+    const userData = {
+      ...profile,
+      uid: newUid,
+      email: normalizedEmail,
+    };
+
+    await firestoreDb.collection("users").doc(newUid).set(userData);
+    await allowRef.delete().catch(() => {});
+
+    return {
+      success: true,
+      uid: newUid,
+      email: normalizedEmail,
+      message: "Usuario creado correctamente.",
+    };
+  } catch (error) {
+    await allowRef.delete().catch(() => {});
+    if (newUid) {
+      await getAuth().deleteUser(newUid).catch((deleteErr) => {
+        console.error("Rollback Auth tras fallo en crearUsuarioStaff:", deleteErr);
+      });
+    }
+
+    console.error("Error en crearUsuarioStaff:", error);
+    if (error instanceof HttpsError) throw error;
+
+    const authCode = error?.code || "";
+    if (authCode === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "Ya existe una cuenta con ese correo electrónico.");
+    }
+    if (authCode === "auth/invalid-email") {
+      throw new HttpsError("invalid-argument", "El correo electrónico no es válido.");
+    }
+    if (authCode === "auth/weak-password") {
+      throw new HttpsError("invalid-argument", "La contraseña es demasiado débil.");
+    }
+
+    throw new HttpsError("internal", "No se pudo crear el usuario. Intenta de nuevo.");
+  }
+});
+
+// ============================================================================
 // FUNCIÓN 9: WEBHOOK MULTI-PASO PARA ENCUESTAS DE SATISFACCIÓN (CON IA)
 // Usa Gemini para generar respuestas personalizadas y naturales.
 // Paso 1: Recibe calificación general (Excelente/Buena/Regular)
@@ -1003,13 +1146,9 @@ exports.webhookWhatsApp = onRequest(
         // Helper para generar texto con Gemini
         const generarTextoIA = async (prompt) => {
           try {
-            const genAI = new GoogleGenerativeAI(geminiApiKey.value());
-            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-            const result = await model.generateContent({
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
+            return await generateWithGemini(geminiApiKey.value(), prompt, {
               generationConfig: { maxOutputTokens: 200, temperature: 0.8 }
             });
-            return result.response.text().trim();
           } catch (err) {
             console.error("Error Gemini en webhook:", err.message);
             return null;

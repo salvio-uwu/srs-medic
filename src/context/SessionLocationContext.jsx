@@ -3,7 +3,7 @@
 // Centraliza la sucursal y consultorio activos para toda la sesión del usuario.
 // Es la FUENTE ÚNICA DE VERDAD para determinar dónde opera el personal.
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { doc, setDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, collection, query, orderBy, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
 
@@ -74,28 +74,26 @@ export const SessionLocationProvider = ({ children }) => {
       return;
     }
 
-    const qSucursales = query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'));
-    const qConsultorios = query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'));
-
-    let sucReady = false;
-    let conReady = false;
-    const checkReady = () => { if (sucReady && conReady) setCatalogosReady(true); };
-
-    const unsub1 = onSnapshot(qSucursales, (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false);
-      setCatalogoSucursales(rows);
-      sucReady = true;
-      checkReady();
-    });
-
-    const unsub2 = onSnapshot(qConsultorios, (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false);
-      setCatalogoConsultorios(rows);
-      conReady = true;
-      checkReady();
-    });
-
-    return () => { unsub1(); unsub2(); };
+    let cancelled = false;
+    const cargar = async () => {
+      try {
+        const [sucSnap, conSnap] = await Promise.all([
+          getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'))),
+        ]);
+        if (cancelled) return;
+        setCatalogoSucursales(sucSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
+        setCatalogoConsultorios(conSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
+        setCatalogosReady(true);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Catálogos de ubicación no disponibles:', err?.message || err);
+          setCatalogosReady(true);
+        }
+      }
+    };
+    cargar();
+    return () => { cancelled = true; };
   }, [uid]);
 
   // ── 2. Restaurar ubicación desde perfil al iniciar sesión ──

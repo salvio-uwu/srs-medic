@@ -296,6 +296,39 @@ const ControlEmbarazoModal = ({ onClose, onBackToMenu, data, updateCampo }) => {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Consulta prenatal #</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="w-full p-2 border border-slate-200 rounded-lg text-sm"
+                  value={data.num_consulta_prenatal || ''}
+                  onChange={(e) => updateCampo('control_embarazo.num_consulta_prenatal', e.target.value)}
+                  placeholder="Ej. 3"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Fondo uterino (cm)</label>
+                <input
+                  type="text"
+                  className="w-full p-2 border border-slate-200 rounded-lg text-sm"
+                  value={data.fondo_uterino || ''}
+                  onChange={(e) => updateCampo('control_embarazo.fondo_uterino', e.target.value)}
+                  placeholder="Ej. 28"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Frecuencia cardiaca fetal (lpm)</label>
+              <input
+                type="text"
+                className="w-full p-2 border border-slate-200 rounded-lg text-sm"
+                value={data.fcf || ''}
+                onChange={(e) => updateCampo('control_embarazo.fcf', e.target.value)}
+                placeholder="Ej. 140"
+              />
+            </div>
             <RadioGroup label="Primera vez que presenta alto riesgo" path="riesgo" />
             <RadioGroup label="Ingesta de acido folico" path="acido_folico" />
           </div>
@@ -944,14 +977,22 @@ const ExpedienteClinico = () => {
   }, []);
 
   useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor'])), (snap) => {
-      setDoctoresCatalogo(snap.docs
-        .map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id }))
-        .filter((item) => item.nombre && item.id !== (user?.uid || ''))
-        .sort((a, b) => a.nombre.localeCompare(b.nombre))
-      );
-    }, () => {});
-    return () => unsub();
+    let cancelled = false;
+    const cargarDoctores = async () => {
+      try {
+        const snap = await getDocs(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor'])));
+        if (cancelled) return;
+        setDoctoresCatalogo(snap.docs
+          .map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id }))
+          .filter((item) => item.nombre && item.id !== (user?.uid || ''))
+          .sort((a, b) => a.nombre.localeCompare(b.nombre))
+        );
+      } catch {
+        if (!cancelled) setDoctoresCatalogo([]);
+      }
+    };
+    cargarDoctores();
+    return () => { cancelled = true; };
   }, [user?.uid]);
 
   useEffect(() => {
@@ -1374,6 +1415,7 @@ const ExpedienteClinico = () => {
     },
     control_embarazo: {
       num_embarazo: '', num_bebes: '', riesgo: 'No aplica', acido_folico: 'No aplica',
+      fondo_uterino: '', fcf: '', num_consulta_prenatal: '',
       complicaciones: {
         diabetes: 'No aplica', infeccion_urinaria: 'No aplica', preeclampsia: 'No aplica',
         hemorragia: 'No aplica', sospecha_covid: 'No aplica', covid_confirmado: 'No aplica',
@@ -1482,41 +1524,39 @@ const ExpedienteClinico = () => {
   }, []);
 
   useEffect(() => {
-    const qConsultorios = query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'));
-    const unsubscribe = onSnapshot(
-      qConsultorios,
-      (snap) => {
-        const rows = snap.docs
+    let cancelled = false;
+    const cargarConsultorios = async () => {
+      try {
+        const snap = await getDocs(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc')));
+        if (cancelled) return;
+        setConsultoriosCatalogo(snap.docs
           .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-          .filter((item) => item.activo !== false);
-        setConsultoriosCatalogo(rows);
-      },
-      (error) => {
+          .filter((item) => item.activo !== false));
+      } catch (error) {
         console.error('Error cargando catálogo de consultorios', error);
-        setConsultoriosCatalogo([]);
+        if (!cancelled) setConsultoriosCatalogo([]);
       }
-    );
-
-    return () => unsubscribe();
+    };
+    cargarConsultorios();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    const qSucursales = query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'));
-    const unsubscribe = onSnapshot(
-      qSucursales,
-      (snap) => {
-        const rows = snap.docs
+    let cancelled = false;
+    const cargarSucursales = async () => {
+      try {
+        const snap = await getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc')));
+        if (cancelled) return;
+        setSucursalesCatalogo(snap.docs
           .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-          .filter((item) => item.activo !== false);
-        setSucursalesCatalogo(rows);
-      },
-      (error) => {
+          .filter((item) => item.activo !== false));
+      } catch (error) {
         console.error('Error cargando catálogo de sucursales', error);
-        setSucursalesCatalogo([]);
+        if (!cancelled) setSucursalesCatalogo([]);
       }
-    );
-
-    return () => unsubscribe();
+    };
+    cargarSucursales();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -3818,15 +3858,23 @@ const ExpedienteClinico = () => {
           </div>
         </div>
 
-        <div className={`hidden lg:flex items-center gap-2 px-3 py-1 rounded-full border transition-all duration-500 ${getTimerStyles()}`}>
-          <div className="relative flex items-center justify-center">
-            <Clock size={14} className={`${seconds <= 10 && seconds >= 0 ? "animate-spin" : ""}`} />
-            {seconds <= 60 && <span className="absolute w-full h-full rounded-full bg-current opacity-20 animate-ping"></span>}
+        {!isHistoricalReviewMode && (
+          <div
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all duration-500 shrink-0 ${getTimerStyles()}`}
+            title={getTimerLabel()}
+          >
+            <div className="relative flex items-center justify-center">
+              <Clock size={14} className={`${seconds <= 10 && seconds >= 0 ? "animate-spin" : ""}`} />
+              {seconds <= 60 && <span className="absolute w-full h-full rounded-full bg-current opacity-20 animate-ping"></span>}
+            </div>
+            <span className="text-sm sm:text-base font-mono font-bold tracking-tight tabular-nums">
+              {formatTime(seconds)}
+            </span>
+            <span className="hidden xl:inline text-[10px] font-semibold uppercase tracking-wide opacity-70">
+              {getTimerLabel()}
+            </span>
           </div>
-          <span className="text-base font-mono font-bold tracking-tight">
-            {formatTime(seconds)}
-          </span>
-        </div>
+        )}
 
         {/* ── NAVEGACIÓN PRINCIPAL ── */}
         <div className="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl order-3 w-full sm:order-none sm:w-auto justify-center">

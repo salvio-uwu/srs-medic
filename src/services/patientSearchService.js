@@ -1,4 +1,4 @@
-import { collection, getDocs, limit, orderBy, query, startAt, endAt } from 'firebase/firestore';
+import { collection, getDocs, limit, orderBy, query, startAt, endAt, where } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getPatientDisplayName, sanitizePatientNameFields } from '../utils/patientName';
 import { normalizeForSearch, fuzzyScore } from '../utils/searchUtils';
@@ -32,12 +32,25 @@ const extractPatientData = (docRef) => {
   };
 };
 
-const runPrefixQuery = (field, prefix, max) =>
-  getDocs(query(PACIENTES_REF, orderBy(field), startAt(prefix), endAt(prefix + '\uf8ff'), limit(max)))
+const emptySnap = { docs: [] };
+
+const runPrefixQuery = (field, prefix, max) => {
+  if (!prefix) return Promise.resolve(emptySnap);
+  return getDocs(query(PACIENTES_REF, orderBy(field), startAt(prefix), endAt(prefix + '\uf8ff'), limit(max)))
     .catch((err) => {
       console.error(`[patientSearch] Query fallida en campo "${field}" con prefijo "${prefix}":`, err);
-      return { docs: [] };
+      return emptySnap;
     });
+};
+
+const runEqualityQuery = (field, value, max = 15) => {
+  if (!value) return Promise.resolve(emptySnap);
+  return getDocs(query(PACIENTES_REF, where(field, '==', value), limit(max)))
+    .catch((err) => {
+      console.error(`[patientSearch] Equality fallida en campo "${field}" con valor "${value}":`, err);
+      return emptySnap;
+    });
+};
 
 const titleCase = (str = '') =>
   String(str || '')
@@ -45,17 +58,59 @@ const titleCase = (str = '') =>
     .trim()
     .replace(/(^|\s)(\S)/g, (_, space, char) => `${space}${char.toLocaleUpperCase('es-MX')}`);
 
+const uniqueNonEmpty = (values = []) => {
+  const seen = new Set();
+  const out = [];
+  for (const value of values) {
+    const v = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+};
+
+/** Tokens de nombre del paciente (sin acentos) para matching estricto. */
+const patientNameTokens = (patient) => {
+  const parts = [
+    patient.nombreCompleto,
+    patient.nombre,
+    patient.apellidoPaterno,
+    patient.apellidoMaterno,
+    patient.searchName,
+  ]
+    .map((v) => normalizeForSearch(v || ''))
+    .join(' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  return parts;
+};
+
+/**
+ * Multi-token: cada token de la búsqueda debe coincidir con un token del nombre
+ * (igual o prefijo). Evita falsos positivos tipo maria≈garza / luna≈ana del fuzzy laxo.
+ */
+const matchesAllTokens = (patient, tokens) => {
+  const nameToks = patientNameTokens(patient);
+  if (!nameToks.length) return false;
+
+  return tokens.every((token) =>
+    nameToks.some((ct) => ct === token || ct.startsWith(token) || (token.length >= 4 && token.startsWith(ct) && ct.length >= 3))
+  );
+};
+
+const isMergedPatient = (patient) => Boolean(patient?.mergedIntoPacienteId);
+
 // ─── Búsqueda principal ────────────────────────────────────────────────────
 
 /**
  * Busca pacientes por nombre, apellido o teléfono.
  *
- * Para búsquedas de una sola palabra: prefijo sobre searchName, nombreCompleto y
- * apellidoPaterno, con ranking difuso.
- *
- * Para búsquedas de múltiples palabras (ej. "araujo cireno"): cada token se busca
- * como prefijo contra searchName y los campos de apellido. Los resultados se
- * intersectan: solo quedan pacientes que contienen TODOS los tokens en su nombre.
+ * Estrategia:
+ * 1. Igualdad exacta (mismo camino que la detección de duplicados al alta).
+ * 2. Prefijos progresivos en searchName ("maria", "maria garza", "maria garza luna").
+ * 3. Prefijos en nombreCompleto / nombre / apellidos con variantes de mayúsculas.
+ * 4. Filtro multi-token estricto + ranking por relevancia (no solo alfabético).
  */
 export const searchPatients = async (searchTerm, maxResults = DEFAULT_LIMIT) => {
   const rawTerm = searchTerm.trim();
@@ -63,87 +118,111 @@ export const searchPatients = async (searchTerm, maxResults = DEFAULT_LIMIT) => 
   if (term.length < 2) return [];
 
   const results = new Map();
-  const tokens = term.split(/\s+/).filter(t => t.length >= 2);
+  const tokens = term.split(/\s+/).filter((t) => t.length >= 2);
   const isMultiToken = tokens.length > 1;
 
   const nameTitle = titleCase(term);
-  const termWithAccents = rawTerm.toLocaleLowerCase('es-MX').replace(/\s+/g, ' ');
+  const nameUpper = term.toLocaleUpperCase('es-MX');
+  const rawTitle = titleCase(rawTerm.toLocaleLowerCase('es-MX'));
+  const rawUpper = rawTerm.replace(/\s+/g, ' ').trim().toLocaleUpperCase('es-MX');
+  const termWithAccents = rawTerm.toLocaleLowerCase('es-MX').replace(/\s+/g, ' ').trim();
 
-  // ── Queries base: prefijo del término completo ──
+  const nombreCompletoEquals = uniqueNonEmpty([nameTitle, nameUpper, rawTitle, rawUpper, titleCase(termWithAccents)]);
+
+  // ── 1) Igualdad exacta (sobrevive a pacientes sin searchName / casing raro) ──
   const queries = [
-    runPrefixQuery('searchName', term, 150),
-    runPrefixQuery('nombreCompleto', nameTitle, 150),
-    runPrefixQuery('apellidoPaterno', nameTitle, 150),
+    runEqualityQuery('searchName', term, 20),
+    ...nombreCompletoEquals.map((value) => runEqualityQuery('nombreCompleto', value, 20)),
   ];
 
-  if (nameTitle !== term) {
-    queries.push(runPrefixQuery('nombreCompleto', term, 150));
-  }
+  // ── 2) Prefijos del término completo + progresivos ──
+  queries.push(
+    runPrefixQuery('searchName', term, 80),
+    runPrefixQuery('nombreCompleto', nameTitle, 80),
+    runPrefixQuery('nombreCompleto', nameUpper, 80),
+  );
 
-  // Mayúsculas
-  const nameUpper = term.toLocaleUpperCase('es-MX');
-  if (nameUpper !== nameTitle) {
-    queries.push(runPrefixQuery('nombreCompleto', nameUpper, 150));
-    queries.push(runPrefixQuery('apellidoPaterno', nameUpper, 150));
-  }
-
-  // Tildes/ñ originales
-  if (termWithAccents !== term) {
-    const taTitle = titleCase(termWithAccents);
-    queries.push(runPrefixQuery('nombreCompleto', taTitle, 150));
-    queries.push(runPrefixQuery('apellidoPaterno', taTitle, 150));
-  }
-
-  // ── Multi-token: buscar cada token por separado ──
   if (isMultiToken) {
-    for (const token of tokens) {
+    // "maria garza" encuentra "maria garza luna" sin ahogarse en 150 "maria*"
+    for (let i = 2; i < tokens.length; i += 1) {
+      const partial = tokens.slice(0, i).join(' ');
+      queries.push(runPrefixQuery('searchName', partial, 80));
+      queries.push(runPrefixQuery('nombreCompleto', titleCase(partial), 80));
+      queries.push(runPrefixQuery('nombreCompleto', partial.toLocaleUpperCase('es-MX'), 80));
+    }
+  }
+
+  // Primer token como nombre de pila
+  const firstToken = tokens[0];
+  if (firstToken) {
+    const firstTitle = titleCase(firstToken);
+    const firstUpper = firstToken.toLocaleUpperCase('es-MX');
+    queries.push(
+      runPrefixQuery('nombre', firstTitle, 80),
+      runPrefixQuery('nombre', firstUpper, 80),
+      runPrefixQuery('searchName', firstToken, 80),
+    );
+  }
+
+  // Apellidos: preferir tokens finales (paterno / materno)
+  if (isMultiToken) {
+    const surnameTokens = tokens.slice(1);
+    for (const token of surnameTokens) {
       const tTitle = titleCase(token);
       const tUpper = token.toLocaleUpperCase('es-MX');
-
-      // Prefijo completo en searchName y ambos apellidos
       queries.push(
-        runPrefixQuery('searchName', token, 150),
-        runPrefixQuery('apellidoPaterno', tTitle, 150),
-        runPrefixQuery('apellidoMaterno', tTitle, 150),
+        runPrefixQuery('apellidoPaterno', tTitle, 100),
+        runPrefixQuery('apellidoMaterno', tTitle, 100),
+        runPrefixQuery('apellidoPaterno', tUpper, 100),
+        runPrefixQuery('apellidoMaterno', tUpper, 100),
       );
-
-      if (tUpper !== tTitle) {
-        queries.push(
-          runPrefixQuery('apellidoPaterno', tUpper, 150),
-          runPrefixQuery('apellidoMaterno', tUpper, 150),
-        );
-      }
-
-      // Prefijo corto de 2 caracteres: cubre "cireno" vs "CIRENO" y otros
-      // desfases de casing donde el prefijo completo no encaja lexicográficamente
-      if (token.length >= 3) {
-        const short = token.substring(0, 2);
-        const shortTitle = titleCase(short);
-        queries.push(
-          runPrefixQuery('apellidoPaterno', shortTitle, 200),
-          runPrefixQuery('apellidoMaterno', shortTitle, 200),
-        );
-      }
     }
+  } else {
+    queries.push(
+      runPrefixQuery('apellidoPaterno', nameTitle, 100),
+      runPrefixQuery('apellidoPaterno', nameUpper, 100),
+    );
   }
 
-  // Búsqueda por teléfono
+  // Tildes originales (si el usuario las escribió)
+  if (termWithAccents !== term) {
+    const taTitle = titleCase(termWithAccents);
+    queries.push(
+      runEqualityQuery('nombreCompleto', taTitle, 15),
+      runPrefixQuery('nombreCompleto', taTitle, 80),
+    );
+  }
+
+  // Teléfono
   if (/^\d{3,}$/.test(term)) {
-    queries.push(runPrefixQuery('telefonoMovil', term, 20));
+    queries.push(
+      runEqualityQuery('telefonoMovil', term, 20),
+      runPrefixQuery('telefonoMovil', term, 20),
+    );
   }
 
-  // ── Ejecutar y deduplicar ──
-  const snapshots = await Promise.all(queries);
-  const seen = new Set();
-  for (const snap of snapshots) {
+  // idPaciente (MAR04091990, etc.)
+  if (/^[a-z0-9]{4,}$/i.test(rawTerm.replace(/\s+/g, ''))) {
+    const idUpper = rawTerm.replace(/\s+/g, '').toLocaleUpperCase('es-MX');
+    queries.push(
+      runEqualityQuery('idPaciente', idUpper, 10),
+      runEqualityQuery('idPacienteMigrado', idUpper, 10),
+    );
+  }
+
+  const ingest = (snap) => {
     for (const docRef of snap.docs) {
-      if (seen.has(docRef.id)) continue;
-      seen.add(docRef.id);
-      results.set(docRef.id, extractPatientData(docRef));
+      if (results.has(docRef.id)) continue;
+      const row = extractPatientData(docRef);
+      if (isMergedPatient(row)) continue;
+      results.set(docRef.id, row);
     }
-  }
+  };
 
-  // ── Fallback: si no hubo nada, relajar a 2 caracteres ──
+  const snapshots = await Promise.all(queries);
+  for (const snap of snapshots) ingest(snap);
+
+  // ── Fallback corto solo si no hubo candidatos ──
   if (results.size === 0 && term.length > 2) {
     const short = term.substring(0, 2);
     const shortTitle = titleCase(short);
@@ -151,56 +230,19 @@ export const searchPatients = async (searchTerm, maxResults = DEFAULT_LIMIT) => 
       runPrefixQuery('nombreCompleto', shortTitle, 200),
       runPrefixQuery('apellidoPaterno', shortTitle, 200),
       runPrefixQuery('searchName', short, 200),
+      runPrefixQuery('nombre', shortTitle, 200),
     ]);
-    for (const snap of fb) {
-      for (const docRef of snap.docs) {
-        if (seen.has(docRef.id)) continue;
-        seen.add(docRef.id);
-        results.set(docRef.id, extractPatientData(docRef));
-      }
-    }
-  }
-
-  // ── Último recurso: 1 carácter ──
-  if (results.size === 0 && term.length > 1) {
-    const first = term.charAt(0).toLocaleUpperCase('es-MX');
-    const fb = await Promise.all([
-      runPrefixQuery('nombreCompleto', first, 200),
-    ]);
-    for (const snap of fb) {
-      for (const docRef of snap.docs) {
-        if (seen.has(docRef.id)) continue;
-        seen.add(docRef.id);
-        results.set(docRef.id, extractPatientData(docRef));
-      }
-    }
+    for (const snap of fb) ingest(snap);
   }
 
   const allResults = Array.from(results.values());
 
-  // ── Filtrado y ranking ──
+  // ── Filtrado ──
   let filtered;
 
   if (isMultiToken) {
-    // Cada token debe aparecer (exacto o fuzzy > 0.3) en al menos un campo del paciente
-    filtered = allResults.filter((r) => {
-      const fields = [
-        normalizeForSearch(r.nombreCompleto || ''),
-        normalizeForSearch(r.nombre || ''),
-        normalizeForSearch(r.apellidoPaterno || ''),
-        normalizeForSearch(r.apellidoMaterno || ''),
-      ];
-
-      return tokens.every(token =>
-        fields.some(field => {
-          if (!field) return false;
-          if (field.includes(token)) return true;
-          return fuzzyScore(token, field) > 0.3;
-        })
-      );
-    });
+    filtered = allResults.filter((r) => matchesAllTokens(r, tokens));
   } else {
-    // Monotoken: ordenar por fuzzy score y filtrar ruido
     const scored = allResults.map((r) => ({
       ...r,
       _score: fuzzyScore(searchTerm, getPatientDisplayName(r)),
@@ -214,11 +256,12 @@ export const searchPatients = async (searchTerm, maxResults = DEFAULT_LIMIT) => 
       : scored.filter((r) => r._score > MIN_SCORE);
   }
 
-  // ── Orden final alfabético ──
+  // Ranking: mejor match primero; empate alfabético
   filtered.sort((a, b) => {
-    const na = getPatientDisplayName(a);
-    const nb = getPatientDisplayName(b);
-    return na.localeCompare(nb, 'es', { sensitivity: 'base' });
+    const scoreA = fuzzyScore(searchTerm, getPatientDisplayName(a));
+    const scoreB = fuzzyScore(searchTerm, getPatientDisplayName(b));
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    return getPatientDisplayName(a).localeCompare(getPatientDisplayName(b), 'es', { sensitivity: 'base' });
   });
 
   return filtered.slice(0, maxResults);

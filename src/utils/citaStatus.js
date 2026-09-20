@@ -5,8 +5,9 @@
  *
  * Flujo de estados:
  *   pendiente_triage   → paciente registrado, aún no pasa por triage
- *   en_triage          → enfermería abrió la pantalla de triage (triageIniciadoAt set)
+ *   en_triage          → enfermería abrió triage (triageIniciadoAt set y aún no en_espera)
  *   esperando_consulta → triage completado, en sala de espera (estado Firestore: en_espera)
+ *   Nota: triageIniciadoAt / triageCompletadoAt se conservan en la cita para métricas de tiempos.
  *   en_consulta        → médico abrió el expediente (estado Firestore: en_consulta)
  *   en_procedimiento   → enfermería está realizando un procedimiento (citas de enfermería)
  *   completada         → consulta / procedimiento finalizado

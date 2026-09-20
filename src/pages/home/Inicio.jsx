@@ -90,8 +90,12 @@ const getGreeting = () => {
 
 const StatLabel = ({ icon: Icon, children }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-    <Icon size={12} style={{ color: '#9ca3af', flexShrink: 0 }} />
-    <span style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+    <Icon size={12} style={{ color: '#94a3b8', flexShrink: 0 }} />
+    <span style={{
+      fontSize: 10, fontWeight: 600, color: '#94a3b8',
+      textTransform: 'uppercase', letterSpacing: '0.02em',
+      fontFamily: "'Sora', system-ui, sans-serif",
+    }}>
       {children}
     </span>
   </div>
@@ -145,16 +149,17 @@ const Inicio = () => {
     year: 'numeric',
   });
 
-  const pad = isMobile ? '24px 18px 48px' : '48px 44px 64px';
+  const pad = isMobile ? '20px 16px 40px' : '32px 28px 48px';
   const enter = (delay = 0) => `inicio-enter${mounted ? ' inicio-visible' : ''}${delay ? ` inicio-d${delay}` : ''}`;
 
   const cardHeader = {
-    padding: '12px 20px',
-    borderBottom: '1px solid #e5e7eb',
-    background: '#fafafa',
+    padding: '12px 18px',
+    borderBottom: '1px solid rgba(15, 23, 42, 0.06)',
+    background: '#fff',
     fontSize: 13,
-    fontWeight: 700,
-    color: '#111',
+    fontWeight: 600,
+    color: '#0f172a',
+    fontFamily: "'Sora', system-ui, sans-serif",
     display: 'flex',
     alignItems: 'center',
     gap: 8,
@@ -163,203 +168,144 @@ const Inicio = () => {
   return (
     <>
       <style>{`
+        .inicio-page {
+          font-family: 'DM Sans', 'Sora', system-ui, sans-serif;
+          color: #0f172a;
+        }
         @keyframes inicioFadeUp {
-          from { opacity: 0; transform: translateY(14px); }
+          from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes inicioLogoIn {
-          from { opacity: 0; transform: scale(0.92) translateY(8px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
-        }
-        @keyframes inicioSoftFloat {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-5px); }
-        }
-        @keyframes inicioIconSway {
-          0%, 100% { transform: rotate(0deg); }
-          33% { transform: rotate(-6deg); }
-          66% { transform: rotate(6deg); }
-        }
         .inicio-enter { opacity: 0; }
-        .inicio-enter.inicio-visible { animation: inicioFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        .inicio-d1.inicio-visible { animation-delay: 0.08s; }
-        .inicio-d2.inicio-visible { animation-delay: 0.16s; }
-        .inicio-d3.inicio-visible { animation-delay: 0.24s; }
-        .inicio-d4.inicio-visible { animation-delay: 0.32s; }
-        .inicio-d5.inicio-visible { animation-delay: 0.4s; }
-
-        .inicio-logo-wrap.inicio-visible {
-          animation: inicioLogoIn 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        .inicio-logo-wrap.inicio-visible img {
-          animation: inicioSoftFloat 5s ease-in-out 0.8s infinite;
-        }
-        .inicio-greeting-icon {
-          opacity: 0;
-          display: inline-block;
-          vertical-align: middle;
-        }
-        .inicio-greeting-icon.inicio-visible {
-          opacity: 1;
-          animation: inicioIconSway 4s ease-in-out 1s infinite;
-        }
-        .inicio-motivo.inicio-visible {
-          animation: inicioFadeUp 0.65s cubic-bezier(0.16, 1, 0.3, 1) 0.35s forwards;
-          opacity: 0;
-        }
+        .inicio-enter.inicio-visible { animation: inicioFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .inicio-d1.inicio-visible { animation-delay: 0.06s; }
+        .inicio-d2.inicio-visible { animation-delay: 0.12s; }
+        .inicio-d3.inicio-visible { animation-delay: 0.18s; }
+        .inicio-d4.inicio-visible { animation-delay: 0.24s; }
+        .inicio-d5.inicio-visible { animation-delay: 0.3s; }
 
         .inicio-stat-card {
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          background: #fff;
+          border: 1px solid rgba(15, 23, 42, 0.06);
+          border-radius: 12px;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
         .inicio-stat-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-          z-index: 1;
-          position: relative;
-        }
-
-        .inicio-chip {
-          opacity: 0;
-        }
-        .inicio-chips-visible.inicio-visible .inicio-chip {
-          animation: inicioFadeUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        .inicio-row-enter { opacity: 0; }
-        .inicio-rows-visible.inicio-visible .inicio-row-enter {
-          animation: inicioFadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        .inicio-row-hover .inicio-row-chevron {
-          transition: transform 0.18s ease, color 0.18s ease;
-        }
-        .inicio-row-hover:hover .inicio-row-chevron {
-          transform: translateX(3px);
-          color: #111 !important;
-        }
-        .inicio-row-hover:hover {
-          background: #fafafa !important;
+          border-color: rgba(15, 23, 42, 0.1);
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
         }
 
         .inicio-chip {
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          padding: 6px 12px;
-          border: 1px solid #e5e7eb;
-          border-radius: 6px;
-          background: #fafafa;
+          padding: 8px 12px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 10px;
+          background: #fff;
           font-size: 12px;
-          font-weight: 600;
-          color: #4b5563;
+          font-weight: 500;
+          color: #64748b;
           cursor: pointer;
-          transition: border-color 0.15s, background 0.15s, transform 0.15s;
+          transition: color 0.15s, background 0.15s, border-color 0.15s;
           font-family: inherit;
+          opacity: 0;
+        }
+        .inicio-chips-visible.inicio-visible .inicio-chip {
+          animation: inicioFadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
         .inicio-chip:hover {
-          border-color: #111;
-          background: #fff;
-          transform: translateY(-1px);
+          color: #0f172a;
+          background: rgba(15, 23, 42, 0.035);
+          border-color: rgba(15, 23, 42, 0.12);
         }
 
+        .inicio-row-enter { opacity: 0; }
+        .inicio-rows-visible.inicio-visible .inicio-row-enter {
+          animation: inicioFadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .inicio-row-hover .inicio-row-chevron {
+          transition: transform 0.18s ease, color 0.18s ease;
+        }
+        .inicio-row-hover:hover .inicio-row-chevron {
+          transform: translateX(3px);
+          color: #0f172a !important;
+        }
+        .inicio-row-hover:hover {
+          background: rgba(15, 23, 42, 0.025) !important;
+        }
+
+        .inicio-panel {
+          background: #fff;
+          border: 1px solid rgba(15, 23, 42, 0.06);
+          border-radius: 12px;
+          overflow: hidden;
+        }
       `}</style>
 
-      <div style={{ maxWidth: 1440, margin: '0 auto', padding: pad }}>
-        {/* Hero — texto agrupado + logo centrado al bloque */}
-        <div className={`${enter(0)}`} style={{ marginBottom: isMobile ? 36 : 48 }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : '1fr auto',
-              gridTemplateRows: 'auto auto auto',
-              columnGap: isMobile ? 0 : 40,
-              rowGap: isMobile ? 0 : 0,
-              alignItems: 'center',
-            }}
-          >
-            <h1 style={{
-              gridColumn: 1,
-              gridRow: 1,
-              fontSize: isMobile ? 28 : 38,
-              fontWeight: 800,
-              color: '#111',
-              fontFamily: 'Sora, system-ui, sans-serif',
-              margin: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              flexWrap: 'wrap',
-              letterSpacing: '-0.03em',
-              lineHeight: 1.15,
-            }}>
-              <GreetingIcon
-                className={`inicio-greeting-icon ${mounted ? 'inicio-visible' : ''}`}
-                size={isMobile ? 28 : 32}
-                style={{ color: '#6b7280', flexShrink: 0 }}
-              />
-              <span>
-                {greeting.text},{' '}
-                <span style={{ color: '#111' }}>{firstName}</span>
-              </span>
-            </h1>
-
-            <p
-              className={`inicio-motivo inicio-enter ${mounted ? 'inicio-visible' : ''}`}
-              style={{
-                gridColumn: 1,
-                gridRow: 2,
-                fontSize: isMobile ? 15 : 17,
-                color: '#4b5563',
-                margin: '10px 0 0',
-                lineHeight: 1.5,
-                maxWidth: 560,
-                fontWeight: 500,
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 8,
-              }}
-            >
-              <span>{motivationalPhrase}</span>
-            </p>
-
-            <p style={{
-              gridColumn: 1,
-              gridRow: 3,
-              fontSize: 14,
-              color: '#9ca3af',
-              margin: '8px 0 0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              textTransform: 'capitalize',
-            }}>
-              <CalendarDays size={15} style={{ color: '#9ca3af', flexShrink: 0 }} />
-              {fechaHoy}
-            </p>
-
-            <div
-              className={`inicio-logo-wrap inicio-enter ${mounted ? 'inicio-visible' : ''}`}
-              style={{
-                gridColumn: isMobile ? 1 : 2,
-                gridRow: isMobile ? 4 : '1 / 4',
-                justifySelf: isMobile ? 'start' : 'end',
-                alignSelf: 'center',
-                marginTop: isMobile ? 20 : -16,
+      <div className="inicio-page" style={{ maxWidth: 1280, margin: '0 auto', padding: pad }}>
+        {/* Hero */}
+        <div className={`${enter(0)}`} style={{ marginBottom: isMobile ? 28 : 32 }}>
+          <div style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'flex-start' : 'center',
+            justifyContent: 'space-between',
+            gap: isMobile ? 16 : 24,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h1 style={{
+                fontSize: isMobile ? 26 : 32,
+                fontWeight: 650,
+                color: '#0f172a',
+                fontFamily: 'Sora, system-ui, sans-serif',
+                margin: 0,
                 display: 'flex',
                 alignItems: 'center',
-              }}
-            >
+                gap: 12,
+                flexWrap: 'wrap',
+                letterSpacing: '-0.03em',
+                lineHeight: 1.15,
+              }}>
+                <GreetingIcon size={isMobile ? 24 : 28} style={{ color: '#94a3b8', flexShrink: 0 }} />
+                <span>
+                  {greeting.text},{' '}
+                  <span style={{ color: '#0f172a' }}>{firstName}</span>
+                </span>
+              </h1>
+
+              <p style={{
+                fontSize: isMobile ? 14 : 15,
+                color: '#64748b',
+                margin: '10px 0 0',
+                lineHeight: 1.55,
+                maxWidth: 560,
+                fontWeight: 400,
+              }}>
+                {motivationalPhrase}
+              </p>
+
+              <p style={{
+                fontSize: 13,
+                color: '#94a3b8',
+                margin: '10px 0 0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                textTransform: 'capitalize',
+              }}>
+                <CalendarDays size={14} style={{ flexShrink: 0 }} />
+                {fechaHoy}
+              </p>
+            </div>
+
+            {!isMobile && (
               <img
                 src={logoImg}
                 alt={CLINIC_NAME}
-                style={{
-                  height: isMobile ? 96 : 148,
-                  width: 'auto',
-                  objectFit: 'contain',
-                  display: 'block',
-                }}
+                style={{ height: 52, width: 'auto', objectFit: 'contain', flexShrink: 0, opacity: 0.92 }}
               />
-            </div>
+            )}
           </div>
         </div>
 
@@ -367,44 +313,45 @@ const Inicio = () => {
         <div className={`${enter(2)}`} style={{
           display: 'grid',
           gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
-          gap: 1,
-          background: '#e5e7eb',
-          borderRadius: 10,
-          overflow: 'hidden',
-          marginBottom: 28,
+          gap: 12,
+          marginBottom: 24,
         }}>
-          <div className="inicio-stat-card" style={{ background: '#fff', padding: isMobile ? '16px 16px' : '20px 24px' }}>
+          <div className="inicio-stat-card" style={{ padding: isMobile ? '14px 14px' : '18px 20px' }}>
             <StatLabel icon={RoleIcon}>Rol</StatLabel>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <RoleIcon size={18} style={{ color: '#6b7280', flexShrink: 0 }} />
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>{roleLabel}</div>
+              <RoleIcon size={17} style={{ color: '#64748b', flexShrink: 0 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{roleLabel}</div>
             </div>
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, lineHeight: 1.4, paddingLeft: 26 }}>{roleHelper}</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.4, paddingLeft: 25 }}>{roleHelper}</div>
           </div>
-          <div className="inicio-stat-card" style={{ background: '#fff', padding: isMobile ? '16px 16px' : '20px 24px' }}>
+          <div className="inicio-stat-card" style={{ padding: isMobile ? '14px 14px' : '18px 20px' }}>
             <StatLabel icon={Building2}>Sucursal activa</StatLabel>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Building2 size={18} style={{ color: '#6b7280', flexShrink: 0 }} />
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>{sucursalActiva}</div>
+              <Building2 size={17} style={{ color: '#64748b', flexShrink: 0 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{sucursalActiva}</div>
             </div>
           </div>
-          <div className="inicio-stat-card" style={{ background: '#fff', padding: isMobile ? '16px 16px' : '20px 24px' }}>
+          <div className="inicio-stat-card" style={{ padding: isMobile ? '14px 14px' : '18px 20px' }}>
             <StatLabel icon={MapPin}>Asignación</StatLabel>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <MapPin size={18} style={{ color: '#6b7280', flexShrink: 0 }} />
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>{asignacion}</div>
+              <MapPin size={17} style={{ color: '#64748b', flexShrink: 0 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{asignacion}</div>
             </div>
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, paddingLeft: 26 }}>Perfil en personal</div>
+            {consultorioActivo ? (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, paddingLeft: 25 }}>{consultorioActivo}</div>
+            ) : (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, paddingLeft: 25 }}>Perfil en personal</div>
+            )}
           </div>
-          <div className="inicio-stat-card" style={{ background: '#fff', padding: isMobile ? '16px 16px' : '20px 24px' }}>
+          <div className="inicio-stat-card" style={{ padding: isMobile ? '14px 14px' : '18px 20px' }}>
             <StatLabel icon={KeyRound}>Acceso</StatLabel>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Zap size={18} style={{ color: '#6b7280', flexShrink: 0 }} />
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>{permissionCount} módulos</div>
+              <Zap size={17} style={{ color: '#64748b', flexShrink: 0 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{permissionCount} módulos</div>
             </div>
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, paddingLeft: 26, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, paddingLeft: 25, display: 'flex', alignItems: 'center', gap: 4 }}>
               {locationConfirmed ? (
-                <><CheckCircle2 size={11} style={{ color: '#6b7280' }} /> Ubicación confirmada</>
+                <><CheckCircle2 size={11} /> Ubicación confirmada</>
               ) : (
                 <>Confirma ubicación en el menú</>
               )}
@@ -414,16 +361,16 @@ const Inicio = () => {
 
         {/* Ubicación pendiente */}
         {catalogosReady && !locationConfirmed && (
-          <div className={`${enter(3)}`} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', marginBottom: 24 }}>
+          <div className={`inicio-panel ${enter(3)}`} style={{ marginBottom: 20 }}>
             <div style={cardHeader}>
-              <MapPin size={15} style={{ color: '#6b7280' }} />
+              <MapPin size={15} style={{ color: '#94a3b8' }} />
               Confirmar sucursal de trabajo
             </div>
-            <div style={{ padding: '16px 20px' }}>
-              <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 12px' }}>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
                 Selecciona tu sucursal antes de registrar actividad clínica.
               </p>
-              <LocationSelector accentColor="#111" />
+              <LocationSelector accentColor="#0f172a" />
             </div>
           </div>
         )}
@@ -441,7 +388,7 @@ const Inicio = () => {
                   style={{ animationDelay: `${0.05 * idx + 0.2}s` }}
                   onClick={() => navigate(item.path)}
                 >
-                  <Icon size={14} style={{ color: '#6b7280' }} />
+                  <Icon size={14} style={{ color: '#94a3b8' }} />
                   {item.label}
                 </button>
               );
@@ -450,32 +397,33 @@ const Inicio = () => {
         )}
 
         {/* Tabla accesos */}
-        <div className={`${enter(4)} inicio-rows-visible`} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+        <div className={`inicio-panel ${enter(4)} inicio-rows-visible`}>
           <div style={cardHeader}>
-            <LayoutDashboard size={15} style={{ color: '#6b7280' }} />
+            <LayoutDashboard size={15} style={{ color: '#94a3b8' }} />
             Accesos rápidos
           </div>
           {quickAccess.length === 0 ? (
-            <div style={{ padding: '32px 20px', textAlign: 'center', fontSize: 13, color: '#6b7280' }}>
+            <div style={{ padding: '32px 18px', textAlign: 'center', fontSize: 13, color: '#64748b' }}>
               No tienes módulos asignados. Contacta a administración.
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: '#fafafa' }}>
+                <tr>
                   {['Módulo', 'Área', ''].map((h) => (
                     <th
                       key={h || 'action'}
                       style={{
                         textAlign: 'left',
-                        padding: '10px 20px',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: '#9ca3af',
+                        padding: '10px 18px',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: '#94a3b8',
                         textTransform: 'uppercase',
-                        letterSpacing: '.06em',
-                        borderBottom: '1px solid #e5e7eb',
+                        letterSpacing: '0.02em',
+                        borderBottom: '1px solid rgba(15, 23, 42, 0.06)',
                         width: h === '' ? 48 : undefined,
+                        fontFamily: "'Sora', system-ui, sans-serif",
                       }}
                     >
                       {h}
@@ -491,23 +439,23 @@ const Inicio = () => {
                       key={item.id}
                       className="inicio-row-hover inicio-row-enter"
                       style={{
-                        borderBottom: '1px solid #f3f4f6',
+                        borderBottom: '1px solid rgba(15, 23, 42, 0.04)',
                         cursor: 'pointer',
                         animationDelay: `${0.04 * idx + 0.15}s`,
                       }}
                       onClick={() => navigate(item.path)}
                     >
-                      <td style={{ padding: '12px 20px' }}>
+                      <td style={{ padding: '12px 18px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <Icon size={16} style={{ color: '#9ca3af', flexShrink: 0 }} />
-                          <span style={{ fontSize: 13, fontWeight: 600, color: '#111' }}>{item.label}</span>
+                          <Icon size={16} style={{ color: '#94a3b8', flexShrink: 0 }} />
+                          <span style={{ fontSize: 13, fontWeight: 500, color: '#0f172a' }}>{item.label}</span>
                         </div>
                       </td>
-                      <td style={{ padding: '12px 20px', fontSize: 13, color: '#6b7280' }}>
+                      <td style={{ padding: '12px 18px', fontSize: 13, color: '#64748b' }}>
                         {item.group}
                       </td>
-                      <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                        <ChevronRight size={15} className="inicio-row-chevron" style={{ color: '#9ca3af' }} />
+                      <td style={{ padding: '12px 18px', textAlign: 'right' }}>
+                        <ChevronRight size={15} className="inicio-row-chevron" style={{ color: '#94a3b8' }} />
                       </td>
                     </tr>
                   );
@@ -519,8 +467,8 @@ const Inicio = () => {
 
         <p style={{
           fontSize: 12,
-          color: '#9ca3af',
-          marginTop: 20,
+          color: '#94a3b8',
+          marginTop: 16,
           marginBottom: 0,
           display: 'flex',
           alignItems: 'center',

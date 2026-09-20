@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+  <meta charset="UTF-8" />
+  <title>Guía de pruebas — Bitácoras Enfermería ↔ Jefatura | SRS-Medic</title>
+  <style>
+    @page { size: letter; margin: 16mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: #0f172a;
+      font-size: 11.5px;
+      line-height: 1.45;
+      margin: 0;
+      padding: 0;
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.02em; }
+    h2 {
+      font-size: 14px; margin: 22px 0 8px; padding-bottom: 4px;
+      border-bottom: 2px solid #1e293b; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    h3 { font-size: 12.5px; margin: 14px 0 6px; color: #1e3a5f; }
+    h4 { font-size: 11.5px; margin: 10px 0 4px; color: #334155; }
+    p { margin: 0 0 8px; }
+    ul, ol { margin: 0 0 10px; padding-left: 18px; }
+    li { margin-bottom: 3px; }
+    .cover {
+      border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px 20px;
+      background: #f8fafc; margin-bottom: 18px;
+    }
+    .meta { color: #64748b; font-size: 10.5px; }
+    .badge {
+      display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; padding: 2px 7px; border-radius: 999px; margin-right: 4px;
+    }
+    .b-enf { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .b-jef { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .b-ambos { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+    .card {
+      border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin: 8px 0 12px;
+      page-break-inside: avoid;
+    }
+    .card.ok { border-left: 4px solid #059669; }
+    .card.warn { border-left: 4px solid #d97706; }
+    .card.info { border-left: 4px solid #2563eb; }
+    .flow {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px; background: #0f172a; color: #e2e8f0;
+      padding: 10px 12px; border-radius: 8px; white-space: pre-wrap; margin: 8px 0 12px;
+    }
+    table {
+      width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 10.5px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: top; text-align: left;
+    }
+    th { background: #1e293b; color: #fff; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    .check { list-style: none; padding-left: 0; }
+    .check li { padding-left: 22px; position: relative; margin-bottom: 5px; }
+    .check li::before {
+      content: "☐"; position: absolute; left: 0; top: 0; color: #475569; font-size: 13px;
+    }
+    .page-break { page-break-before: always; }
+    .small { font-size: 10px; color: #64748b; }
+    .footer {
+      margin-top: 20px; padding-top: 8px; border-top: 1px solid #e2e8f0;
+      font-size: 9.5px; color: #94a3b8;
+    }
+    strong { font-weight: 700; }
+  </style>
+</head>
+<body>
+
+  <div class="cover">
+    <h1>Guía de pruebas — Bitácoras Enfermería ↔ Jefatura</h1>
+    <p><strong>SRS-Medic · Centro Médico Santa Cruz</strong></p>
+    <p class="meta">
+      Documento operativo para validar las mejoras de recepción, entradas/salidas, caducidades,
+      pedidos, carro rojo y alertas de temperatura/cloro.
+    </p>
+    <p class="meta">Versión guía: 1.0 · Agosto 2026 · Rama de cambios: <code>fix/auth-idle-hardening</code></p>
+    <p>
+      <span class="badge b-enf">Enfermería</span>
+      <span class="badge b-jef">Jefatura</span>
+      <span class="badge b-ambos">Ambos</span>
+    </p>
+  </div>
+
+  <h2>1. Objetivo</h2>
+  <p>
+    Esta guía indica <strong>cómo funciona</strong> cada flujo, <strong>quién hace qué</strong>
+    (enfermería ↔ jefatura) y <strong>cómo probarlo</strong> paso a paso, con un checklist de aceptación.
+  </p>
+
+  <h2>2. Dónde entrar en el sistema</h2>
+  <table>
+    <thead>
+      <tr><th>Rol</th><th>Ruta / pantalla</th><th>Para qué</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge b-enf">Enfermería</span></td>
+        <td>Agenda enfermería → <strong>Registros / Bitácoras</strong></td>
+        <td>Captura de recepción, E/S, pedidos, temp, cloro, carro rojo, caducidades</td>
+      </tr>
+      <tr>
+        <td><span class="badge b-jef">Jefatura</span></td>
+        <td><code>/enfermeria/jefatura</code> — Centro de mando</td>
+        <td>Aprobar, integrar inventario, pedidos Prov/Trasp/Pend, caducidades, matrices</td>
+      </tr>
+      <tr>
+        <td><span class="badge b-jef">Jefatura</span></td>
+        <td><code>/enfermeria/registros</code></td>
+        <td>Misma captura de bitácoras (vista completa)</td>
+      </tr>
+      <tr>
+        <td><span class="badge b-ambos">Ambos</span></td>
+        <td>Carro rojo / Caducidades (menú enfermería)</td>
+        <td>Captura y auditoría según rol</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. Mapa rápido de responsabilidades</h2>
+  <table>
+    <thead>
+      <tr><th>Proceso</th><th>Enfermería</th><th>Jefatura</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Recepción de proveedor</td>
+        <td>Captura lote (factura + ítems), marca Aprobado SI/NO</td>
+        <td>Revisa, aprueba/rechaza con comentario, integra a inventario</td>
+      </tr>
+      <tr>
+        <td>Traspaso entre sucursales (Salida)</td>
+        <td>Registra salida; destino ve entrada pendiente y acepta/pendiente</td>
+        <td>Aprueba salida (stock), integra entrada al inventario/caducidades</td>
+      </tr>
+      <tr>
+        <td>Pedidos</td>
+        <td>Captura pedido; consulta historial y resolución</td>
+        <td>Marca Prov / Trasp / Pend por insumo</td>
+      </tr>
+      <tr>
+        <td>Caducidades</td>
+        <td>Registra / imprime / baja con motivo</td>
+        <td>Audita multi-sucursal, traspasa (mueve sucursal), baja</td>
+      </tr>
+      <tr>
+        <td>Carro rojo</td>
+        <td>Captura existencias + caducidad</td>
+        <td>Plantilla y supervisión</td>
+      </tr>
+      <tr>
+        <td>Temp / Cloro</td>
+        <td>Llena turnos; ve recordatorio si falta horario</td>
+        <td>Matriz mensual y cumplimiento</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <h2>4. Recepción de insumos (proveedor → sucursal)</h2>
+
+  <h3>4.1 Cómo funciona</h3>
+  <div class="flow">Enfermería captura cabecera (proveedor + sucursal + factura)
+  → Congela cabecera
+  → Agrega 1..N medicamentos del mismo folio
+  → Guardar lote
+  → Cada ítem queda en bitácora con estado pendiente (o rechazado si Aprobado=NO)
+  → Jefatura aprueba recepción
+  → Se genera Entrada pendiente de inventario
+  → Jefatura “Aceptar e integrar” → inventario + caducidades de la sucursal</div>
+
+  <h3>4.2 Cómo hacerlo — Enfermería</h3>
+  <ol>
+    <li>Abrir <strong>Registros</strong> → pestaña <strong>Control de insumos / Farmacia</strong>.</li>
+    <li>Elegir movimiento <strong>Recepción</strong>.</li>
+    <li>Llenar cabecera:
+      <ul>
+        <li>Proveedor / de dónde</li>
+        <li>Sucursal donde se recibe</li>
+        <li><strong>Factura</strong> (junto a esos campos)</li>
+      </ul>
+    </li>
+    <li>Buscar medicamento en catálogo, llenar lote, caducidad, cantidad, presentación y forma.</li>
+    <li>Marcar criterios de empaque/etiqueta.</li>
+    <li>Marcar <strong>Aprobado: SI o NO</strong> (obligatorio).</li>
+    <li>Pulsar <strong>Agregar</strong> (la cabecera se congela).</li>
+    <li>Repetir ítems de la misma factura.</li>
+    <li>Pulsar <strong>Guardar lote</strong>.</li>
+    <li>Opcional: <strong>Ver bitácoras del mes</strong> / <strong>Imprimir bitácoras</strong>.</li>
+  </ol>
+
+  <h3>4.3 Cómo hacerlo — Jefatura</h3>
+  <ol>
+    <li>Ir a Centro de mando → <strong>Recepción Insumos</strong>.</li>
+    <li>(Opcional) Filtrar por <strong>sucursal</strong>.</li>
+    <li>En cada registro pendiente: <strong>Aprobar</strong> o <strong>No aprobar</strong> (comentario obligatorio si no aprueba).</li>
+    <li>Cuando exista la Entrada generada: <strong>Aceptar e integrar</strong> para inventario y caducidades.</li>
+  </ol>
+
+  <div class="card ok">
+    <h4>Checklist de prueba — Recepción</h4>
+    <ul class="check">
+      <li>La factura está junto al proveedor (no abajo del medicamento).</li>
+      <li>Al Agregar, la cabecera queda congelada (no se puede cambiar proveedor/factura a mitad del lote).</li>
+      <li>Se pueden guardar varios ítems de un solo folio de una vez.</li>
+      <li>Si Aprobado=NO, el registro sale como no aprobado.</li>
+      <li>Enfermería puede ver e imprimir las bitácoras del mes.</li>
+      <li>Jefatura ve Aprobado SI/NO y puede filtrar por sucursal.</li>
+      <li>Al integrar, el stock y caducidades de esa sucursal se actualizan.</li>
+    </ul>
+  </div>
+
+  <h2>5. Entradas y salidas entre sucursales</h2>
+
+  <h3>5.1 Cómo funciona (flujo pedido en el reporte)</h3>
+  <div class="flow">Sucursal A (enfermería): registra SALIDA hacia Sucursal B
+  → El sistema crea automáticamente ENTRADA pendiente en B
+  → Enfermería en B revisa y Acepta o deja Pendiente (con comentario)
+  → Jefatura aprueba la salida (descuenta stock de A si aplica)
+  → Jefatura integra la entrada en B (inventario + caducidades)</div>
+
+  <h3>5.2 Cómo hacerlo — Enfermería origen (salida)</h3>
+  <ol>
+    <li>Farmacia → movimiento <strong>Salida</strong>.</li>
+    <li>Cabecera: sucursal origen, destino y factura (si aplica).</li>
+    <li>Agregar ítems del envío → <strong>Guardar lote</strong>.</li>
+    <li>No debe ser necesario capturar de nuevo la entrada en destino.</li>
+  </ol>
+
+  <h3>5.3 Cómo hacerlo — Enfermería destino (entrada)</h3>
+  <ol>
+    <li>En Registros → Farmacia → <strong>Ver bitácoras del mes</strong>.</li>
+    <li>Buscar filas de tipo <strong>Entrada</strong> con acción <strong>Aceptar / Pendiente</strong>.</li>
+    <li>
+      <strong>Aceptar</strong> = llegó completo.<br />
+      <strong>Pendiente</strong> = pedir comentario (incompleto, faltante, etc.).
+    </li>
+  </ol>
+
+  <h3>5.4 Cómo hacerlo — Jefatura</h3>
+  <ol>
+    <li>Vista <strong>Entradas y Salidas</strong> (filtrar sucursal si hace falta).</li>
+    <li>Aprobar/rechazar movimientos con comentario.</li>
+    <li>En entradas pendientes de inventario: <strong>Aceptar e integrar</strong>.</li>
+  </ol>
+
+  <div class="card ok">
+    <h4>Checklist de prueba — E/S</h4>
+    <ul class="check">
+      <li>Al guardar una Salida A→B, aparece Entrada pendiente en B sin recaptura.</li>
+      <li>Destino puede Aceptar o marcar Pendiente con motivo.</li>
+      <li>Jefatura ve el comentario / estado.</li>
+      <li>Filtro por sucursal funciona en recepción y en E/S (pantalla e impresión).</li>
+      <li>Tras integrar, inventario y caducidades de B reflejan el ingreso.</li>
+      <li>Print muestra Compuesto, Presentación y Forma en columnas separadas (datos nuevos).</li>
+    </ul>
+  </div>
+
+  <div class="card warn">
+    <strong>Nota:</strong> Registros antiguos donde presentación/forma se guardaron dentro de “compuesto”
+    seguirán viéndose juntos. Los nuevos capturados con campos separados sí imprimen bien.
+  </div>
+
+  <div class="page-break"></div>
+
+  <h2>6. Caducidades de almacén</h2>
+
+  <h3>6.1 Cómo funciona</h3>
+  <ul>
+    <li>Colección propia por sucursal y mes de caducidad.</li>
+    <li>Al integrar una entrada de farmacia, también se escribe/actualiza caducidades.</li>
+    <li>Traspaso desde jefatura: baja/resta en origen y crea registro en destino.</li>
+    <li>Eliminar = <strong>baja</strong> (pide motivo: caducado, no se pudo vender, merma…).</li>
+  </ul>
+
+  <h3>6.2 Prueba — Enfermería</h3>
+  <ol>
+    <li>Abrir Caducidades / tab Caducidades.</li>
+    <li>Agregar un medicamento de prueba.</li>
+    <li>Imprimir: deben verse columnas <strong>Compuesto / Presentación / Forma</strong>.</li>
+    <li>Dar de baja: debe pedir motivo.</li>
+  </ol>
+
+  <h3>6.3 Prueba — Jefatura</h3>
+  <ol>
+    <li>Vista Caducidades multi-sucursal.</li>
+    <li>Elegir un registro → <strong>Traspasar</strong> a otra sucursal.</li>
+    <li>Verificar: desaparece/resta en origen y aparece en destino.</li>
+    <li>Imprimir auditoría con columnas separadas.</li>
+  </ol>
+
+  <div class="card ok">
+    <h4>Checklist — Caducidades</h4>
+    <ul class="check">
+      <li>Traspaso mueve de sucursal (ya no “se queda” en la original).</li>
+      <li>Eliminar exige motivo de baja.</li>
+      <li>Print no mezcla presentación/forma dentro de compuesto (datos nuevos).</li>
+    </ul>
+  </div>
+
+  <h2>7. Pedido de medicamento</h2>
+
+  <h3>7.1 Flujo</h3>
+  <div class="flow">Enfermería captura físico/pedido por insumo → Guarda
+  → Jefatura abre Pedidos Sucursales
+  → Por cada insumo pedido marca: Prov | Trasp | Pend
+  → Enfermería en “Ver pedidos” ve esa resolución</div>
+
+  <h3>7.2 Prueba</h3>
+  <ol>
+    <li><span class="badge b-enf">Enf</span> Capturar un pedido con al menos 3 insumos con cantidad en “Pedido”.</li>
+    <li><span class="badge b-jef">Jef</span> Abrir el pedido del día → marcar un Prov, un Trasp y un Pend.</li>
+    <li><span class="badge b-enf">Enf</span> Botón <strong>Ver pedidos</strong>: debe verse Prov/Trasp/Pend.</li>
+  </ol>
+
+  <div class="card ok">
+    <ul class="check">
+      <li>Enfermería puede consultar pedidos del mes (no solo capturar).</li>
+      <li>Jefatura tiene checkboxes Prov / Trasp / Pend por renglón.</li>
+      <li>La resolución se guarda y se refleja del otro lado.</li>
+    </ul>
+  </div>
+
+  <h2>8. Carro rojo</h2>
+  <h3>8.1 Regla nueva</h3>
+  <p>
+    Si un artículo tiene <strong>existencia &gt; 0</strong>, la <strong>caducidad es obligatoria</strong>
+    al guardar. Así se evita que quede “—” (caso Lomas).
+  </p>
+  <h3>8.2 Prueba</h3>
+  <ol>
+    <li>Abrir Carro rojo de la sucursal (ideal: Lomas).</li>
+    <li>Poner existencia sin caducidad → Guardar: debe rechazar con mensaje.</li>
+    <li>Capturar caducidad → Guardar: debe aceptar.</li>
+    <li>Verificar que la columna Caducidad muestre la fecha (no guion).</li>
+  </ol>
+  <div class="card warn">
+    <strong>Importante:</strong> registros ya guardados antes con “—” no se rellenan solos;
+    hay que completar caducidades faltantes y volver a guardar.
+  </div>
+
+  <h2>9. Temperatura, cloro y PH</h2>
+  <h3>9.1 Cómo funciona</h3>
+  <ul>
+    <li>Enfermería captura por turno (8:00 / 16:00 / 22:00) y cloro 1× día.</li>
+    <li>Si falta el horario correspondiente, al abrir Registros aparece un <strong>recordatorio</strong>.</li>
+    <li>Jefatura ve matrices mensuales y KPIs de cumplimiento.</li>
+  </ul>
+  <h3>9.2 Prueba</h3>
+  <ol>
+    <li>En una sucursal sin temp de la mañana, entrar a Registros después de las 9:00: debe avisar.</li>
+    <li>Capturar el turno faltante: el recordatorio de ese turno desaparece.</li>
+    <li>Jefatura → Temperaturas / Cloro: celda del día debe llenarse.</li>
+  </ol>
+
+  <div class="page-break"></div>
+
+  <h2>10. Escenarios de prueba recomendados (orden)</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Escenario</th><th>Quién</th><th>Resultado esperado</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>Recepción lote 3 ítems misma factura</td>
+        <td>Enf → Jef</td>
+        <td>3 docs, cabecera igual, aprobación e integración OK</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Recepción con Aprobado=NO</td>
+        <td>Enf → Jef</td>
+        <td>Registro no aprobado; jefatura lo ve</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Salida A→B de 1 medicamento</td>
+        <td>Enf A → Enf B → Jef</td>
+        <td>Entrada automática en B; B acepta; jefatura integra</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Entrada incompleta</td>
+        <td>Enf B</td>
+        <td>Marca Pendiente + comentario visible</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Filtro sucursal en jefatura E/S</td>
+        <td>Jef</td>
+        <td>Solo mueve la sucursal elegida (pantalla e impresión)</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Traspaso desde Caducidades</td>
+        <td>Jef</td>
+        <td>Origen baja/resta; destino tiene el registro</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>Pedido Prov/Trasp/Pend</td>
+        <td>Enf ↔ Jef</td>
+        <td>Resolución visible en “Ver pedidos”</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>Carro rojo sin caducidad</td>
+        <td>Enf</td>
+        <td>Bloquea guardado; con fecha sí guarda</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>Alerta temp/cloro</td>
+        <td>Enf</td>
+        <td>Banner de recordatorio cuando falta el turno</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>11. Criterios de aceptación global</h2>
+  <div class="card info">
+    <ul class="check">
+      <li>Enfermería ya no captura dos veces el mismo traspaso (salida basta).</li>
+      <li>Jefatura puede auditar por sucursal recepción y E/S como temp/cloro.</li>
+      <li>Inventario y caducidades reflejan movimientos integrados.</li>
+      <li>Pedidos tienen trazabilidad de origen (proveedor / traspaso / pendiente).</li>
+      <li>Carro rojo no permite existencias sin caducidad.</li>
+      <li>Hay recordatorio operativo si faltan turnos de frío/cloro.</li>
+    </ul>
+  </div>
+
+  <h2>12. Problemas frecuentes</h2>
+  <table>
+    <thead>
+      <tr><th>Síntoma</th><th>Causa probable</th><th>Qué hacer</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>No deja guardar recepción</td>
+        <td>Falta Aprobado SI/NO o medicamento no ligado al catálogo</td>
+        <td>Marcar SI/NO y elegir sugerencia del catálogo</td>
+      </tr>
+      <tr>
+        <td>No aparece entrada en destino</td>
+        <td>Salida sin sucursal destino o movimiento distinto a Salida</td>
+        <td>Verificar destino y que sea Salida</td>
+      </tr>
+      <tr>
+        <td>Print mezcla presentación en compuesto</td>
+        <td>Registro viejo</td>
+        <td>Probar con captura nueva; no migrar histórico automáticamente</td>
+      </tr>
+      <tr>
+        <td>Carro rojo Lomas sigue en “—”</td>
+        <td>Datos previos incompletos</td>
+        <td>Completar caducidades y guardar de nuevo</td>
+      </tr>
+      <tr>
+        <td>Filtro de sucursal “no hace nada”</td>
+        <td>Versión anterior al fix</td>
+        <td>Confirmar despliegue con el commit que aplica <code>bitacorasFiltradas</code> en E/S</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>13. Firmas de prueba</h2>
+  <table>
+    <thead>
+      <tr><th>Escenario #</th><th>Fecha</th><th>Sucursal</th><th>Probó (nombre)</th><th>OK / Falló</th><th>Observaciones</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>2</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>3</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>4</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>5</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>6</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>7</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>8</td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>9</td><td></td><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    SRS-Medic — Guía interna de pruebas · Bitácoras Enfermería / Jefatura · No sustituye capacitación presencial.
+    Generado para validación operativa de las mejoras del reporte Savant/Jaz.
+  </div>
+
+</body>
+</html>

@@ -32,6 +32,7 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
   const [sucursales, setSucursales] = useState([]);
   const [destino, setDestino] = useState('');
   const [cantidad, setCantidad] = useState(item?.cantidadDisponible ? String(item.cantidadDisponible) : '');
+  const [factura, setFactura] = useState(item?.factura || '');
   const [justificacion, setJustificacion] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -108,17 +109,19 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
         medicamentoId: item.medicamentoId || null,
         compuesto: item.nombre || '',
         presentacion: item.presentacion || '',
+        forma: item.forma || '',
         numeroAcomodo: item.numeroAcomodo || '',
         lote: item.lote || '',
         caducidad: item.caducidad || '',
         cantidad: String(cant),
+        factura: factura.trim(),
         sucursalOrigen: item.sucursalOrigen || '',
         sucursalDestino: destino,
         justificacion: justificacion.trim(),
-        observaciones: `Traspaso jefatura: ${justificacion.trim()}`
+        observaciones: `Traspaso: ${justificacion.trim()}${factura.trim() ? ` · Factura ${factura.trim()}` : ''}`
       };
 
-      // 1. Salida aprobada en el origen
+      // 1. Salida en el ORIGEN (aprobada al enviar; la recepción física la hace enfermería destino)
       const salidaRef = await addDoc(collection(db, 'bitacoras_operativas'), {
         tipo: 'Farmacia',
         area: 'Salida',
@@ -153,7 +156,7 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
         console.error('No se pudo descontar stock del origen', err);
       }
 
-      // 3. Entrada pendiente de integración en el destino
+      // 3. Entrada PENDIENTE en destino — enfermería aprueba e integra al recibir
       const entradaRef = await addDoc(collection(db, 'bitacoras_operativas'), {
         tipo: 'Farmacia',
         area: 'Entrada',
@@ -162,18 +165,19 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
         fechaString,
         responsableNombre: nombreUsuario,
         estado: 'completado',
-        estadoAprobacion: 'aprobado',
+        estadoAprobacion: 'pendiente',
         estadoInventario: 'pendiente',
+        pendienteRecepcionEnfermeria: true,
         origenRecepcionId: salidaRef.id,
-        aprobadoPor: user?.uid || user?.id || null,
-        aprobadoPorNombre: nombreUsuario,
-        aprobadoAt: serverTimestamp(),
+        aprobadoPor: null,
+        aprobadoPorNombre: null,
+        aprobadoAt: null,
         justificacion: justificacion.trim(),
         detalles: { ...detallesBase, tipo_movimiento: 'Entrada', origenRecepcionId: salidaRef.id }
       });
       await updateDoc(salidaRef, { entradaGeneradaId: entradaRef.id });
 
-      // Mover registro de caducidades_almacen a la sucursal destino (si viene de esa vista)
+      // Mover caducidades_almacen: baja en origen + merge en destino (sin duplicar MX)
       if (item.caducidadDocId) {
         try {
           const cadRef = doc(db, 'caducidades_almacen', item.caducidadDocId);
@@ -197,22 +201,51 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
                 actualizadoPor: nombreUsuario,
               });
             }
-            await addDoc(collection(db, 'caducidades_almacen'), {
-              codigo: data.codigo || item.numeroAcomodo || '',
-              medicamento: data.medicamento || item.nombre || '',
-              presentacion: data.presentacion || item.presentacion || '',
-              forma: data.forma || item.forma || '',
-              medicamentoId: data.medicamentoId || item.medicamentoId || null,
-              cantidad: cant,
-              lote: data.lote || item.lote || '',
-              mesCaducidad: data.mesCaducidad || String(item.caducidad || '').slice(0, 7),
-              mesLabel: data.mesLabel || '',
-              sucursal: destino,
-              responsableNombre: nombreUsuario,
-              responsableId: user?.uid || null,
-              creadoEn: serverTimestamp(),
-              origenTraspasoId: item.caducidadDocId,
-            });
+
+            const mesCad = data.mesCaducidad || String(item.caducidad || '').slice(0, 7);
+            let merged = false;
+            if (mesCad) {
+              const destSnap = await getDocs(query(
+                collection(db, 'caducidades_almacen'),
+                where('sucursal', '==', destino),
+                where('mesCaducidad', '==', mesCad)
+              ));
+              const matchDest = destSnap.docs.find((d) => {
+                const row = d.data() || {};
+                if (row.eliminado) return false;
+                return String(row.lote || '') === String(data.lote || item.lote || '')
+                  && (
+                    (data.medicamentoId && row.medicamentoId === data.medicamentoId)
+                    || normalizeText(row.medicamento) === normalizeText(data.medicamento || item.nombre)
+                  );
+              });
+              if (matchDest) {
+                await updateDoc(matchDest.ref, {
+                  cantidad: (Number(matchDest.data().cantidad) || 0) + cant,
+                  actualizadoEn: serverTimestamp(),
+                  actualizadoPor: nombreUsuario,
+                });
+                merged = true;
+              }
+            }
+            if (!merged) {
+              await addDoc(collection(db, 'caducidades_almacen'), {
+                codigo: data.codigo || item.numeroAcomodo || '',
+                medicamento: data.medicamento || item.nombre || '',
+                presentacion: data.presentacion || item.presentacion || '',
+                forma: data.forma || item.forma || '',
+                medicamentoId: data.medicamentoId || item.medicamentoId || null,
+                cantidad: cant,
+                lote: data.lote || item.lote || '',
+                mesCaducidad: mesCad,
+                mesLabel: data.mesLabel || mesCad,
+                sucursal: destino,
+                responsableNombre: nombreUsuario,
+                responsableId: user?.uid || null,
+                creadoEn: serverTimestamp(),
+                origenTraspasoId: item.caducidadDocId,
+              });
+            }
           }
         } catch (cadErr) {
           console.error('No se pudo mover caducidades_almacen', cadErr);
@@ -226,8 +259,8 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
         inventarioId: item.inventarioId || null,
         caducidadDocId: item.caducidadDocId || null,
         msg: stockDescontado
-          ? `Traspaso creado: −${cant} en ${item.sucursalOrigen}, Entrada pendiente en ${destino}${item.caducidadDocId ? ' (caducidades actualizadas)' : ''}.`
-          : `Traspaso creado hacia ${destino}. No se encontró stock en ${item.sucursalOrigen} para descontar.`
+          ? `Traspaso: −${cant} en ${item.sucursalOrigen}. Enfermería de ${destino} debe aprobar e integrar.`
+          : `Traspaso hacia ${destino}. Enfermería destino debe aprobar e integrar. (Sin descuento de stock en origen).`
       });
       onClose();
     } catch (err) {
@@ -285,6 +318,16 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
             </label>
           </div>
           <label>
+            <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 mb-1">Factura</span>
+            <input
+              type="text"
+              value={factura}
+              onChange={(e) => setFactura(e.target.value)}
+              placeholder="Nº factura / remisión (opcional)"
+              className={inputBase}
+            />
+          </label>
+          <label>
             <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 mb-1">Justificación *</span>
             <textarea
               value={justificacion}
@@ -300,7 +343,7 @@ const TraspasoSucursalModal = ({ item, onClose, onDone }) => {
             </p>
           )}
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            Se descuenta del origen y se genera una Entrada en el destino, pendiente de «Aceptar e integrar» en jefatura.
+            Se descuenta del origen y se genera una Entrada en el destino. Enfermería del destino debe <strong>aprobar</strong> y <strong>aceptar e integrar</strong> al recibir.
           </p>
         </div>
 

@@ -7,6 +7,12 @@ import { resolveUserHomePath } from '../../services/permissionService';
 import LocationSelector from '../../components/LocationSelector';
 import logoImg from '../../assets/logo_azul.png';
 import { consumeLogoutReason } from '../../utils/sessionIdle';
+import { PUBLIC_SHELL_CSS } from '../../styles/publicShellStyles';
+
+const LOGIN_EXTRA_CSS = `
+  .spin { animation: pub-spin 0.8s linear infinite; }
+  ::selection { background: rgba(15, 23, 42, 0.12); }
+`;
 
 /* ══════════════════════════════════════════
    ICONS — Form
@@ -105,230 +111,7 @@ const IconUser28 = () => (
 
 
 /* ══════════════════════════════════════════
-   CSS
-══════════════════════════════════════════ */
-const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Inter', sans-serif; }
-
-  /* Shell */
-  .ac-shell {
-    min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    padding: 24px; position: relative; overflow: hidden;
-    background: linear-gradient(140deg, #eef4fb 0%, #ddeeff 55%, #e8f3fd 100%);
-    font-family: 'Inter', sans-serif;
-  }
-  .ac-orb {
-    position: absolute; border-radius: 50%;
-    pointer-events: none; filter: blur(90px); opacity: 0.85;
-  }
-
-  /* Card */
-  .ac-card {
-    position: relative; width: 100%; max-width: 420px;
-    background: rgba(255,255,255,0.72);
-    backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
-    border: 1px solid rgba(255,255,255,0.88);
-    border-radius: 28px;
-    padding: 44px 40px 36px;
-    box-shadow: 0 24px 64px rgba(30,80,160,0.13), 0 0 0 1px rgba(30,80,160,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-    overflow: hidden;
-    text-align: center;
-  }
-
-  /* Entrada de la card */
-  .ac-card { opacity: 0; transform: translateY(20px); transition: opacity 0.55s ease, transform 0.55s ease; }
-  .ac-card.in { opacity: 1; transform: translateY(0); }
-
-  /* ─── BRAND AREA (logo + nombre) ─── */
-  .ac-brand {
-    overflow: hidden;
-    transition: max-height 0.42s cubic-bezier(.4,0,.2,1), opacity 0.3s ease, margin-bottom 0.42s;
-    max-height: 180px; opacity: 1; margin-bottom: 0;
-  }
-  .ac-brand.gone { max-height: 0; opacity: 0; margin-bottom: 0; }
-  .ac-logo {
-    height: 66px; width: auto; object-fit: contain; display: block;
-    margin: 0 auto 18px;
-    transition: height 0.42s cubic-bezier(.4,0,.2,1), margin-bottom 0.42s;
-  }
-  .ac-brand.compact .ac-logo { height: 42px; margin-bottom: 10px; }
-  .ac-clinica {
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-    font-size: 22px; font-weight: 700; color: #0f172a;
-    letter-spacing: -0.02em; line-height: 1.2;
-    transition: font-size 0.42s cubic-bezier(.4,0,.2,1), color 0.3s ease;
-  }
-  .ac-brand.compact .ac-clinica { font-size: 15px; color: #475569; font-weight: 600; }
-
-  /* ─── BLOQUE BIENVENIDA ─── */
-  .ac-welcome {
-    max-height: 260px; opacity: 1; overflow: hidden;
-    transition: max-height 0.38s cubic-bezier(.4,0,.2,1), opacity 0.28s ease;
-  }
-  .ac-welcome.off { max-height: 0; opacity: 0; }
-  .ac-subtitle {
-    font-size: 13px; color: #64748b; line-height: 1.65;
-    margin: 16px 0 28px;
-  }
-
-  /* ─── BLOQUE FORMULARIO ─── */
-  .ac-form-area {
-    max-height: 0; opacity: 0; overflow: hidden;
-    transition: max-height 0.52s cubic-bezier(.4,0,.2,1) 0.14s, opacity 0.38s ease 0.16s;
-  }
-  .ac-form-area.open { max-height: 540px; opacity: 1; }
-
-  /* ─── BLOQUE PORTAL ─── */
-  .ac-portal {
-    max-height: 0; opacity: 0; overflow: hidden;
-    transition: max-height 0.58s cubic-bezier(.4,0,.2,1) 0.18s, opacity 0.42s ease 0.22s;
-  }
-  .ac-portal.open { max-height: 860px; opacity: 1; overflow: visible; }
-
-  /* Dot pulsante */
-  .ac-pulse {
-    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-    animation: ac-pulse-ring 2.2s ease infinite;
-  }
-  @keyframes ac-pulse-ring {
-    0%,100% { box-shadow: 0 0 0 0 rgba(var(--pr),0.3); }
-    50%      { box-shadow: 0 0 0 8px rgba(var(--pr),0); }
-  }
-
-  /* Animaciones portal items */
-  @keyframes ac-up {
-    from { opacity: 0; transform: translateY(14px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .ap0 { animation: ac-up 0.45s ease both 0.28s; }
-  .ap1 { animation: ac-up 0.45s ease both 0.38s; }
-  .ap2 { animation: ac-up 0.45s ease both 0.46s; }
-  .ap3 { animation: ac-up 0.45s ease both 0.54s; }
-  .ap4 { animation: ac-up 0.45s ease both 0.62s; }
-
-  /* Label e inputs */
-  .ac-label {
-    display: block; font-size: 10px; font-weight: 700;
-    letter-spacing: 0.14em; text-transform: uppercase; color: #94a3b8;
-    margin-bottom: 7px; text-align: left; padding-left: 2px;
-  }
-  .ac-field { margin-bottom: 14px; }
-  .ac-input {
-    width: 100%; background: #f8fafc; border: 1.5px solid #e2e8f0;
-    border-radius: 13px; padding: 13px 16px 13px 44px;
-    font-size: 14px; font-weight: 500; color: #0f172a; outline: none;
-    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-    font-family: 'Inter', sans-serif;
-  }
-  .ac-input::placeholder { color: #b0bec5; font-weight: 400; }
-  .ac-input:focus { border-color: #2563eb; background: #fff; box-shadow: 0 0 0 3px rgba(37,99,235,0.10); }
-  .ac-icon {
-    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
-    color: #b0bec5; pointer-events: none; display: flex; align-items: center;
-  }
-
-  /* Botón CTA / submit */
-  .ac-btn {
-    width: 100%; background: #0f172a; color: #fff;
-    border: none; border-radius: 13px; padding: 15px 24px;
-    font-size: 12px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase;
-    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px;
-    position: relative; overflow: hidden;
-    transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
-    box-shadow: 0 8px 28px -6px rgba(15,23,42,0.35);
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  }
-  .ac-btn:hover { background: #1e3a5f; box-shadow: 0 10px 32px -6px rgba(15,23,42,0.45); }
-  .ac-btn:active { transform: scale(0.985); }
-  .ac-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .ac-btn .arr { transition: transform 0.2s; }
-  .ac-btn:hover .arr { transform: translateX(4px); }
-  .ac-btn::after {
-    content: ''; position: absolute; inset: 0;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
-    transform: translateX(-100%); transition: transform 0.5s;
-  }
-  .ac-btn:hover::after { transform: translateX(100%); }
-
-  /* Botón coloreado (portal) */
-  .ac-btn-role {
-    width: 100%; color: #fff; border: none; border-radius: 13px; padding: 15px 24px;
-    font-size: 12px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase;
-    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px;
-    position: relative; overflow: hidden;
-    transition: filter 0.2s, transform 0.15s;
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  }
-  .ac-btn-role:hover { filter: brightness(1.08); }
-  .ac-btn-role:active { transform: scale(0.985); }
-  .ac-btn-role::after {
-    content: ''; position: absolute; inset: 0;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-    transform: translateX(-100%); transition: transform 0.5s;
-  }
-  .ac-btn-role:hover::after { transform: translateX(100%); }
-
-  /* Botón volver / logout */
-  .ac-ghost {
-    background: none; border: none; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-    font-size: 12px; font-weight: 600; color: #94a3b8;
-    transition: color 0.2s; padding: 8px 12px; border-radius: 10px;
-    font-family: 'Inter', sans-serif; width: 100%; margin-top: 10px;
-  }
-  .ac-ghost:hover { color: #64748b; }
-  .ac-ghost.danger:hover { color: #e11d48; }
-
-  /* Footer */
-  .ac-footer {
-    margin-top: 26px; padding-top: 18px; border-top: 1px solid #f1f5f9;
-    font-size: 11px; color: #b0bec5;
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-  }
-
-  /* Toast */
-  .ac-toast {
-    position: fixed; top: 24px; left: 50%;
-    transform: translateX(-50%) translateY(-12px);
-    z-index: 999; display: flex; align-items: center; gap: 10px;
-    padding: 12px 20px; border-radius: 50px;
-    font-size: 13px; font-weight: 600;
-    backdrop-filter: blur(16px); border: 1px solid;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.18);
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.35s, transform 0.35s;
-    white-space: nowrap; font-family: 'Inter', sans-serif;
-  }
-  .ac-toast.vis { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
-  .ac-toast.error { background: rgba(254,242,242,0.96); border-color: #fca5a5; color: #b91c1c; }
-  .ac-toast.success { background: rgba(236,253,245,0.96); border-color: #6ee7b7; color: #065f46; }
-
-  /* Spinner */
-  .spin { animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Alerta rol no configurado */
-  .ac-warn {
-    background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px;
-    padding: 9px 14px; margin-top: 12px; text-align: center;
-    font-size: 10px; color: #c2410c; font-weight: 700; letter-spacing: 0.04em;
-  }
-
-  /* Responsive */
-  @media (max-width: 480px) {
-    .ac-card { padding: 36px 22px 28px; border-radius: 22px; }
-    .ac-logo { height: 54px; }
-    .ac-brand.compact .ac-logo { height: 36px; }
-    .ac-clinica { font-size: 20px; }
-    .ac-brand.compact .ac-clinica { font-size: 14px; }
-  }
-  ::selection { background: #dbeafe; }
-`;
-
-/* ══════════════════════════════════════════
-   ROLE CONFIG — copia exacta de PortalAcceso
+   ROLE CONFIG
 ══════════════════════════════════════════ */
 const getRoleConfig = (rol) => {
   const r = rol
@@ -462,17 +245,9 @@ const Login = () => {
   const formClass = 'ac-form-area' + (step === 'form' ? ' open' : '');
   const portalClass = 'ac-portal' + (step === 'portal' ? ' open' : '');
 
-  // Hex color -> rgb para CSS variable del pulso
-  const hexToRgb = (hex) => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return r + ',' + g + ',' + b;
-  };
-
   return (
     <>
-      <style>{CSS}</style>
+      <style>{PUBLIC_SHELL_CSS}{LOGIN_EXTRA_CSS}</style>
 
       {/* Toast */}
       <div className={'ac-toast ' + (toast.show ? 'vis ' : '') + toast.type}>
@@ -481,10 +256,6 @@ const Login = () => {
       </div>
 
       <div className="ac-shell">
-        {/* Orbes de luz */}
-        <div className="ac-orb" style={{ width: 500, height: 500, top: '-150px', left: '-100px', background: 'rgba(37,99,235,0.18)' }}/>
-        <div className="ac-orb" style={{ width: 380, height: 380, bottom: '-90px', right: '-70px', background: 'rgba(13,148,136,0.14)' }}/>
-        <div className="ac-orb" style={{ width: 200, height: 200, top: '38%', right: '8%', background: 'rgba(99,102,241,0.10)' }}/>
 
         <div className={'ac-card ' + (mounted ? 'in' : '')}>
 
@@ -549,61 +320,30 @@ const Login = () => {
           <div className={portalClass}>
             {config && (
               <>
-                {/* Avatar centrado con gradiente */}
-                <div className="ap0" style={{ textAlign: 'center', paddingTop: 10 }}>
-                  <div style={{ position: 'relative', display: 'inline-block' }}>
-                    <div style={{
-                      width: 90, height: 90, borderRadius: '50%',
-                      background: 'linear-gradient(135deg, ' + config.colorMid + ' 0%, ' + config.color + ' 100%)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: '0 14px 40px -8px ' + config.color + '60',
-                    }}>
-                      <span style={{
-                        fontSize: 36, fontWeight: 800, color: '#fff',
-                        fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
-                        textShadow: '0 1px 6px rgba(0,0,0,0.18)',
-                      }}>
-                        {initial}
-                      </span>
-                    </div>
-                    {/* Icono de rol como badge */}
-                    <div style={{
-                      position: 'absolute', bottom: -3, right: -3,
-                      width: 32, height: 32, borderRadius: '50%',
-                      background: '#fff', border: '2px solid ' + config.colorMid,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: config.color,
-                      boxShadow: '0 4px 12px ' + config.color + '28',
-                    }}>
-                      <span style={{ display: 'flex', transform: 'scale(0.7)' }}>{config.icon}</span>
-                    </div>
-                  </div>
+                <div className="ap0" style={{ paddingTop: 8 }}>
+                  <div className="ac-avatar">{initial}</div>
                 </div>
 
-                {/* Nombre y email */}
-                <div className="ap1" style={{ textAlign: 'center', marginTop: 16, marginBottom: 22 }}>
+                <div className="ap1" style={{ textAlign: 'center', marginTop: 14, marginBottom: 18 }}>
                   <h2 style={{
-                    fontSize: 22, fontWeight: 800, color: '#0f172a',
-                    letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 5,
-                    fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
+                    fontSize: 20, fontWeight: 650, color: '#0f172a',
+                    letterSpacing: '-0.02em', lineHeight: 1.2, marginBottom: 4,
+                    fontFamily: "'Sora', system-ui, sans-serif",
                   }}>
                     Hola, {firstName}
                   </h2>
                   <p style={{ fontSize: 12, color: '#94a3b8', fontWeight: 500 }}>{user.email}</p>
                 </div>
 
-                {/* Divisor */}
-                <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, #e2e8f0 25%, #e2e8f0 75%, transparent)', marginBottom: 18 }} />
+                <div style={{ height: 1, background: 'rgba(15, 23, 42, 0.06)', marginBottom: 16 }} />
 
-                {/* Badge de rol */}
-                <div className="ap2" style={{
-                  background: config.colorLight, border: '1px solid ' + config.colorMid,
-                  borderRadius: 14, padding: '13px 16px',
-                  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4,
-                }}>
-                  <div className="ac-pulse" style={{ background: config.color, '--pr': hexToRgb(config.color) }} />
-                  <div style={{ textAlign: 'left' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+                <div className="ap2 ac-role-badge">
+                  <div className="ac-pulse" />
+                  <div style={{ color: config.color, display: 'flex', alignItems: 'center' }}>
+                    {config.icon}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', fontFamily: "'Sora', system-ui, sans-serif" }}>
                       {config.label}
                     </div>
                     <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
@@ -612,42 +352,31 @@ const Login = () => {
                   </div>
                 </div>
 
-                {/* Selector de ubicación */}
                 {catalogosReady && (
-                  <div className="ap2" style={{ marginBottom: 16 }}>
-                    <LocationSelector accentColor={config.color} required />
+                  <div className="ap2" style={{ marginBottom: 14 }}>
+                    <LocationSelector accentColor="#0f172a" required />
                   </div>
                 )}
 
-                {/* Boton ingresar */}
                 <div className="ap3">
                   <button
                     className="ac-btn-role"
                     onClick={() => navigate(config.path)}
                     disabled={!locationConfirmed}
-                    style={{
-                      background: locationConfirmed ? config.color : '#94a3b8',
-                      boxShadow: locationConfirmed ? '0 8px 24px -6px ' + config.color + '55' : 'none',
-                      cursor: locationConfirmed ? 'pointer' : 'not-allowed',
-                      opacity: locationConfirmed ? 1 : 0.7,
-                      transition: 'all 0.3s ease'
-                    }}
                   >
-                    {locationConfirmed ? 'Ingresar al Portal' : 'Selecciona tu ubicación'}
+                    {locationConfirmed ? 'Ingresar al sistema' : 'Selecciona tu ubicación'}
                     {locationConfirmed && <IconArrow />}
                   </button>
                 </div>
 
-                {/* Cerrar sesion */}
                 <div className="ap4">
                   <button className="ac-ghost danger" onClick={handleSalir}>
-                    <IconLogout /> Cerrar Sesion Segura
+                    <IconLogout /> Cerrar sesión
                   </button>
                 </div>
 
-                {/* Alerta rol no configurado */}
                 {config.isDefault && (
-                  <div className="ac-warn">⚠ Rol no configurado correctamente</div>
+                  <div className="ac-warn">Rol no configurado correctamente. Contacta a administración.</div>
                 )}
               </>
             )}

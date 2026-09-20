@@ -1,0 +1,22 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "bitacoras_operativas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tipo", "order": "ASCENDING" },
+        { "fieldPath": "fechaString", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacoras_operativas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tipo", "order": "ASCENDING" },
+        { "fieldPath": "sucursal", "order": "ASCENDING" },
+        { "fieldPath": "fechaString", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -15,6 +15,10 @@ import {
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { getEstadoDetallado } from '../../utils/citaStatus';
+import {
+  pacienteHaVenidoAConsulta,
+  resolverTipoConsultaConHistorial,
+} from '../../utils/tipoConsultaPaciente';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILIDADES
@@ -1124,7 +1128,22 @@ const ModalDuplicados = ({ onClose, showToast }) => {
 // SUB-COMPONENTES — MODAL CREAR CITA
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ModalCrearCita = ({ nuevaCita, setNuevaCita, doctores, consultorios, catalogoMotivos, pacienteSugerencias, showSugerencias, onPacienteSearch, onSelectPaciente, onSave, onClose, saving }) => {
+const ModalCrearCita = ({
+  nuevaCita,
+  setNuevaCita,
+  doctores,
+  consultorios,
+  catalogoMotivos,
+  pacienteSugerencias,
+  showSugerencias,
+  onPacienteSearch,
+  onSelectPaciente,
+  onSave,
+  onClose,
+  saving,
+  tipoConsultaDetectado,
+  onTipoConsultaChange,
+}) => {
   const fld = (field, value) => setNuevaCita((prev) => ({ ...prev, [field]: value }));
 
   const LABEL = { fontSize: 11, fontWeight: 700, color: 'var(--slate-600)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 5 };
@@ -1239,11 +1258,25 @@ const ModalCrearCita = ({ nuevaCita, setNuevaCita, doctores, consultorios, catal
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={LABEL}>Tipo de consulta</label>
-                <select className="aa-select" style={{ width: '100%' }} value={nuevaCita.tipoConsulta} onChange={(e) => fld('tipoConsulta', e.target.value)}>
+                <select
+                  className="aa-select"
+                  style={{ width: '100%' }}
+                  value={nuevaCita.tipoConsulta}
+                  onChange={(e) => {
+                    if (onTipoConsultaChange) onTipoConsultaChange(e.target.value);
+                    else fld('tipoConsulta', e.target.value);
+                  }}
+                >
                   <option value="Primera vez">Primera vez</option>
+                  <option value="Subsecuente">Subsecuente</option>
                   <option value="Seguimiento">Seguimiento</option>
                   <option value="Urgencia">Urgencia</option>
                 </select>
+                {tipoConsultaDetectado && (nuevaCita.tipoConsulta === 'Subsecuente' || nuevaCita.tipoConsulta === 'Seguimiento') && (
+                  <p style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: '#047857' }}>
+                    Detectado automáticamente: el paciente ya tiene consulta previa.
+                  </p>
+                )}
               </div>
               <div>
                 <label style={LABEL}>Forma de pago</label>
@@ -1344,6 +1377,7 @@ const AgendaAdmin = () => {
   const [pacienteSugerencias, setPacienteSugerencias] = useState([]);
   const [showSugerencias, setShowSugerencias] = useState(false);
   const [savingCita, setSavingCita] = useState(false);
+  const [tipoConsultaDetectado, setTipoConsultaDetectado] = useState(false);
 
   const dateStr = useMemo(() => toDateStr(currentDate), [currentDate]);
 
@@ -1539,6 +1573,7 @@ const AgendaAdmin = () => {
 
   const handlePacienteSearch = useCallback((q) => {
     setNuevaCita((prev) => ({ ...prev, paciente: q, pacienteId: '', pacienteTelefono: '' }));
+    setTipoConsultaDetectado(false);
     if (!q.trim()) { setPacienteSugerencias([]); setShowSugerencias(false); return; }
     const lower = q.toLowerCase().trim();
     const results = todosLosPacientes.filter((p) => (p.nombreCompleto || '').toLowerCase().includes(lower)).slice(0, 6);
@@ -1546,10 +1581,32 @@ const AgendaAdmin = () => {
     setShowSugerencias(results.length > 0);
   }, [todosLosPacientes]);
 
-  const handleSelectPaciente = useCallback((p) => {
-    setNuevaCita((prev) => ({ ...prev, paciente: p.nombreCompleto || '', pacienteId: p.id || '', pacienteTelefono: p.telefonoMovil || '' }));
+  const handleSelectPaciente = useCallback(async (p) => {
+    const pacienteId = p.id || '';
+    setNuevaCita((prev) => ({
+      ...prev,
+      paciente: p.nombreCompleto || '',
+      pacienteId,
+      pacienteTelefono: p.telefonoMovil || '',
+    }));
     setPacienteSugerencias([]);
     setShowSugerencias(false);
+    setTipoConsultaDetectado(false);
+    if (!pacienteId) return;
+    try {
+      const haVenido = await pacienteHaVenidoAConsulta(pacienteId);
+      if (!haVenido) return;
+      setNuevaCita((prev) => {
+        if (prev.pacienteId !== pacienteId) return prev;
+        return {
+          ...prev,
+          tipoConsulta: resolverTipoConsultaConHistorial(prev.tipoConsulta, true, 'label'),
+        };
+      });
+      setTipoConsultaDetectado(true);
+    } catch (err) {
+      console.warn('No se pudo detectar tipo de consulta:', err);
+    }
   }, []);
 
   const handleSaveCita = useCallback(async () => {
@@ -1564,6 +1621,17 @@ const AgendaAdmin = () => {
       const [h, m] = nuevaCita.hora.split(':').map(Number);
       const endMin = m + 30;
       const horaFin = nuevaCita.horaFin || `${String(h + Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+
+      let tipoConsultaFinal = nuevaCita.tipoConsulta;
+      if (nuevaCita.pacienteId) {
+        const haVenido = await pacienteHaVenidoAConsulta(nuevaCita.pacienteId);
+        tipoConsultaFinal = resolverTipoConsultaConHistorial(nuevaCita.tipoConsulta, haVenido, 'label');
+        if (tipoConsultaFinal !== nuevaCita.tipoConsulta) {
+          setTipoConsultaDetectado(true);
+          showToast('Se marcó como subsecuente: el paciente ya tiene consulta previa.', 'info');
+        }
+      }
+
       await addDoc(collection(db, 'citas'), {
         paciente: nuevaCita.paciente,
         pacienteId: nuevaCita.pacienteId,
@@ -1583,7 +1651,7 @@ const AgendaAdmin = () => {
         sucursal: cons?.sucursal || catalogoSucursales.find((s) => s.id === cons?.sucursalId)?.nombre || '',
         sucursalId: cons?.sucursalId || '',
         estado: 'pendiente',
-        tipoConsulta: nuevaCita.tipoConsulta,
+        tipoConsulta: tipoConsultaFinal,
         formaPago: nuevaCita.formaPago,
         esTeleconsulta: nuevaCita.esTeleconsulta,
         areaConsulta: mot?.area || '',
@@ -1596,6 +1664,7 @@ const AgendaAdmin = () => {
       showToast('Cita creada correctamente');
       setShowCrearModal(false);
       setNuevaCita(emptyForm);
+      setTipoConsultaDetectado(false);
     } catch (err) {
       console.error(err);
       showToast('Error al crear cita', 'error');
@@ -1901,8 +1970,13 @@ const AgendaAdmin = () => {
           onPacienteSearch={handlePacienteSearch}
           onSelectPaciente={handleSelectPaciente}
           onSave={handleSaveCita}
-          onClose={() => { setShowCrearModal(false); setNuevaCita(emptyForm); }}
+          onClose={() => { setShowCrearModal(false); setNuevaCita(emptyForm); setTipoConsultaDetectado(false); }}
           saving={savingCita}
+          tipoConsultaDetectado={tipoConsultaDetectado}
+          onTipoConsultaChange={(val) => {
+            setTipoConsultaDetectado(false);
+            setNuevaCita((prev) => ({ ...prev, tipoConsulta: val }));
+          }}
         />
       )}
     </div>

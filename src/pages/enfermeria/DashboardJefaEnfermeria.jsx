@@ -7,7 +7,8 @@ import {
   Printer, Clock, Sparkles, X, Package, ShieldAlert,
   ChevronDown, Activity, Calendar,
   Clipboard, Shield, MapPin, LayoutDashboard,
-  ClipboardList, Stethoscope, Plus, Filter, Eye, ChevronUp, ChevronRight, Gauge, CalendarX
+  ClipboardList, Stethoscope, Plus, Filter, Eye, ChevronUp, ChevronRight, Gauge, CalendarX,
+  Trash2, Loader2
 } from 'lucide-react';
 import { db } from '../../config/firebase';
 import { collection, getDocs, query, where, onSnapshot, deleteDoc, doc, updateDoc, addDoc, serverTimestamp, increment } from 'firebase/firestore';
@@ -114,6 +115,18 @@ const readCriterio = (det = {}, key, legacyKeys = []) => {
   return null;
 };
 
+/** Agrupa misma factura junta (fecha → factura → compuesto). */
+const sortFarmaciaPorFactura = (regs = []) =>
+  [...regs].sort((a, b) => {
+    const fa = String(a.fechaString || '');
+    const fb = String(b.fechaString || '');
+    if (fa !== fb) return fa.localeCompare(fb);
+    const facturaA = String(a.detalles?.factura || '');
+    const facturaB = String(b.detalles?.factura || '');
+    if (facturaA !== facturaB) return facturaA.localeCompare(facturaB, 'es', { numeric: true });
+    return String(a.detalles?.compuesto || '').localeCompare(String(b.detalles?.compuesto || ''), 'es');
+  });
+
 const DashboardJefaEnfermeria = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -156,6 +169,40 @@ const DashboardJefaEnfermeria = () => {
 
   const [aprobandoId, setAprobandoId] = useState(null);
   const [integrandoId, setIntegrandoId] = useState(null);
+  const [eliminandoPendienteId, setEliminandoPendienteId] = useState(null);
+
+  /** Soft-delete de movimiento pendiente (Centro de Alertas) — comentario obligatorio. */
+  const handleEliminarPendienteAprobacion = async (reg) => {
+    if (!reg?.id) return;
+    const comentario = window.prompt(
+      `Motivo de eliminación (obligatorio)\n${reg.detalles?.compuesto || 'Movimiento'} · ${reg.fechaString || ''}`,
+      ''
+    );
+    if (comentario === null) return;
+    if (!String(comentario).trim()) {
+      showToast('El comentario es obligatorio para eliminar.', 'warning');
+      return;
+    }
+    setEliminandoPendienteId(reg.id);
+    try {
+      const nombre = user?.nombre || user?.displayName || user?.email || 'Jefatura';
+      await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+        eliminado: true,
+        eliminadoPor: nombre,
+        eliminadoPorId: user?.uid || user?.id || null,
+        eliminadoPorRol: user?.rol || '',
+        eliminadoEn: serverTimestamp(),
+        motivoEliminacion: String(comentario).trim(),
+      });
+      setBitacorasMes((prev) => prev.filter((b) => b.id !== reg.id));
+      showToast('Movimiento eliminado.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo eliminar el movimiento.', 'error');
+    } finally {
+      setEliminandoPendienteId(null);
+    }
+  };
 
   const handleAprobarFarmacia = async (reg, decision) => {
     if (!reg?.id) return;
@@ -216,17 +263,16 @@ const DashboardJefaEnfermeria = () => {
         }
       }
 
-      // Recepción o Salida aprobada genera Entrada en el destino (una sola vez).
-      // Si enfermería ya generó entrada al guardar la Salida, no duplicar.
+      // Solo recepción histórica sin entrada: ya no generar Entrada desde Salida en jefatura
+      // (la Salida crea Entrada pendiente para enfermería del destino al guardarse / traspasarse).
       const generaEntrada = decision === 'aprobado'
         && !reg.entradaGeneradaId
-        && (areaNorm === 'Recepción' || (areaNorm === 'Salida' && (det.sucursalDestino || '').trim()));
+        && areaNorm === 'Recepción'
+        && (det.sucursalDestino || reg.sucursal || '').trim();
 
       if (generaEntrada) {
-        const sucursalDestino = det.sucursalDestino || (areaNorm === 'Recepción' ? reg.sucursal : '') || '';
-        const sucursalOrigen = areaNorm === 'Salida'
-          ? (det.sucursalOrigen || reg.sucursal || '')
-          : (det.proveedor || det.sucursalOrigen || 'Recepción proveedor');
+        const sucursalDestino = det.sucursalDestino || reg.sucursal || '';
+        const sucursalOrigen = det.proveedor || det.sucursalOrigen || 'Recepción proveedor';
         const payloadEntrada = {
           fecha: serverTimestamp(),
           fechaString: reg.fechaString || new Date().toLocaleDateString('en-CA'),
@@ -236,11 +282,12 @@ const DashboardJefaEnfermeria = () => {
           tipo: 'Farmacia',
           area: 'Entrada',
           origenRecepcionId: reg.id,
-          estadoAprobacion: 'aprobado',
+          estadoAprobacion: 'pendiente',
           estadoInventario: 'pendiente',
-          aprobadoPor: user?.uid || user?.id || null,
-          aprobadoPorNombre: nombre,
-          aprobadoAt: serverTimestamp(),
+          pendienteRecepcionEnfermeria: true,
+          aprobadoPor: null,
+          aprobadoPorNombre: null,
+          aprobadoAt: null,
           detalles: {
             ...det,
             tipo_movimiento: 'Entrada',
@@ -505,7 +552,9 @@ const DashboardJefaEnfermeria = () => {
         setInventarioItems(invItems);
         setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
 
-        const bitacoras = bitacorasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const bitacoras = bitacorasSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((b) => !b.eliminado);
         bitacoras.sort((a, b) => {
           const dateA = new Date(a.fechaString + 'T' + (a.fecha?.toDate?.().toTimeString() || '00:00:00'));
           const dateB = new Date(b.fechaString + 'T' + (b.fecha?.toDate?.().toTimeString() || '00:00:00'));
@@ -604,10 +653,20 @@ const DashboardJefaEnfermeria = () => {
 
   const bitacorasFiltradas = useMemo(() => {
     if (!sucursalFiltro) return bitacorasMes;
+    const norm = (s = '') => String(s)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+    const same = (a, b) => norm(a) === norm(b);
     return bitacorasMes.filter((b) => {
-      if (b.sucursal === sucursalFiltro) return true;
+      const area = normalizeMovimientoArea(b.area);
+      const suc = b.sucursal || '';
       const d = b.detalles || {};
-      return d.sucursalDestino === sucursalFiltro || d.sucursalOrigen === sucursalFiltro;
+      // Evita mostrar Entrada+Salida del mismo traspaso en la sucursal equivocada
+      if (area === 'Salida') return same(suc, sucursalFiltro) || same(d.sucursalOrigen, sucursalFiltro);
+      if (area === 'Entrada') return same(suc, sucursalFiltro) || same(d.sucursalDestino, sucursalFiltro);
+      return same(suc, sucursalFiltro) || same(d.sucursalDestino, sucursalFiltro) || same(d.sucursalOrigen, sucursalFiltro);
     });
   }, [bitacorasMes, sucursalFiltro]);
 
@@ -834,7 +893,7 @@ const DashboardJefaEnfermeria = () => {
         <div className="flex justify-center gap-12 font-bold text-[9px] mb-1 uppercase">
            <span>MES: {mesLabel}</span>
            {activeView === 'limpieza' && <span>AREA: {areaLimpieza}</span>}
-           <span>SUC. {user?.sucursal || 'HUASTECA'}</span>
+           <span>SUC. {sucursalFiltro || 'TODAS'}</span>
         </div>
 
         {activeView === 'temperaturas' && (
@@ -963,7 +1022,9 @@ const DashboardJefaEnfermeria = () => {
             </thead>
             <tbody>
               {(() => {
-                const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción');
+                const registros = sortFarmaciaPorFactura(
+                  bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && normalizeMovimientoArea(b.area) === 'Recepción')
+                );
                 const rows = Math.max(registros.length, 20);
                 return Array.from({ length: rows }).map((_, i) => {
                   const reg = registros[i];
@@ -1026,7 +1087,9 @@ const DashboardJefaEnfermeria = () => {
             </thead>
             <tbody>
               {(() => {
-                const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)));
+                const registros = sortFarmaciaPorFactura(
+                  bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area)))
+                );
                 const rows = Math.max(registros.length, 20);
                 return Array.from({ length: rows }).map((_, i) => {
                   const reg = registros[i];
@@ -1218,7 +1281,7 @@ const DashboardJefaEnfermeria = () => {
                   ) : (
                     <>
                       <MapPin size={12} className="text-slate-400 shrink-0" />
-                      {user?.sucursal || user?.sucursalActual || 'General'}
+                      {sucursalFiltro || user?.sucursal || user?.sucursalActual || 'Todas las sucursales'}
                       <span className="text-slate-300">·</span>
                       <span className="capitalize">{mesLabel.toLowerCase()}</span>
                     </>
@@ -1249,7 +1312,13 @@ const DashboardJefaEnfermeria = () => {
                   <Plus size={13}/> Capturar
                 </button>
                 {activeView !== 'dashboard' && activeView !== 'alertas' && activeView !== 'almacen' && activeView !== 'caducidades' && (
-                  <button type="button" onClick={() => { window.print(); showToast('Preparando documento...', 'success'); }} className="hidden md:inline-flex items-center border border-slate-200 bg-transparent hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md transition-colors">
+                  <button type="button" onClick={() => {
+                    if ((activeView === 'recepcion' || activeView === 'es') && !sucursalFiltro) {
+                      showToast('Tip: filtra por sucursal (ej. Almacén) antes de imprimir para que el encabezado salga correcto.', 'warning');
+                    }
+                    window.print();
+                    showToast('Preparando documento...', 'success');
+                  }} className="hidden md:inline-flex items-center border border-slate-200 bg-transparent hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-md transition-colors">
                     <Printer size={13}/>
                   </button>
                 )}
@@ -1677,11 +1746,13 @@ const DashboardJefaEnfermeria = () => {
 
              {/* --- RECEPCIÓN Y ENTRADAS/SALIDAS (FORMATO OFICIAL) ──────────────────── */}
               {(activeView === 'recepcion' || activeView === 'es') && (() => {
-                  const registros = bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && (
-                    activeView === 'recepcion'
-                      ? normalizeMovimientoArea(b.area) === 'Recepción'
-                      : ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area))
-                  ));
+                  const registros = sortFarmaciaPorFactura(
+                    bitacorasFiltradas.filter(b => b.tipo === 'Farmacia' && (
+                      activeView === 'recepcion'
+                        ? normalizeMovimientoArea(b.area) === 'Recepción'
+                        : ['Entrada', 'Salida'].includes(normalizeMovimientoArea(b.area))
+                    ))
+                  );
 
                   if (registros.length === 0) {
                       return (
@@ -1695,8 +1766,49 @@ const DashboardJefaEnfermeria = () => {
 
                   const renderAprobacionCell = (reg) => {
                     const estado = resolveEstadoAprobacion(reg);
+                    const areaNorm = normalizeMovimientoArea(reg.area);
+                    const quienAcepto = reg.aprobadoPorNombre || '';
+                    // E/S: enfermería del destino aprueba — jefatura solo supervisa
+                    if (activeView === 'es' || areaNorm === 'Entrada' || areaNorm === 'Salida') {
+                      if (estado === 'aprobado') {
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Badge variant="ok">APROBADO</Badge>
+                            {quienAcepto && (
+                              <span className="text-[9px] font-bold text-emerald-700 uppercase truncate max-w-[110px]" title={quienAcepto}>
+                                {quienAcepto.split(' ')[0]}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      }
+                      if (estado === 'rechazado') {
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Badge variant="critical">NO APROBADO</Badge>
+                            {quienAcepto && (
+                              <span className="text-[9px] font-bold text-rose-600 uppercase truncate max-w-[110px]" title={quienAcepto}>
+                                {quienAcepto.split(' ')[0]}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      }
+                      return <span className="text-[9px] font-bold text-slate-400 uppercase">Pendiente enfermería</span>;
+                    }
                     const busy = aprobandoId === reg.id;
-                    if (estado === 'aprobado') return <Badge variant="ok">APROBADO</Badge>;
+                    if (estado === 'aprobado') {
+                      return (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Badge variant="ok">APROBADO</Badge>
+                          {quienAcepto && (
+                            <span className="text-[9px] font-bold text-emerald-700 uppercase truncate max-w-[110px]" title={quienAcepto}>
+                              {quienAcepto.split(' ')[0]}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    }
                     if (estado === 'rechazado') return <Badge variant="critical">NO APROBADO</Badge>;
                     return (
                       <div className="flex flex-col items-center gap-1.5">
@@ -1725,19 +1837,10 @@ const DashboardJefaEnfermeria = () => {
                   const renderInventarioCell = (reg) => {
                     if (normalizeMovimientoArea(reg.area) !== 'Entrada') return <span className="text-slate-300">—</span>;
                     if (reg.estadoInventario === 'integrado') return <Badge variant="ok">EN INVENTARIO</Badge>;
-                    if (resolveEstadoAprobacion(reg) !== 'aprobado' && !reg.origenRecepcionId) {
-                      return <span className="text-[9px] font-bold text-slate-400 uppercase">Requiere aprobación</span>;
+                    if (reg.estadoAprobacion === 'aprobado') {
+                      return <span className="text-[9px] font-bold text-amber-600 uppercase">Pendiente integrar</span>;
                     }
-                    return (
-                      <button
-                        type="button"
-                        disabled={integrandoId === reg.id}
-                        onClick={() => handleIntegrarInventario(reg)}
-                        className="px-2.5 py-1.5 rounded-md text-[9px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        {integrandoId === reg.id ? 'Integrando…' : 'Aceptar e integrar'}
-                      </button>
-                    );
+                    return <span className="text-[9px] font-bold text-slate-400 uppercase">Espera aprobación enfermería</span>;
                   };
 
                   return (
@@ -1764,6 +1867,9 @@ const DashboardJefaEnfermeria = () => {
                                     <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 w-36 border-r border-slate-200">Inventario</th>
                                   )}
                                   <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">{activeView === 'recepcion' ? 'Recibió' : 'Realizó'}</th>
+                                  {activeView === 'es' && (
+                                    <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 border-r border-slate-200">Aceptó</th>
+                                  )}
                                   <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 w-40">Observaciones</th>
                                 </tr>
                               </thead>
@@ -1833,6 +1939,13 @@ const DashboardJefaEnfermeria = () => {
                                           <td className="px-4 py-3 align-middle text-[10px] font-bold uppercase text-slate-700 border-r border-slate-100">
                                               {(reg.responsableNombre || '').split(' ')[0]}
                                           </td>
+                                          {activeView === 'es' && (
+                                            <td className="px-4 py-3 align-middle text-[10px] font-bold uppercase text-slate-700 border-r border-slate-100">
+                                              {reg.aprobadoPorNombre
+                                                ? (reg.aprobadoPorNombre || '').split(' ')[0]
+                                                : <span className="text-slate-300">—</span>}
+                                            </td>
+                                          )}
                                           <td className="px-4 py-3 align-middle text-[10px] text-slate-500 italic max-w-[200px] truncate" title={det.observaciones}>
                                               {det.observaciones || '-'}
                                           </td>
@@ -1886,14 +1999,24 @@ const DashboardJefaEnfermeria = () => {
                                         )}
 
                                         {activeView === 'es' && (
-                                            <div className="flex justify-between items-center">
+                                            <div className="flex justify-between items-center gap-2 flex-wrap">
                                                 <Badge variant={esEntrada ? 'ok' : 'preventive'}>{areaNorm}</Badge>
                                                 {renderInventarioCell(reg)}
                                             </div>
                                         )}
 
-                                        <div className="border-t border-slate-100 pt-2 flex justify-center">
+                                        <div className="border-t border-slate-100 pt-2 flex flex-col items-center gap-1">
                                           {renderAprobacionCell(reg)}
+                                          {esEntrada && reg.aprobadoPorNombre && (
+                                            <p className="text-[10px] font-bold text-slate-600 uppercase">
+                                              Aceptó: {reg.aprobadoPorNombre}
+                                            </p>
+                                          )}
+                                          {!esEntrada && (
+                                            <p className="text-[10px] text-slate-400 font-semibold uppercase">
+                                              Realizó: {(reg.responsableNombre || '—').split(' ')[0]}
+                                            </p>
+                                          )}
                                         </div>
                                     </div>
                                 );
@@ -2169,13 +2292,41 @@ const DashboardJefaEnfermeria = () => {
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Proveedor">Prov</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Traspaso">Trasp</th>
                                                       <th className="px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 w-16" title="Pendiente">Pend</th>
+                                                      <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 border-b border-slate-200 min-w-[140px]" title="Comentario cuando queda pendiente">Comentario</th>
                                                     </tr>
                                                   </thead>
                                                   <tbody>
                                                     {filas.map((fila, idx) => {
                                                       const exisInv = existenciaDeInsumo(fila.insumo, pedido.sucursal);
-                                                      const setResolucion = async (valor) => {
-                                                        const nextFilas = filas.map((f, i) => i === idx ? { ...f, resolucion: valor } : f);
+                                                      const setResolucion = async (valor, comentarioOverride) => {
+                                                        let comentarioResolucion = fila.comentarioResolucion || '';
+                                                        if (valor === 'pendiente') {
+                                                          if (typeof comentarioOverride === 'string') {
+                                                            comentarioResolucion = comentarioOverride;
+                                                          } else if (!String(comentarioResolucion).trim()) {
+                                                            const promptVal = window.prompt(
+                                                              `Comentario para dejar pendiente “${fila.insumo}” (opcional):`,
+                                                              comentarioResolucion || ''
+                                                            );
+                                                            if (promptVal === null) return; // canceló
+                                                            comentarioResolucion = promptVal;
+                                                          }
+                                                        } else if (valor == null) {
+                                                          comentarioResolucion = '';
+                                                        } else {
+                                                          comentarioResolucion = '';
+                                                        }
+                                                        const nextFilas = filas.map((f, i) => (
+                                                          i === idx
+                                                            ? {
+                                                                ...f,
+                                                                resolucion: valor,
+                                                                comentarioResolucion: valor === 'pendiente'
+                                                                  ? String(comentarioResolucion || '').trim()
+                                                                  : '',
+                                                              }
+                                                            : f
+                                                        ));
                                                         try {
                                                           await updateDoc(doc(db, 'bitacoras_operativas', pedido.id), {
                                                             'detalles.filas': nextFilas,
@@ -2187,6 +2338,26 @@ const DashboardJefaEnfermeria = () => {
                                                           )));
                                                         } catch {
                                                           showToast('No se pudo guardar la resolución del insumo.', 'error');
+                                                        }
+                                                      };
+                                                      const saveComentarioPend = async (texto) => {
+                                                        if (fila.resolucion !== 'pendiente') return;
+                                                        const nextFilas = filas.map((f, i) => (
+                                                          i === idx
+                                                            ? { ...f, resolucion: 'pendiente', comentarioResolucion: String(texto || '').trim() }
+                                                            : f
+                                                        ));
+                                                        try {
+                                                          await updateDoc(doc(db, 'bitacoras_operativas', pedido.id), {
+                                                            'detalles.filas': nextFilas,
+                                                          });
+                                                          setPedidosSucursales((prev) => prev.map((p) => (
+                                                            p.id === pedido.id
+                                                              ? { ...p, detalles: { ...(p.detalles || {}), filas: nextFilas } }
+                                                              : p
+                                                          )));
+                                                        } catch {
+                                                          showToast('No se pudo guardar el comentario.', 'error');
                                                         }
                                                       };
                                                       return (
@@ -2212,6 +2383,28 @@ const DashboardJefaEnfermeria = () => {
                                                             />
                                                           </td>
                                                         ))}
+                                                        <td className="px-2 py-1.5 border-b border-slate-50">
+                                                          {fila.resolucion === 'pendiente' ? (
+                                                            <input
+                                                              type="text"
+                                                              defaultValue={fila.comentarioResolucion || ''}
+                                                              key={`${pedido.id}_${idx}_${fila.comentarioResolucion || ''}`}
+                                                              placeholder="Motivo / nota…"
+                                                              className="w-full min-w-[120px] px-2 py-1 rounded border border-amber-200 bg-amber-50/50 text-[11px] text-slate-700 outline-none focus:border-amber-400"
+                                                              onBlur={(e) => {
+                                                                const val = e.target.value.trim();
+                                                                if (val !== String(fila.comentarioResolucion || '').trim()) {
+                                                                  saveComentarioPend(val);
+                                                                }
+                                                              }}
+                                                              onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') e.currentTarget.blur();
+                                                              }}
+                                                            />
+                                                          ) : (
+                                                            <span className="text-slate-300 text-[10px]">—</span>
+                                                          )}
+                                                        </td>
                                                       </tr>
                                                       );
                                                     })}
@@ -2237,7 +2430,7 @@ const DashboardJefaEnfermeria = () => {
 
               {/* --- CENTRO DE ALERTAS ────────────────────────────────────────── */}
               {activeView === 'alertas' && (() => {
-                  const movFarmacia = bitacorasMes.filter((b) => b.tipo === 'Farmacia');
+                  const movFarmacia = bitacorasMes.filter((b) => b.tipo === 'Farmacia' && !b.eliminado);
                   const pendientesAprob = movFarmacia.filter((b) => resolveEstadoAprobacion(b) === 'pendiente');
                   const enTransito = movFarmacia.filter((b) =>
                     normalizeMovimientoArea(b.area) === 'Entrada' && b.estadoInventario === 'pendiente'
@@ -2372,12 +2565,24 @@ const DashboardJefaEnfermeria = () => {
                               )}
                               {pendientesAprob.slice(0, 8).map((b) => {
                                 const r = rutaDe(b);
+                                const busyDel = eliminandoPendienteId === b.id;
                                 return (
-                                  <button key={b.id} type="button" onClick={() => setActiveView(r.area === 'Recepción' ? 'recepcion' : 'es')}
-                                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 transition-colors">
-                                    <p className="text-[11px] font-bold text-slate-800 truncate">{r.med} · {r.cant} pzs</p>
-                                    <p className="text-[10px] text-slate-500">{r.area}: {r.de} → {r.a} · {b.fechaString}</p>
-                                  </button>
+                                  <div key={b.id} className="flex items-stretch gap-0 divide-x divide-slate-50">
+                                    <button type="button" onClick={() => setActiveView(r.area === 'Recepción' ? 'recepcion' : 'es')}
+                                      className="flex-1 min-w-0 text-left px-3.5 py-2 hover:bg-slate-50 transition-colors">
+                                      <p className="text-[11px] font-bold text-slate-800 truncate">{r.med} · {r.cant} pzs</p>
+                                      <p className="text-[10px] text-slate-500">{r.area}: {r.de} → {r.a} · {b.fechaString}</p>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyDel}
+                                      title="Eliminar (comentario obligatorio)"
+                                      onClick={() => handleEliminarPendienteAprobacion(b)}
+                                      className="px-2.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50 transition-colors"
+                                    >
+                                      {busyDel ? <Loader2 size={13} className="animate-spin text-slate-400" /> : <Trash2 size={13} />}
+                                    </button>
+                                  </div>
                                 );
                               })}
                             </div>

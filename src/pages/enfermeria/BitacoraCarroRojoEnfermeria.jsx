@@ -229,13 +229,32 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
     setter(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   };
 
+  const handleReabrirMes = async () => {
+    if (!sucursalActiva || !bloqueado) return;
+    const ok = window.confirm(`¿Reabrir la bitácora de carro rojo de ${mesActual} en ${sucursalActiva} para seguir editando?`);
+    if (!ok) return;
+    try {
+      await setDoc(doc(db, 'bitacora_carro_rojo', sucursalActiva), {
+        mesBloqueado: '',
+        mesActivo: mesActual,
+        ultimaActualizacion: serverTimestamp(),
+        actualizadoPor: user?.nombre || 'Desconocido',
+        actualizadoPorRol: user?.rol || '',
+      }, { merge: true });
+      setBloqueado(false);
+      showToast('Bitácora reabierta. Ya puedes editar y guardar.', 'success');
+    } catch {
+      showToast('No se pudo reabrir la bitácora.', 'error');
+    }
+  };
+
   const handleGuardar = async () => {
     if (!sucursalActiva) {
       showToast('No se detectó una sucursal asignada.', 'error');
       return;
     }
     if (bloqueado) {
-      showToast(`La bitácora de ${mesActual} ya fue completada y bloqueada.`, 'warning');
+      showToast(`La bitácora de ${mesActual} está bloqueada. Usa «Reabrir mes» para editar.`, 'warning');
       return;
     }
     setSaving(true);
@@ -552,6 +571,12 @@ const BitacoraCarroRojoEnfermeria = ({ embedded = false, sucursal: sucursalProp 
                 <Printer size={13} />
                 <span className="hidden sm:inline">Imprimir</span>
               </button>
+              {bloqueado && (
+                <button type="button" onClick={handleReabrirMes}
+                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-md border border-amber-200 bg-amber-50 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 transition-colors">
+                  Reabrir mes
+                </button>
+              )}
               <button onClick={handleGuardar} disabled={saving || bloqueado}
                 className={`inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-semibold text-[11px] sm:text-[12px] disabled:opacity-50 transition-colors ${
                   bloqueado ? 'bg-emerald-600 text-white cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 text-white'

@@ -339,6 +339,8 @@ const SeccionResumen = ({
             const tieneConsultaReal = Boolean(
                 item.consulta?.diagnostico?.enfermedad_actual ||
                 item.consulta?.padecimiento ||
+                item.motivoFinalizacion ||
+                item.origenRegistro === 'agenda_finalizacion' ||
                 (item.consulta?.exploracion && Object.keys(item.consulta.exploracion).length > 0)
             );
 
@@ -367,6 +369,7 @@ const SeccionResumen = ({
                 return partes.length > 0 ? partes.join(' • ') : '';
             })();
             const descripcionPreview = (item.consulta?.padecimiento || '').trim()
+                || (item.motivoFinalizacion || '').trim()
                 || (item.consulta?.diagnostico?.indicaciones || '').trim()
                 || (item.consulta?.diagnostico?.pronostico || '').trim()
                 || tratamientoResumen
@@ -381,8 +384,8 @@ const SeccionResumen = ({
                 fechaFormato: item.fechaFormato,
                 horaFormato: item.horaFormato,
                 origen: 'plataforma',
-                tipoNota: item.tipoNota || 'Consulta General',
-                titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || 'Consulta',
+                tipoNota: item.tipoNota || (item.origenRegistro === 'agenda_finalizacion' ? 'Nota de visita' : 'Consulta General'),
+                titulo: item.consulta?.diagnostico?.enfermedad_actual || item.tipoNota || item.motivoFinalizacion || 'Consulta',
                 descripcion: descripcionPreview,
                 confianza: 'alta',
                 medicoNombre: item.medicoNombre || '',
@@ -1132,8 +1135,16 @@ const SeccionResumen = ({
                 const tieneGlucosa = cs.consulta?.exploracion?.glucosa?.lista?.length > 0;
 
                 return (
-                <div className="absolute inset-0 z-50 bg-slate-900/55 flex items-end sm:items-center justify-center p-0 sm:p-4">
-                    <div className="bg-white w-full max-w-4xl max-h-[94dvh] sm:max-h-[92%] rounded-t-2xl sm:rounded-2xl shadow-lg flex flex-col overflow-hidden">
+                <div
+                  className="fixed inset-0 z-[220] bg-slate-900/55 flex items-end sm:items-center justify-center p-0 sm:p-4"
+                  onClick={() => setConsultaSeleccionada(null)}
+                  role="dialog"
+                  aria-modal="true"
+                >
+                    <div
+                      className="bg-white w-full max-w-4xl max-h-[94dvh] sm:max-h-[92%] rounded-t-2xl sm:rounded-2xl shadow-lg flex flex-col overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                 <div className="px-4 sm:px-8 py-4 sm:py-5 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div className="min-w-0">
                         <h2 className="text-lg sm:text-xl font-black text-slate-800 uppercase tracking-tight truncate">{cs.tipoNota || 'Consulta General'}</h2>
@@ -1236,6 +1247,9 @@ const SeccionResumen = ({
                                             <div className="flex flex-wrap gap-2 text-xs text-slate-600">
                                                 {ce.num_embarazo && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">Embarazo #{ce.num_embarazo}</span>}
                                                 {ce.num_bebes && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">{ce.num_bebes} bebé(s)</span>}
+                                                {ce.num_consulta_prenatal && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">Consulta prenatal #{ce.num_consulta_prenatal}</span>}
+                                                {ce.fondo_uterino && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">FU: {ce.fondo_uterino} cm</span>}
+                                                {ce.fcf && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">FCF: {ce.fcf} lpm</span>}
                                                 {ce.riesgo && ce.riesgo !== 'No aplica' && <span className="bg-rose-50 border border-rose-200 rounded px-2 py-0.5 text-rose-700 font-bold">Alto riesgo: {ce.riesgo}</span>}
                                                 {ce.acido_folico && ce.acido_folico !== 'No aplica' && <span className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5">Ácido fólico: {ce.acido_folico}</span>}
                                             </div>

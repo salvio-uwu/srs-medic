@@ -8,7 +8,7 @@ alwaysApply: false
 
 - JavaScript + JSX únicamente (sin TypeScript por ahora)
 - **No reactivar StrictMode** en `main.jsx` (bug Firestore "INTERNAL ASSERTION FAILED")
-- Estado global: `AuthContext`, `SessionLocationContext`; resto con `useState` local
+- Estado global: `AuthContext`, `SessionLocationContext`, `FirebaseErrorContext`; resto con `useState` local
 - Firestore en componentes vía SDK directo; lógica reutilizable en `src/services/`
 - Rutas protegidas: `PermissionRoute` + `hasPermission` en `App.jsx`
 - Estilos: Tailwind + estilos inline/CSS variables coexisten — no unificar sin pedirlo

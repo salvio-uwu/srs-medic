@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X, Save, Loader2, Thermometer, Droplet, 
   Sparkles, Package, AlertCircle, ShieldAlert,
@@ -6,7 +7,7 @@ import {
   Menu, Printer, Calendar, CalendarX, Plus, Trash2, Bell
 } from 'lucide-react';
 import { db, functions } from '../config/firebase'; 
-import { collection, addDoc, updateDoc, doc, serverTimestamp, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, serverTimestamp, query, where, onSnapshot, getDocs, getDoc, increment } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useSessionLocation } from '../context/SessionLocationContext';
 import { useAuth } from '../context/AuthContext';
@@ -186,7 +187,66 @@ const normalizeMovimientoArea = (area = '') => {
   return String(area || '').trim();
 };
 
+const sameSucursal = (a = '', b = '') => {
+  const na = normalizeText(a);
+  const nb = normalizeText(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const strip = (s) => s
+    .replace(/^(sucursal|suursal)\s+/, '')
+    .replace(/^(almacen|almacén)\s+/, '')
+    .trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
+  return na.includes(nb) || nb.includes(na);
+};
+
+const formatFechaMx = (fechaString = '') => {
+  const raw = String(fechaString || '').trim();
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return raw || '—';
+  return `${m[3]}/${m[2]}/${m[1]}`;
+};
+
+const labelEstadoAprobacion = (estado = '') => {
+  if (estado === 'aprobado') return 'APROBADO';
+  if (estado === 'rechazado') return 'NO APROBADO';
+  return 'PENDIENTE';
+};
+
+const formatCaducidadCorta = (cad = '') => {
+  const raw = String(cad || '').trim();
+  const m = raw.match(/^(\d{4})-(\d{2})/);
+  if (m) return `${m[2]}/${m[1].slice(2)}`;
+  if (/^\d{2}\/\d{2}/.test(raw)) return raw.slice(0, 5);
+  return raw || '—';
+};
+
+const criterioBool = (det = {}, key, legacyKeys = []) => {
+  if (typeof det[key] === 'boolean') return det[key];
+  for (const k of legacyKeys) {
+    if (typeof det[k] === 'boolean') return det[k];
+  }
+  return null;
+};
+
+/** Evita ver Entrada+Salida del mismo traspaso en la sucursal incorrecta. */
+const bitacoraPerteneceASucursal = (reg, sucursalNombre) => {
+  if (!sucursalNombre) return true;
+  const area = normalizeMovimientoArea(reg.area || reg.detalles?.tipo_movimiento);
+  const suc = reg.sucursal || '';
+  const dest = reg.detalles?.sucursalDestino || '';
+  const ori = reg.detalles?.sucursalOrigen || '';
+  if (area === 'Salida') return sameSucursal(suc, sucursalNombre) || sameSucursal(ori, sucursalNombre);
+  if (area === 'Entrada') return sameSucursal(suc, sucursalNombre) || sameSucursal(dest, sucursalNombre);
+  // Recepción u otros
+  return sameSucursal(suc, sucursalNombre) || sameSucursal(dest, sucursalNombre);
+};
+
 const MOVIMIENTOS_FARMACIA = ['Recepción', 'Entrada', 'Salida'];
+const ROLES_ENFERMERIA_OPERATIVA = new Set(['enfermeria', 'enfermera', 'enfermero']);
+const ROLES_JEFATURA = new Set(['jefa_enfermeria', 'jefa', 'admin', 'admin_maestro', 'administrador']);
 
 /* ═══════════════════════════════════════════════════════════════
    COMPONENTE PRINCIPAL
@@ -194,14 +254,21 @@ const MOVIMIENTOS_FARMACIA = ['Recepción', 'Entrada', 'Salida'];
 const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', standalone = false }) => {
   const { user } = useAuth();
   const { sessionSucursal } = useSessionLocation();
+  const rolNorm = normalizeText(user?.rol || '');
+  const esEnfermeriaOperativa = ROLES_ENFERMERIA_OPERATIVA.has(rolNorm);
+  const puedeCambiarSucursal = ROLES_JEFATURA.has(rolNorm) || !esEnfermeriaOperativa;
   const [loading, setLoading] = useState(false);
   const [tipoRegistro, setTipoRegistro] = useState('farmacia');
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => () => setSidebarOpen(false), []);
+
   const [pedidoCompacto, setPedidoCompacto] = useState(true);
   const [sucursalActiva, setSucursalActiva] = useState(sucursal);
   const [catalogoSucursales, setCatalogoSucursales] = useState([]);
   const sucursalAutoSetRef = useRef(false);
+  const [integrandoId, setIntegrandoId] = useState(null);
   const [printTempMonth, setPrintTempMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -254,8 +321,21 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const [cabeceraFarmaciaCongelada, setCabeceraFarmaciaCongelada] = useState(false);
   const [historialFarmacia, setHistorialFarmacia] = useState([]);
   const [historialPedidos, setHistorialPedidos] = useState([]);
-  const [verHistorialFarmacia, setVerHistorialFarmacia] = useState(false);
-  const [verHistorialPedidos, setVerHistorialPedidos] = useState(false);
+  const [historialPedidosError, setHistorialPedidosError] = useState('');
+  const [historialPedidosLoading, setHistorialPedidosLoading] = useState(false);
+  const [historialFarmaciaLoading, setHistorialFarmaciaLoading] = useState(false);
+  const [historialFarmaciaError, setHistorialFarmaciaError] = useState('');
+  const [comentariosAprobacion, setComentariosAprobacion] = useState({});
+  const [aprobandoEntradaId, setAprobandoEntradaId] = useState(null);
+  // Abierto por defecto: el reporte operativo era "las bitácoras del mes no se ven"
+  const [verHistorialFarmacia, setVerHistorialFarmacia] = useState(true);
+  const [verHistorialPedidos, setVerHistorialPedidos] = useState(true);
+  const [pedidoMesHistorial, setPedidoMesHistorial] = useState(() =>
+    new Date().toLocaleDateString('en-CA').slice(0, 7)
+  );
+  const [farmaciaMesHistorial, setFarmaciaMesHistorial] = useState(() =>
+    new Date().toLocaleDateString('en-CA').slice(0, 7)
+  );
   const [pedidoMedicamentoRows, setPedidoMedicamentoRows] = useState([]);
   const [pedidoMedicamentoSearch, setPedidoMedicamentoSearch] = useState('');
 
@@ -450,8 +530,17 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         Devuelve estrictamente un JSON válido con esta estructura, sin formato Markdown ni texto extra:
         {"factura": "numero", "compuesto": "sustancia o nombre comercial", "lote": "numero", "cantidad": "numero", "caducidad": "YYYY-MM-DD"}`;
         const askGemini = httpsCallable(functions, 'askGemini');
-        const result = await askGemini({ prompt: [prompt, { inlineData: { data: base64Data, mimeType: file.type } }] });
-        let rawText = result.data.result.replace(/```json/g, "").replace(/```/g, "").trim();
+        const result = await askGemini({
+          prompt,
+          inlineData: base64Data,
+          mimeType: file.type || 'image/jpeg'
+        });
+        let rawText = String(result?.data?.result || '').replace(/```json/g, "").replace(/```/g, "").trim();
+        const jsonStart = rawText.indexOf('{');
+        const jsonEnd = rawText.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          rawText = rawText.substring(jsonStart, jsonEnd + 1);
+        }
         const info = JSON.parse(rawText);
         setFormFarmacia(prev => ({
           ...prev,
@@ -473,36 +562,45 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
   const handleBuscadorMedicamentos = (e) => {
     const val = e.target.value;
-    setFormFarmacia({
-      ...formFarmacia,
+    setFormFarmacia((prev) => ({
+      ...prev,
       compuesto: val,
       medicamentoId: '',
       numeroAcomodo: '',
       marca: '',
       laboratorio: ''
-    });
+    }));
     setIndiceMeds(-1);
     if (normalizeText(val).length < 2) { setSugerenciasMeds([]); setMostrarMeds(false); }
   };
 
   const seleccionarMedicamento = (med) => {
-    let formaInferida = 'Otra';
     const pres = (med.presentacion || '').toUpperCase();
     const sust = (med.sustanciaActiva || '').toUpperCase();
-    if (pres.includes('TAB') || sust.includes('TAB')) formaInferida = 'Tableta';
-    else if (pres.includes('CAP') || sust.includes('CAP')) formaInferida = 'Cápsula';
-    else if (pres.includes('CREM') || sust.includes('CREM')) formaInferida = 'Crema';
-    else if (pres.includes('SUSP') || sust.includes('SUSP')) formaInferida = 'Suspensión';
-    else if (pres.includes('JARABE') || sust.includes('JARABE')) formaInferida = 'Jarabe';
-    else if (pres.includes('AMP') || sust.includes('AMP')) formaInferida = 'Ampolleta';
-    else if (pres.includes('OVU') || sust.includes('OVU')) formaInferida = 'Óvulo';
-    else if (pres.includes('SOL') || sust.includes('SOL')) formaInferida = 'Solución';
-    else if (pres.includes('GEL') || sust.includes('GEL')) formaInferida = 'Gel';
+    const nombre = (med.nombreComercial || '').toUpperCase();
+    const blob = `${pres} ${sust} ${nombre}`;
+
+    // Orden crítico: inyectables / IV / IM antes que TAB (evita "Tableta" en presentaciones INYECTABLE)
+    let formaInferida = 'Otra';
+    if (/\bINYECT|\bINY\b|\bAMPOL|\bAMP\b|\bIV\b|\bIM\b|\bSC\b|\bVIAL\b/.test(blob)) formaInferida = 'Inyectable';
+    else if (blob.includes('SUSP')) formaInferida = 'Suspensión';
+    else if (blob.includes('JARABE')) formaInferida = 'Jarabe';
+    else if (blob.includes('CREM')) formaInferida = 'Crema';
+    else if (blob.includes('OVU')) formaInferida = 'Óvulo';
+    else if (blob.includes('GEL')) formaInferida = 'Gel';
+    else if (/\bSOL(UCION|\.|\b)/.test(blob) && !blob.includes('TAB')) formaInferida = 'Solución';
+    else if (blob.includes('CAP') || blob.includes('CAPS')) formaInferida = 'Cápsula';
+    else if (blob.includes('TAB') || blob.includes('COMPRIM')) formaInferida = 'Tableta';
+
+    const formaCatalogo = String(med.formaFarmaceutica || med.forma || '').trim();
+    // Si la presentación ya indica forma clara, no dejar que el catálogo la pise (caso Tableta vs INYECTABLE)
+    if (formaInferida === 'Otra' && formaCatalogo) formaInferida = formaCatalogo;
 
     const nombreComercial = med.nombreComercial || '';
     const sustanciaActiva = med.sustanciaActiva || '';
-    setFormFarmacia({
-      ...formFarmacia,
+    // Functional update: no perder lote/cantidad/caducidad ya capturados
+    setFormFarmacia((prev) => ({
+      ...prev,
       compuesto: `${nombreComercial} ${sustanciaActiva}`.trim(),
       presentacion: med.presentacion || '',
       forma: formaInferida,
@@ -510,7 +608,7 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
       numeroAcomodo: med.numeroAcomodo || '',
       marca: med.marca || '',
       laboratorio: med.laboratorio || ''
-    });
+    }));
     setMostrarMeds(false);
     setSugerenciasMeds([]);
   };
@@ -558,24 +656,31 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   };
 
   // ─── FARMACIA: lote de ítems + cabecera congelada ───
-  const limpiarCamposItemFarmacia = () => {
-    setFormFarmacia((prev) => ({
-      ...prev,
-      compuesto: '',
-      presentacion: '',
-      forma: '',
-      lote: '',
-      caducidad: '',
-      cantidad: '',
-      observaciones: '',
-      medicamentoId: '',
-      numeroAcomodo: '',
-      marca: '',
-      laboratorio: '',
-      criterio_empaque: true,
-      criterio_etiqueta: true,
-      aprobadoMercancia: normalizeMovimientoArea(prev.tipo_movimiento) === 'Recepción' ? prev.aprobadoMercancia : null,
-    }));
+  /** Tras agregar un ítem: deja el mismo MX listo para otro lote (solo limpia lote/cant/cad). */
+  const limpiarCamposItemFarmacia = (opts = { cambiarMedicamento: false }) => {
+    setFormFarmacia((prev) => {
+      const base = {
+        ...prev,
+        lote: '',
+        caducidad: '',
+        cantidad: '',
+        observaciones: '',
+        criterio_empaque: true,
+        criterio_etiqueta: true,
+        aprobadoMercancia: normalizeMovimientoArea(prev.tipo_movimiento) === 'Recepción' ? prev.aprobadoMercancia : null,
+      };
+      if (!opts.cambiarMedicamento) return base;
+      return {
+        ...base,
+        compuesto: '',
+        presentacion: '',
+        forma: '',
+        medicamentoId: '',
+        numeroAcomodo: '',
+        marca: '',
+        laboratorio: '',
+      };
+    });
   };
 
   const validarCabeceraFarmacia = () => {
@@ -592,16 +697,36 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     if (movimiento === 'Recepción' && formFarmacia.aprobadoMercancia !== 'si' && formFarmacia.aprobadoMercancia !== 'no') {
       return 'Indica si la mercancía queda Aprobada: SI o NO.';
     }
+    if (movimiento === 'Recepción' && formFarmacia.aprobadoMercancia === 'no') {
+      const obs = String(formFarmacia.observaciones || '').trim();
+      if (!obs) return 'Si marcas NO aprobado, el comentario/observación es obligatorio.';
+    }
+    if (
+      movimiento === 'Recepción'
+      && formFarmacia.aprobadoMercancia === 'no'
+      && formFarmacia.criterio_empaque
+      && formFarmacia.criterio_etiqueta
+    ) {
+      return 'ALERTA: criterios de empaque/etiqueta en CUMPLE pero marcaste NO aprobado. Corrige criterios u observación.';
+    }
     return null;
   };
 
   const validarItemFarmacia = () => {
-    if (!formFarmacia.compuesto || !formFarmacia.cantidad || !formFarmacia.caducidad || !formFarmacia.lote) {
-      return 'Llene Compuesto, Cantidad, Lote y Caducidad.';
+    const compuesto = String(formFarmacia.compuesto || '').trim();
+    const lote = String(formFarmacia.lote || '').trim();
+    const cantidad = String(formFarmacia.cantidad || '').trim();
+    const caducidad = String(formFarmacia.caducidad || '').trim();
+    if (!compuesto || !cantidad || !caducidad || !lote) {
+      const faltan = [
+        !compuesto && 'Compuesto',
+        !cantidad && 'Cantidad',
+        !lote && 'Lote',
+        !caducidad && 'Caducidad',
+      ].filter(Boolean);
+      return `Falta completar: ${faltan.join(', ')}.`;
     }
-    if (!formFarmacia.medicamentoId) {
-      return 'Selecciona el medicamento desde el catálogo admin (elige una sugerencia).';
-    }
+    // medicamentoId opcional: permite insumos de factura no catalogados
     return null;
   };
 
@@ -643,8 +768,9 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     const detalles = buildFarmaciaDetalles();
     setLoteFarmaciaItems((prev) => [...prev, { ...detalles, _key: `${Date.now()}_${prev.length}` }]);
     setCabeceraFarmaciaCongelada(true);
-    limpiarCamposItemFarmacia();
-    showToast('Ítem agregado al lote. Puedes seguir agregando o guardar todo.', 'success');
+    // Conserva el medicamento: factura con 2 lotes del mismo MX se captura seguido
+    limpiarCamposItemFarmacia({ cambiarMedicamento: false });
+    showToast('Ítem agregado. Captura el otro lote (o cambia de medicamento) y vuelve a agregar.', 'success');
   };
 
   const handleQuitarItemLote = (key) => {
@@ -658,32 +784,98 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   const guardarDocFarmacia = async (detalles) => {
     const movimiento = normalizeMovimientoArea(detalles.tipo_movimiento);
     const sucursalDestino = (detalles.sucursalDestino || '').trim();
+    const sucursalOrigen = (detalles.sucursalOrigen || sucursalActiva || '').trim();
     const aprobadoCaptura = detalles.aprobadoMercancia === 'si';
     const rechazoCaptura = detalles.aprobadoMercancia === 'no';
+    // Recepción: SI/NO en captura ES la aprobación (evita doble aprobación en jefatura)
+    const estadoAprobacion = movimiento === 'Recepción'
+      ? (rechazoCaptura ? 'rechazado' : aprobadoCaptura ? 'aprobado' : 'pendiente')
+      : (rechazoCaptura ? 'rechazado' : 'pendiente');
+    const resolvioEnCaptura = movimiento === 'Recepción' && (aprobadoCaptura || rechazoCaptura);
+
+    // Salida queda en ORIGEN; Entrada/Recepción en DESTINO (evita duplicar en la misma sucursal)
+    const sucursalDoc = movimiento === 'Salida'
+      ? (sucursalOrigen || sucursalActiva || sucursal || 'Sin asignar')
+      : (sucursalDestino || sucursalActiva || sucursal || 'Sin asignar');
 
     const datosGuardar = {
       fecha: serverTimestamp(),
       fechaString: new Date().toLocaleDateString('en-CA'),
       responsableNombre: enfermeraNombre,
-      sucursal: sucursalDestino || sucursalActiva || sucursal || 'Sin asignar',
+      sucursal: sucursalDoc,
       estado: 'completado',
       tipo: 'Farmacia',
       area: movimiento,
       detalles,
-      estadoAprobacion: rechazoCaptura ? 'rechazado' : 'pendiente',
+      estadoAprobacion,
       estadoInventario: movimiento === 'Entrada' ? 'pendiente' : null,
-      aprobadoPor: rechazoCaptura ? (user?.uid || null) : null,
-      aprobadoPorNombre: rechazoCaptura ? enfermeraNombre : null,
-      aprobadoAt: rechazoCaptura ? serverTimestamp() : null,
-      comentarioAprobacion: rechazoCaptura ? 'Mercancía marcada NO aprobada en captura de recepción.' : null,
+      aprobadoPor: resolvioEnCaptura ? (user?.uid || null) : null,
+      aprobadoPorNombre: resolvioEnCaptura ? enfermeraNombre : null,
+      aprobadoAt: resolvioEnCaptura ? serverTimestamp() : null,
+      comentarioAprobacion: rechazoCaptura
+        ? (detalles.observaciones || 'Mercancía marcada NO aprobada en captura de recepción.')
+        : (aprobadoCaptura && movimiento === 'Recepción' ? 'Aprobado en captura de recepción.' : null),
     };
 
     const refSalida = await addDoc(collection(db, 'bitacoras_operativas'), datosGuardar);
 
-    // Salida: generar Entrada pendiente en destino para que enfermería revise/apruebe
-    if (movimiento === 'Salida' && (detalles.sucursalDestino || '').trim() && !rechazoCaptura) {
-      const destino = detalles.sucursalDestino.trim();
-      const origen = (detalles.sucursalOrigen || sucursalActiva || '').trim();
+    // Recepción aprobada → reflejar en caducidades_almacen de la sucursal destino
+    if (movimiento === 'Recepción' && aprobadoCaptura && !rechazoCaptura) {
+      try {
+        const cant = Number(detalles.cantidad) || 0;
+        const mesCaducidad = String(detalles.caducidad || '').slice(0, 7);
+        const destCad = sucursalDestino || sucursalDoc;
+        if (cant > 0 && /^\d{4}-\d{2}$/.test(mesCaducidad) && destCad) {
+          const cadSnap = await getDocs(query(
+            collection(db, 'caducidades_almacen'),
+            where('sucursal', '==', destCad),
+            where('mesCaducidad', '==', mesCaducidad)
+          ));
+          const match = cadSnap.docs.find((d) => {
+            const data = d.data() || {};
+            if (data.eliminado) return false;
+            return String(data.lote || '') === String(detalles.lote || '')
+              && (
+                (detalles.medicamentoId && data.medicamentoId === detalles.medicamentoId)
+                || normalizeText(data.medicamento) === normalizeText(detalles.compuesto)
+              );
+          });
+          if (match) {
+            await updateDoc(match.ref, {
+              cantidad: (Number(match.data().cantidad) || 0) + cant,
+              presentacion: detalles.presentacion || match.data().presentacion || '',
+              forma: detalles.forma || match.data().forma || '',
+              actualizadoEn: serverTimestamp(),
+              actualizadoPor: enfermeraNombre,
+            });
+          } else {
+            await addDoc(collection(db, 'caducidades_almacen'), {
+              codigo: detalles.numeroAcomodo || '',
+              medicamento: String(detalles.compuesto || '').toUpperCase(),
+              presentacion: detalles.presentacion || '',
+              forma: detalles.forma || '',
+              medicamentoId: detalles.medicamentoId || null,
+              cantidad: cant,
+              lote: detalles.lote || '',
+              mesCaducidad,
+              mesLabel: mesCaducidad,
+              sucursal: destCad,
+              responsableNombre: enfermeraNombre,
+              responsableId: user?.uid || null,
+              creadoEn: serverTimestamp(),
+              origenBitacoraId: refSalida.id,
+            });
+          }
+        }
+      } catch (cadErr) {
+        console.warn('No se pudo sincronizar caducidades desde recepción', cadErr);
+      }
+    }
+
+    // Salida: generar Entrada pendiente en destino para que enfermería revise/apruebe e integre
+    if (movimiento === 'Salida' && sucursalDestino && !rechazoCaptura) {
+      const destino = sucursalDestino;
+      const origen = sucursalOrigen;
       const refEntrada = await addDoc(collection(db, 'bitacoras_operativas'), {
         fecha: serverTimestamp(),
         fechaString: new Date().toLocaleDateString('en-CA'),
@@ -719,79 +911,272 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
   useEffect(() => {
     if (!sucursalActiva) return;
     if (tipoRegistro !== 'farmacia' && tipoRegistro !== 'pedido_medicamento') return;
-    const mes = new Date().toLocaleDateString('en-CA').slice(0, 7);
-    const firstDay = `${mes}-01`;
-    const [y, m] = mes.split('-').map(Number);
-    const lastDay = new Date(y, m, 0).toLocaleDateString('en-CA');
+
+    const mesFarmacia = farmaciaMesHistorial || new Date().toLocaleDateString('en-CA').slice(0, 7);
+    const mesPedidos = pedidoMesHistorial || mesFarmacia;
+    const monthBounds = (mes) => {
+      const firstDay = `${mes}-01`;
+      const [y, m] = String(mes).split('-').map(Number);
+      const lastDay = new Date(y, m, 0).toLocaleDateString('en-CA');
+      return { firstDay, lastDay };
+    };
+    let cancelled = false;
+
+    const aliasesSucursal = [
+      sucursalActiva,
+      sucursal,
+      sessionSucursal?.nombre,
+      sessionSucursal?.id,
+      user?.sucursal,
+      user?.sessionSucursalNombre,
+    ].filter(Boolean);
+
+    const pertenecePedidoASucursal = (reg) => {
+      if (!aliasesSucursal.length) return true;
+      const candidates = [reg.sucursal, reg.detalles?.sucursal, reg.sucursalNombre];
+      return candidates.some((c) => aliasesSucursal.some((a) => sameSucursal(c, a)));
+    };
+
+    const enrichSalidasConEstadoDestino = async (rows) => {
+      const salidas = rows.filter((r) => {
+        const area = normalizeMovimientoArea(r.area || r.detalles?.tipo_movimiento);
+        return area === 'Salida' && r.entradaGeneradaId;
+      });
+      if (salidas.length === 0) return rows;
+
+      const estadoBySalidaId = {};
+      await Promise.all(salidas.map(async (salida) => {
+        try {
+          const snap = await getDoc(doc(db, 'bitacoras_operativas', salida.entradaGeneradaId));
+          if (snap.exists()) {
+            estadoBySalidaId[salida.id] = snap.data()?.estadoAprobacion || 'pendiente';
+          } else {
+            estadoBySalidaId[salida.id] = 'pendiente';
+          }
+        } catch {
+          estadoBySalidaId[salida.id] = null;
+        }
+      }));
+
+      return rows.map((r) => (
+        estadoBySalidaId[r.id] != null
+          ? { ...r, _estadoAprobacionDestino: estadoBySalidaId[r.id] }
+          : r
+      ));
+    };
 
     if (tipoRegistro === 'farmacia') {
+      const { firstDay, lastDay } = monthBounds(mesFarmacia);
+      setHistorialFarmaciaLoading(true);
+      setHistorialFarmaciaError('');
+      let loadSeq = 0;
+      // Query simple por tipo (sin rango compuesto) para no depender de índice faltante.
       const qF = query(
         collection(db, 'bitacoras_operativas'),
-        where('tipo', '==', 'Farmacia'),
-        where('fechaString', '>=', firstDay),
-        where('fechaString', '<=', lastDay)
+        where('tipo', '==', 'Farmacia')
       );
-      const unsub = onSnapshot(qF, (snap) => {
-        const rows = snap.docs
+      const unsub = onSnapshot(qF, async (snap) => {
+        const mySeq = ++loadSeq;
+        const allFarma = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((r) => {
-            const suc = r.sucursal || '';
-            const dest = r.detalles?.sucursalDestino || '';
-            const ori = r.detalles?.sucursalOrigen || '';
-            return suc === sucursalActiva || dest === sucursalActiva || ori === sucursalActiva;
-          })
-          .sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
-        setHistorialFarmacia(rows);
-      }, () => setHistorialFarmacia([]));
-      return () => unsub();
+          .filter((r) => !r.eliminado);
+
+        const delMes = allFarma.filter((r) => {
+          const f = String(r.fechaString || '');
+          return f >= firstDay && f <= lastDay;
+        });
+
+        // Entradas pendientes de ESTA sucursal aunque sean de otro mes (traspasos recientes)
+        const pendientesOtrasFechas = allFarma.filter((r) => {
+          const area = normalizeMovimientoArea(r.area || r.detalles?.tipo_movimiento);
+          if (area !== 'Entrada') return false;
+          const pendiente = r.pendienteRecepcionEnfermeria
+            || r.estadoAprobacion === 'pendiente'
+            || !r.estadoAprobacion;
+          if (!pendiente) return false;
+          if (!bitacoraPerteneceASucursal(r, sucursalActiva)) return false;
+          const f = String(r.fechaString || '');
+          return !(f >= firstDay && f <= lastDay);
+        });
+
+        let rows = delMes
+          .filter((r) => bitacoraPerteneceASucursal(r, sucursalActiva))
+          .sort((a, b) => {
+            const fa = String(a.fechaString || '');
+            const fb = String(b.fechaString || '');
+            if (fa !== fb) return fb.localeCompare(fa);
+            const facturaA = String(a.detalles?.factura || '');
+            const facturaB = String(b.detalles?.factura || '');
+            if (facturaA !== facturaB) return facturaA.localeCompare(facturaB, 'es', { numeric: true });
+            return String(a.detalles?.compuesto || '').localeCompare(String(b.detalles?.compuesto || ''), 'es');
+          });
+
+        // Alias / nombre distinto: no ocultar el mes entero
+        let warnSucursal = '';
+        if (rows.length === 0 && delMes.length > 0) {
+          rows = delMes.sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
+          warnSucursal = `Se muestran ${delMes.length} bitácora(s) del mes; el nombre “${sucursalActiva}” no coincidió exactamente.`;
+        }
+
+        // Pendientes primero (mes + fuera de mes)
+        const pendingIds = new Set(pendientesOtrasFechas.map((r) => r.id));
+        const merged = [
+          ...pendientesOtrasFechas,
+          ...rows.filter((r) => !pendingIds.has(r.id)),
+        ];
+        // Dentro de la lista, entradas pendientes arriba
+        merged.sort((a, b) => {
+          const pend = (r) => {
+            const area = normalizeMovimientoArea(r.area || r.detalles?.tipo_movimiento);
+            if (area !== 'Entrada') return 1;
+            if (r.pendienteRecepcionEnfermeria || r.estadoAprobacion === 'pendiente' || !r.estadoAprobacion) return 0;
+            return 1;
+          };
+          const d = pend(a) - pend(b);
+          if (d !== 0) return d;
+          return String(b.fechaString || '').localeCompare(String(a.fechaString || ''));
+        });
+
+        try {
+          const enriched = await enrichSalidasConEstadoDestino(merged);
+          if (cancelled || mySeq !== loadSeq) return;
+          setHistorialFarmacia(enriched);
+          setHistorialFarmaciaError(warnSucursal);
+        } catch (err) {
+          console.error('Enrich salidas', err);
+          if (cancelled || mySeq !== loadSeq) return;
+          setHistorialFarmacia(merged);
+          setHistorialFarmaciaError(warnSucursal);
+        } finally {
+          if (!cancelled && mySeq === loadSeq) setHistorialFarmaciaLoading(false);
+        }
+      }, (err) => {
+        console.error('Historial farmacia', err);
+        if (cancelled) return;
+        setHistorialFarmaciaLoading(false);
+        setHistorialFarmaciaError(
+          err?.code === 'failed-precondition'
+            ? 'Falta un índice de Firestore para cargar bitácoras. Contacta a soporte.'
+            : 'No se pudieron cargar las bitácoras del mes.'
+        );
+      });
+      return () => {
+        cancelled = true;
+        unsub();
+      };
     }
 
+    // Pedidos: mismo patrón (sin índice compuesto). No vaciar lista en error → evita flash "con datos → Sin pedidos".
+    const { firstDay, lastDay } = monthBounds(mesPedidos);
+    setHistorialPedidosLoading(true);
+    setHistorialPedidosError('');
     const qP = query(
       collection(db, 'bitacoras_operativas'),
-      where('tipo', '==', 'Pedido de medicamento'),
-      where('fechaString', '>=', firstDay),
-      where('fechaString', '<=', lastDay)
+      where('tipo', '==', 'Pedido de medicamento')
     );
     const unsubP = onSnapshot(qP, (snap) => {
-      const rows = snap.docs
+      if (cancelled) return;
+      const delMes = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((r) => !sucursalActiva || r.sucursal === sucursalActiva)
+        .filter((r) => {
+          const f = String(r.fechaString || '');
+          return f >= firstDay && f <= lastDay;
+        });
+      let rows = delMes
+        .filter((r) => pertenecePedidoASucursal(r))
         .sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
+
+      // Si el nombre de sucursal no matchea (legacy / alias), no ocultar el mes entero:
+      // muestra del mes y avisa.
+      if (rows.length === 0 && delMes.length > 0) {
+        rows = delMes.sort((a, b) => String(b.fechaString || '').localeCompare(String(a.fechaString || '')));
+        setHistorialPedidosError(
+          `Se muestran ${delMes.length} pedido(s) del mes; el nombre de sucursal no coincidió exactamente con “${sucursalActiva}”.`
+        );
+      } else {
+        setHistorialPedidosError('');
+      }
       setHistorialPedidos(rows);
-    }, () => setHistorialPedidos([]));
-    return () => unsubP();
-  }, [sucursalActiva, tipoRegistro]);
+      setHistorialPedidosLoading(false);
+    }, (err) => {
+      console.error('Historial pedidos', err);
+      if (cancelled) return;
+      setHistorialPedidosLoading(false);
+      setHistorialPedidosError(
+        err?.code === 'failed-precondition'
+          ? 'Falta un índice de Firestore para cargar pedidos. Contacta a soporte.'
+          : 'No se pudieron cargar los pedidos del mes.'
+      );
+    });
+    return () => {
+      cancelled = true;
+      unsubP();
+    };
+  }, [sucursalActiva, tipoRegistro, pedidoMesHistorial, farmaciaMesHistorial, sucursal, sessionSucursal, user?.sucursal, user?.sessionSucursalNombre]);
 
   const handlePrintFarmaciaHistorial = () => {
-    const rows = historialFarmacia.map((r, i) => {
+    if (historialFarmaciaLoading) {
+      showToast('Aún se están cargando las bitácoras. Espera un momento.', 'warning');
+      return;
+    }
+    if (historialFarmaciaError) {
+      showToast(historialFarmaciaError, 'error');
+      return;
+    }
+    if (!historialFarmacia.length) {
+      showToast(`No hay bitácoras este mes para ${sucursalActiva || 'esta sucursal'}.`, 'warning');
+      return;
+    }
+    setVerHistorialFarmacia(true);
+    // Orden: fecha → factura (misma factura junta) → compuesto
+    const ordenados = [...historialFarmacia].sort((a, b) => {
+      const fa = String(a.fechaString || '');
+      const fb = String(b.fechaString || '');
+      if (fa !== fb) return fa.localeCompare(fb);
+      const facturaA = String(a.detalles?.factura || '');
+      const facturaB = String(b.detalles?.factura || '');
+      if (facturaA !== facturaB) return facturaA.localeCompare(facturaB, 'es', { numeric: true });
+      return String(a.detalles?.compuesto || '').localeCompare(String(b.detalles?.compuesto || ''), 'es');
+    });
+    const rows = ordenados.map((r, i) => {
       const d = r.detalles || {};
-      const ap = r.estadoAprobacion === 'aprobado' ? 'SI' : r.estadoAprobacion === 'rechazado' ? 'NO' : 'PENDIENTE';
+      const areaNorm = normalizeMovimientoArea(r.area || d.tipo_movimiento);
+      const estadoPrint = areaNorm === 'Salida'
+        ? (r._estadoAprobacionDestino || 'pendiente')
+        : (r.estadoAprobacion || 'pendiente');
+      const ap = labelEstadoAprobacion(estadoPrint);
+      const emp = criterioBool(d, 'criterio_empaque', ['empaque']);
+      const eti = criterioBool(d, 'criterio_etiqueta', ['etiqueta']);
+      const mark = (v) => (v === true ? '✓' : v === false ? '✗' : '—');
       return `<tr style="${i % 2 ? 'background:#f8fafc' : ''}">
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.fechaString || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.area || d.tipo_movimiento || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${formatFechaMx(r.fechaString)}</td>
         <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.factura || '—'}</td>
         <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.compuesto || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.presentacion || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.forma || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.lote || ''}</td>
         <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;text-align:center">${d.cantidad || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.caducidad || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${d.lote || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;text-align:center">${formatCaducidadCorta(d.caducidad)}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;text-align:center">${mark(emp)}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;text-align:center">${mark(eti)}</td>
         <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px;font-weight:700">${ap}</td>
-        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.responsableNombre || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:11px">${r.responsableNombre || r.aprobadoPorNombre || ''}</td>
         <td style="border:1px solid #cbd5e1;padding:5px 8px;font-size:10px">${r.comentarioAprobacion || d.observaciones || ''}</td>
       </tr>`;
     }).join('');
-    const w = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800');
-    if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>Bitácoras farmacia</title>
+    // Sin noopener: con noopener window.open() devuelve null y no se puede escribir/imprimir
+    const w = window.open('', '_blank', 'width=1100,height=800');
+    if (!w) {
+      showToast('El navegador bloqueó la ventana de impresión. Permite ventanas emergentes.', 'error');
+      return;
+    }
+    w.document.write(`<!DOCTYPE html><html><head><title>Bitácoras farmacia — ${sucursalActiva || ''}</title>
       <style>body{font-family:system-ui,sans-serif;padding:16px}table{width:100%;border-collapse:collapse}
       th{background:#1e293b;color:#fff;padding:6px 8px;font-size:10px;text-transform:uppercase}@media print{button{display:none}}</style></head><body>
       <h2 style="margin:0 0 4px">Bitácoras recepción / entradas / salidas</h2>
-      <p style="margin:0 0 12px;color:#64748b;font-size:13px">${sucursalActiva || ''} — ${new Date().toLocaleDateString('es-MX')}</p>
+      <p style="margin:0 0 12px;color:#64748b;font-size:13px">Sucursal: <strong>${sucursalActiva || '—'}</strong> — ${farmaciaMesHistorial} — ${new Date().toLocaleDateString('es-MX')}</p>
       <table><thead><tr>
-        <th>Fecha</th><th>Tipo</th><th>Factura</th><th>Compuesto</th><th>Presentación</th><th>Forma</th>
-        <th>Lote</th><th>Cant.</th><th>Caducidad</th><th>Aprobado</th><th>Realizó</th><th>Obs.</th>
-      </tr></thead><tbody>${rows || '<tr><td colspan="12" style="padding:12px;text-align:center">Sin registros</td></tr>'}</tbody></table>
+        <th>Fecha</th><th>Factura</th><th>Compuesto</th><th>Cant.</th><th>Lote</th><th>Caducidad</th>
+        <th>Empaque</th><th>Etiqueta</th><th>Aprobado</th><th>Recibió</th><th>Coment.</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="11" style="padding:12px;text-align:center">Sin registros</td></tr>'}</tbody></table>
       <div style="text-align:center;margin-top:16px"><button onclick="window.print()" style="background:#1e293b;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:700">Imprimir</button></div>
       </body></html>`);
     w.document.close();
@@ -799,6 +1184,11 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
   const handleAprobarEntradaEnfermeria = async (reg, decision, comentario = '') => {
     if (!reg?.id) return;
+    if (decision === 'rechazado' && !String(comentario || '').trim()) {
+      showToast('El comentario es obligatorio si no apruebas la mercancía.', 'error');
+      return;
+    }
+    setAprobandoEntradaId(reg.id);
     try {
       await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
         estadoAprobacion: decision,
@@ -808,9 +1198,150 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
         comentarioAprobacion: comentario || (decision === 'rechazado' ? 'Pendiente / incompleto según enfermería' : 'Recibido completo'),
         pendienteRecepcionEnfermeria: false,
       });
-      showToast(decision === 'aprobado' ? 'Entrada aceptada.' : 'Entrada marcada pendiente/rechazada.', decision === 'aprobado' ? 'success' : 'warning');
+      setComentariosAprobacion((prev) => {
+        const next = { ...prev };
+        delete next[reg.id];
+        return next;
+      });
+      showToast(
+        decision === 'aprobado'
+          ? 'Entrada aprobada. Ahora puedes aceptar e integrar al inventario.'
+          : 'Entrada marcada como no aprobada.',
+        decision === 'aprobado' ? 'success' : 'warning'
+      );
     } catch {
       showToast('No se pudo actualizar la entrada.', 'error');
+    } finally {
+      setAprobandoEntradaId(null);
+    }
+  };
+
+  const handleIntegrarInventarioEnfermeria = async (reg) => {
+    if (!reg?.id) return;
+    if (reg.estadoInventario === 'integrado') {
+      showToast('Esta entrada ya está integrada.', 'warning');
+      return;
+    }
+    if (reg.estadoAprobacion !== 'aprobado') {
+      showToast('Primero aprueba la entrada (Aceptar) antes de integrar.', 'warning');
+      return;
+    }
+    const det = reg.detalles || {};
+    const cantidad = Number(det.cantidad) || 0;
+    if (!cantidad) {
+      showToast('La entrada no tiene cantidad válida.', 'error');
+      return;
+    }
+    const sucursalDestino = det.sucursalDestino || reg.sucursal || sucursalActiva || '';
+    setIntegrandoId(reg.id);
+    try {
+      let invDoc = null;
+      if (det.medicamentoId) {
+        const invSnap = await getDocs(query(
+          collection(db, 'inventario'),
+          where('medicamentoId', '==', det.medicamentoId)
+        ));
+        invDoc = invSnap.docs.find((d) => {
+          const data = d.data() || {};
+          return String(data.lote || '') === String(det.lote || '')
+            && sameSucursal(data.sucursal || data.sucursalNombre, sucursalDestino);
+        }) || null;
+      }
+
+      if (invDoc) {
+        await updateDoc(invDoc.ref, {
+          stock: increment(cantidad),
+          existencias: increment(cantidad),
+          caducidad: det.caducidad || invDoc.data().caducidad || null,
+          actualizadoAt: serverTimestamp(),
+          actualizadoPor: enfermeraNombre,
+        });
+      } else {
+        await addDoc(collection(db, 'inventario'), {
+          medicamentoId: det.medicamentoId || null,
+          medicamento: det.compuesto || '',
+          nombreComercial: det.compuesto || '',
+          descripcion: det.compuesto || '',
+          presentacion: det.presentacion || '',
+          forma: det.forma || '',
+          lote: det.lote || '',
+          caducidad: det.caducidad || null,
+          stock: cantidad,
+          existencias: cantidad,
+          sucursal: sucursalDestino,
+          sucursalNombre: sucursalDestino,
+          numeroAcomodo: det.numeroAcomodo || '',
+          marca: det.marca || '',
+          laboratorio: det.laboratorio || '',
+          activo: true,
+          origenBitacoraId: reg.id,
+          creadoAt: serverTimestamp(),
+          creadoPor: enfermeraNombre,
+        });
+      }
+
+      await updateDoc(doc(db, 'bitacoras_operativas', reg.id), {
+        estadoInventario: 'integrado',
+        integradoAt: serverTimestamp(),
+        integradoPor: user?.uid || null,
+        integradoPorNombre: enfermeraNombre,
+      });
+
+      // Sync caducidades destino
+      try {
+        const mesCaducidad = String(det.caducidad || '').slice(0, 7);
+        if (/^\d{4}-\d{2}$/.test(mesCaducidad) && sucursalDestino) {
+          const cadSnap = await getDocs(query(
+            collection(db, 'caducidades_almacen'),
+            where('sucursal', '==', sucursalDestino),
+            where('mesCaducidad', '==', mesCaducidad)
+          ));
+          const match = cadSnap.docs.find((d) => {
+            const data = d.data() || {};
+            if (data.eliminado) return false;
+            return String(data.lote || '') === String(det.lote || '')
+              && (
+                (det.medicamentoId && data.medicamentoId === det.medicamentoId)
+                || normalizeText(data.medicamento) === normalizeText(det.compuesto)
+              );
+          });
+          if (match) {
+            await updateDoc(match.ref, {
+              cantidad: (Number(match.data().cantidad) || 0) + cantidad,
+              presentacion: det.presentacion || match.data().presentacion || '',
+              forma: det.forma || match.data().forma || '',
+              actualizadoEn: serverTimestamp(),
+              actualizadoPor: enfermeraNombre,
+            });
+          } else {
+            await addDoc(collection(db, 'caducidades_almacen'), {
+              codigo: det.numeroAcomodo || '',
+              medicamento: String(det.compuesto || '').toUpperCase(),
+              presentacion: det.presentacion || '',
+              forma: det.forma || '',
+              medicamentoId: det.medicamentoId || null,
+              cantidad,
+              lote: det.lote || '',
+              mesCaducidad,
+              mesLabel: mesCaducidad,
+              sucursal: sucursalDestino,
+              responsableNombre: enfermeraNombre,
+              responsableId: user?.uid || null,
+              creadoEn: serverTimestamp(),
+              origenBitacoraId: reg.id,
+            });
+          }
+        }
+      } catch (cadErr) {
+        console.warn('caducidades sync', cadErr);
+      }
+
+      showToast('Entrada integrada al inventario de tu sucursal.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo integrar al inventario.', 'error');
+    } finally {
+      setIntegrandoId(null);
     }
   };
 
@@ -1118,6 +1649,20 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
     (formTemp.turno === '4:00 p.m.' && progresoHoy.temp_16) ||
     (formTemp.turno === '10:00 p.m.' && progresoHoy.temp_22)
   );
+
+  const entradasPendientesAprobar = useMemo(() => (
+    historialFarmacia.filter((r) => {
+      const area = normalizeMovimientoArea(r.area || r.detalles?.tipo_movimiento);
+      if (area !== 'Entrada') return false;
+      const enMi = sameSucursal(r.sucursal, sucursalActiva)
+        || sameSucursal(r.detalles?.sucursalDestino, sucursalActiva);
+      if (!enMi) return false;
+      return r.pendienteRecepcionEnfermeria
+        || r.estadoAprobacion === 'pendiente'
+        || !r.estadoAprobacion;
+    })
+  ), [historialFarmacia, sucursalActiva]);
+
   const rootClass = standalone
     ? "min-h-screen bg-slate-50 flex flex-col text-slate-700"
     : "fixed inset-0 z-[500] flex items-stretch text-slate-700";
@@ -1179,65 +1724,85 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
       <div className={`relative flex flex-col w-full ${standalone ? 'flex-1 min-h-0' : 'h-full'} z-10`}>
 
-        {/* ── SIDEBAR DRAWER (oculto por defecto) ── */}
-        {sidebarOpen && <div className="fixed inset-0 bg-black/25 backdrop-blur-[2px] z-40 transition-opacity" onClick={() => setSidebarOpen(false)} />}
-        <aside className={`fixed top-0 left-0 h-full w-[280px] bg-white border-r border-slate-200 z-50 flex flex-col shadow-2xl shadow-slate-900/10 transition-transform duration-300 ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full pointer-events-none'}`}>
-          <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-sm shadow-blue-500/25">
-                <Activity size={18}/>
-              </div>
-              <div>
-                <h2 className="text-[15px] font-black text-slate-800 leading-tight" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>Bitácoras</h2>
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 mt-0.5"><MapPin size={9}/> {sucursalActiva || 'Sin sucursal'}</p>
-              </div>
-            </div>
-            <button onClick={() => setSidebarOpen(false)} className="p-2 -mr-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
-              <X size={18}/>
-            </button>
-          </div>
-
-          <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-            {REGISTRO_TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = tipoRegistro === tab.id;
-              return (
-                <button key={tab.id} onClick={() => { setTipoRegistro(tab.id); setSidebarOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[14px] font-semibold transition-all ${
-                    isActive
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : tab.id === 'carro_rojo'
-                        ? 'text-rose-600 hover:bg-rose-50 hover:text-rose-700 border border-rose-100'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
-                  }`}
-                >
-                  <Icon size={18} className={isActive ? 'text-white' : tab.id === 'carro_rojo' ? 'text-rose-400' : 'text-slate-400'}/> {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="px-5 py-4 border-t border-slate-100 bg-gradient-to-t from-slate-50 to-white">
-            <div className="flex items-center justify-between mb-2.5">
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Progreso del día</p>
-              <span className="text-[11px] font-bold text-blue-600">{progresoTotal}/{progresoItems.length}</span>
-            </div>
-            <div className="h-2 bg-slate-100 rounded-full mb-3.5 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-500" style={{ width: `${(progresoTotal / progresoItems.length) * 100}%` }} />
-            </div>
-            <div className="space-y-1.5">
-              {progresoItems.map((item, i) => (
-                <div key={i} className="flex items-center justify-between py-1">
-                  <span className={`text-[12px] font-semibold ${item.done ? 'text-emerald-600' : 'text-slate-400'}`}>{item.label}</span>
-                  {item.done
-                    ? <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center"><Check size={12} className="text-emerald-600"/></div>
-                    : <div className="w-5 h-5 rounded-full border-2 border-slate-200" />
-                  }
+        {/* Drawer de pestañas: portal al body para quedar por encima del rail AppShell (z-40) */}
+        {typeof document !== 'undefined' && createPortal(
+          <>
+            {sidebarOpen && (
+              <div
+                className="fixed inset-0 bg-black/25 backdrop-blur-[2px] z-[620] transition-opacity"
+                onClick={() => setSidebarOpen(false)}
+                aria-hidden
+              />
+            )}
+            <aside
+              className={`fixed top-0 left-0 h-full w-[min(280px,85vw)] bg-white border-r border-slate-200 z-[630] flex flex-col shadow-2xl shadow-slate-900/10 transition-transform duration-300 ease-out ${
+                sidebarOpen ? 'translate-x-0' : '-translate-x-full pointer-events-none'
+              }`}
+              aria-hidden={!sidebarOpen}
+            >
+              <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-sm shadow-blue-500/25">
+                    <Activity size={18}/>
+                  </div>
+                  <div>
+                    <h2 className="text-[15px] font-black text-slate-800 leading-tight" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>Bitácoras</h2>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 mt-0.5"><MapPin size={9}/> {sucursalActiva || 'Sin sucursal'}</p>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+                <button type="button" onClick={() => setSidebarOpen(false)} className="p-2 -mr-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+                  <X size={18}/>
+                </button>
+              </div>
+
+              <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+                {REGISTRO_TABS.map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = tipoRegistro === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => { setTipoRegistro(tab.id); setSidebarOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[14px] font-semibold transition-all ${
+                        isActive
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : tab.id === 'carro_rojo'
+                            ? 'text-rose-600 hover:bg-rose-50 hover:text-rose-700 border border-rose-100'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
+                      }`}
+                    >
+                      <Icon size={18} className={`shrink-0 ${isActive ? 'text-white' : tab.id === 'carro_rojo' ? 'text-rose-400' : 'text-slate-400'}`}/>
+                      <span className="truncate text-left">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <div className="px-5 py-4 border-t border-slate-100 bg-gradient-to-t from-slate-50 to-white">
+                <div className="flex items-center justify-between mb-2.5">
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Progreso del día</p>
+                  <span className="text-[11px] font-bold text-blue-600">{progresoTotal}/{progresoItems.length}</span>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full mb-3.5 overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-500" style={{ width: `${(progresoTotal / progresoItems.length) * 100}%` }} />
+                </div>
+                <div className="space-y-1.5">
+                  {progresoItems.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between py-1">
+                      <span className={`text-[12px] font-semibold ${item.done ? 'text-emerald-600' : 'text-slate-400'}`}>{item.label}</span>
+                      {item.done
+                        ? <div className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center"><Check size={12} className="text-emerald-600"/></div>
+                        : <div className="w-5 h-5 rounded-full border-2 border-slate-200" />
+                      }
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </aside>
+          </>,
+          document.body
+        )}
 
         {/* ── PANEL PRINCIPAL ── */}
   <main className="flex-1 flex flex-col min-w-0 min-h-0 bg-slate-50 overflow-hidden">
@@ -1261,20 +1826,29 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
             <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
               <div className="flex items-center gap-1">
                 <MapPin size={12} className={`sm:w-3.5 sm:h-3.5 ${sucursalActiva ? 'text-blue-500' : 'text-amber-500 animate-pulse'} hidden sm:block`}/>
-                <select
-                  value={sucursalActiva}
-                  onChange={(e) => setSucursalActiva(e.target.value)}
-                  className={`px-2 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold outline-none focus:ring-2 transition-all max-w-[110px] sm:max-w-[160px] ${
-                    sucursalActiva
-                      ? 'bg-blue-50 border border-blue-200 text-blue-700 focus:ring-blue-100'
-                      : 'bg-amber-50 border-2 border-amber-400 text-amber-700 focus:ring-amber-100'
-                  }`}
-                >
-                  <option value="">Seleccione...</option>
-                  {catalogoSucursales.map(s => (
-                    <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
-                  ))}
-                </select>
+                {puedeCambiarSucursal ? (
+                  <select
+                    value={sucursalActiva}
+                    onChange={(e) => setSucursalActiva(e.target.value)}
+                    className={`px-2 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold outline-none focus:ring-2 transition-all max-w-[110px] sm:max-w-[160px] ${
+                      sucursalActiva
+                        ? 'bg-blue-50 border border-blue-200 text-blue-700 focus:ring-blue-100'
+                        : 'bg-amber-50 border-2 border-amber-400 text-amber-700 focus:ring-amber-100'
+                    }`}
+                  >
+                    <option value="">Seleccione...</option>
+                    {catalogoSucursales.map(s => (
+                      <option key={s.id} value={s.nombre || s.id}>{s.nombre || s.id}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span
+                    className="px-2 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold bg-blue-50 border border-blue-200 text-blue-700 max-w-[140px] sm:max-w-[180px] truncate"
+                    title="Tu sucursal de sesión (no se puede cambiar en pedido/registros)"
+                  >
+                    {sucursalActiva || 'Sin sucursal'}
+                  </span>
+                )}
               </div>
               <div className="hidden sm:flex items-center gap-1 mr-1">
                 {progresoItems.map((item, i) => (
@@ -1308,6 +1882,26 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       <p className="font-black uppercase tracking-wider text-[10px] text-amber-600">Recordatorio de bitácora</p>
                       {alertaHorarioFaltante.map((m) => <p key={m}>{m}</p>)}
                     </div>
+                  </div>
+                )}
+
+                {entradasPendientesAprobar.length > 0 && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-black text-amber-900 uppercase tracking-wide">
+                        {entradasPendientesAprobar.length} entrada(s) por aprobar en {sucursalActiva || 'tu sucursal'}
+                      </p>
+                      <p className="text-[11px] text-amber-800/80 mt-0.5">
+                        Traspasos desde almacén u otra sucursal. En la bitácora abajo marca SI / NO (comentario obligatorio si NO) y luego Integra.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setVerHistorialFarmacia(true)}
+                      className="shrink-0 px-3 py-2 rounded-lg bg-amber-600 text-white text-[11px] font-black uppercase tracking-wider hover:bg-amber-700"
+                    >
+                      Ver pendientes
+                    </button>
                   </div>
                 )}
 
@@ -1445,7 +2039,9 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       {formFarmacia.marca ? ` · ${formFarmacia.marca}` : ''}
                     </p>
                   ) : formFarmacia.compuesto ? (
-                    <p className="mt-1.5 text-[11px] font-semibold text-amber-600">Elige una sugerencia del catálogo para guardar.</p>
+                    <p className="mt-1.5 text-[11px] font-semibold text-amber-600">
+                      Sin vínculo al catálogo: se guardará como texto libre (elige sugerencia si existe).
+                    </p>
                   ) : null}
                   {mostrarMeds && (
                     <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-xl mt-1.5 max-h-56 overflow-y-auto z-50 shadow-lg p-1.5">
@@ -1472,15 +2068,15 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
 
                 {/* Grid de campos — sin factura (ya está en cabecera) */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
-                  <div><label className={labelBase}>Lote *</label><input className={inputBase} placeholder="Lote de fabricación" value={formFarmacia.lote} onChange={e => setFormFarmacia({ ...formFarmacia, lote: e.target.value })}/></div>
-                  <div><label className={labelBase}>Caducidad *</label><input type="date" className={inputBase} value={formFarmacia.caducidad} onChange={e => setFormFarmacia({ ...formFarmacia, caducidad: e.target.value })}/></div>
+                  <div><label className={labelBase}>Lote *</label><input className={inputBase} placeholder="Lote de fabricación" value={formFarmacia.lote} onChange={e => setFormFarmacia((prev) => ({ ...prev, lote: e.target.value }))}/></div>
+                  <div><label className={labelBase}>Caducidad *</label><input type="date" className={inputBase} value={formFarmacia.caducidad} onChange={e => setFormFarmacia((prev) => ({ ...prev, caducidad: e.target.value }))}/></div>
                   <div>
                     <label className={labelBase}>Cantidad *</label>
                     <input type="number" className={`${inputBase} font-black text-lg text-blue-700 bg-blue-50/50 border-blue-200 focus:border-blue-400`} placeholder="Cajas / Pzas"
-                      value={formFarmacia.cantidad} onChange={e => setFormFarmacia({ ...formFarmacia, cantidad: e.target.value })}/>
+                      value={formFarmacia.cantidad} onChange={e => setFormFarmacia((prev) => ({ ...prev, cantidad: e.target.value }))}/>
                   </div>
-                  <div><label className={labelBase}>Presentación</label><input className={inputBase} placeholder="Ej: Caja 30 tabs" value={formFarmacia.presentacion} onChange={e => setFormFarmacia({ ...formFarmacia, presentacion: e.target.value })}/></div>
-                  <div><label className={labelBase}>Forma Farmacéutica</label><input className={inputBase} placeholder="Ej: Tableta" value={formFarmacia.forma} onChange={e => setFormFarmacia({ ...formFarmacia, forma: e.target.value })}/></div>
+                  <div><label className={labelBase}>Presentación</label><input className={inputBase} placeholder="Ej: Caja 30 tabs" value={formFarmacia.presentacion} onChange={e => setFormFarmacia((prev) => ({ ...prev, presentacion: e.target.value }))}/></div>
+                  <div><label className={labelBase}>Forma Farmacéutica</label><input className={inputBase} placeholder="Ej: Tableta" value={formFarmacia.forma} onChange={e => setFormFarmacia((prev) => ({ ...prev, forma: e.target.value }))}/></div>
                 </div>
 
                 {/* Criterios + Aprobado SI/NO + Observaciones */}
@@ -1491,23 +2087,24 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                         <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-4">Criterio de Aceptación</p>
                         <div className="space-y-3">
                           <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_empaque} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_empaque: e.target.checked })}/>
+                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_empaque} onChange={e => setFormFarmacia((prev) => ({ ...prev, criterio_empaque: e.target.checked }))}/>
                             <span className="text-[15px] font-medium text-slate-700">Empaque sin daños físicos</span>
                           </label>
                           <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors">
-                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia({ ...formFarmacia, criterio_etiqueta: e.target.checked })}/>
+                            <input type="checkbox" className="w-5 h-5 accent-slate-900 rounded shrink-0" checked={!!formFarmacia.criterio_etiqueta} onChange={e => setFormFarmacia((prev) => ({ ...prev, criterio_etiqueta: e.target.checked }))}/>
                             <span className="text-[15px] font-medium text-slate-700">Etiqueta íntegra y legible</span>
                           </label>
                         </div>
                       </div>
                       <div>
-                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-3">Aprobado *</p>
+                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wider mb-1">Aprobado en recepción *</p>
+                        <p className="text-[10px] text-slate-400 mb-3">Con SI queda aprobado. Con NO el comentario es obligatorio.</p>
                         <div className="flex gap-2">
                           {['si', 'no'].map((v) => (
                             <button
                               key={v}
                               type="button"
-                              onClick={() => setFormFarmacia({ ...formFarmacia, aprobadoMercancia: v })}
+                              onClick={() => setFormFarmacia((prev) => ({ ...prev, aprobadoMercancia: v }))}
                               className={`flex-1 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-wider border transition-all ${
                                 formFarmacia.aprobadoMercancia === v
                                   ? (v === 'si' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-rose-600 text-white border-rose-600')
@@ -1523,15 +2120,24 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                   )}
                   <div className={`flex flex-col ${normalizeMovimientoArea(formFarmacia.tipo_movimiento) === 'Recepción' ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
                     <label className={labelBase}>Observaciones</label>
-                    <textarea className={`${inputBase} flex-1 min-h-[120px] resize-none`} placeholder="Notas sobre empaque, mermas, etc." value={formFarmacia.observaciones} onChange={e => setFormFarmacia({ ...formFarmacia, observaciones: e.target.value })}/>
+                    <textarea className={`${inputBase} flex-1 min-h-[120px] resize-none`} placeholder="Notas sobre empaque, mermas, etc." value={formFarmacia.observaciones} onChange={e => setFormFarmacia((prev) => ({ ...prev, observaciones: e.target.value }))}/>
                   </div>
                 </div>
 
                 {/* Lote de ítems pendientes de guardar */}
                 {loteFarmaciaItems.length > 0 && (
                   <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                    <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-2">
                       <p className="text-[12px] font-black uppercase tracking-wider text-slate-600">{loteFarmaciaItems.length} ítem(s) en el lote</p>
+                      {formFarmacia.medicamentoId ? (
+                        <button
+                          type="button"
+                          onClick={() => limpiarCamposItemFarmacia({ cambiarMedicamento: true })}
+                          className="text-[11px] font-bold text-slate-500 hover:text-indigo-600"
+                        >
+                          Cambiar medicamento
+                        </button>
+                      ) : null}
                     </div>
                     <ul className="divide-y divide-slate-100 max-h-40 overflow-y-auto">
                       {loteFarmaciaItems.map((it) => (
@@ -1543,12 +2149,24 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                         </li>
                       ))}
                     </ul>
+                    {formFarmacia.medicamentoId && (
+                      <p className="px-4 py-2 text-[11px] text-emerald-700 bg-emerald-50/80 border-t border-emerald-100">
+                        Mismo medicamento listo: captura el otro lote / cantidad / caducidad y pulsa Agregar.
+                      </p>
+                    )}
                   </div>
                 )}
 
                 {/* Historial + entradas pendientes de recibir */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="month"
+                      value={farmaciaMesHistorial}
+                      onChange={(e) => setFarmaciaMesHistorial(e.target.value || new Date().toLocaleDateString('en-CA').slice(0, 7))}
+                      className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 bg-white"
+                      title="Mes de bitácoras"
+                    />
                     <button type="button" onClick={() => setVerHistorialFarmacia((v) => !v)}
                       className="px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
                       {verHistorialFarmacia ? 'Ocultar bitácoras' : 'Ver bitácoras del mes'}
@@ -1557,50 +2175,205 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
                       <Printer size={12}/> Imprimir bitácoras
                     </button>
+                    {historialFarmaciaLoading && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <Loader2 size={12} className="animate-spin" /> Cargando…
+                      </span>
+                    )}
+                    {!historialFarmaciaLoading && historialFarmacia.length > 0 && (
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        {historialFarmacia.length} registro{historialFarmacia.length === 1 ? '' : 's'}
+                      </span>
+                    )}
                   </div>
+                  {historialFarmaciaError && (
+                    <p className={`text-[11px] font-semibold rounded-lg px-3 py-2 border ${
+                      historialFarmacia.length
+                        ? 'text-amber-700 bg-amber-50 border-amber-100'
+                        : 'text-rose-600 bg-rose-50 border-rose-100'
+                    }`}>
+                      {historialFarmaciaError}
+                    </p>
+                  )}
                   {verHistorialFarmacia && (
-                    <div className="overflow-auto max-h-56 rounded-lg border border-slate-100">
-                      <table className="w-full text-[11px]">
+                    <div className="overflow-auto max-h-80 rounded-lg border border-slate-100">
+                      <table className="w-full text-[10px] min-w-[980px]">
                         <thead>
                           <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider">
                             <th className="px-2 py-1.5 text-left">Fecha</th>
-                            <th className="px-2 py-1.5 text-left">Tipo</th>
+                            <th className="px-2 py-1.5 text-left">Factura</th>
                             <th className="px-2 py-1.5 text-left">Compuesto</th>
                             <th className="px-2 py-1.5 text-center">Cant</th>
+                            <th className="px-2 py-1.5 text-left">Lote</th>
+                            <th className="px-2 py-1.5 text-center">Caducidad</th>
+                            <th className="px-2 py-1.5 text-center" colSpan={2}>Criterio</th>
                             <th className="px-2 py-1.5 text-center">Aprobado</th>
-                            <th className="px-2 py-1.5 text-left">Acción</th>
+                            <th className="px-2 py-1.5 text-left">Recibió</th>
+                            <th className="px-2 py-1.5 text-left">Coment</th>
+                          </tr>
+                          <tr className="bg-slate-50/80 text-slate-400 uppercase tracking-wider text-[9px]">
+                            <th colSpan={6} />
+                            <th className="px-1 py-0.5 text-center font-bold">Empaque</th>
+                            <th className="px-1 py-0.5 text-center font-bold">Etiqueta</th>
+                            <th colSpan={3} />
                           </tr>
                         </thead>
                         <tbody>
-                          {historialFarmacia.slice(0, 40).map((r) => {
+                          {historialFarmacia.slice(0, 80).map((r) => {
                             const d = r.detalles || {};
-                            const pendienteRecibir = r.area === 'Entrada' && r.pendienteRecepcionEnfermeria && r.estadoAprobacion === 'pendiente' && r.sucursal === sucursalActiva;
-                            const ap = r.estadoAprobacion === 'aprobado' ? 'SI' : r.estadoAprobacion === 'rechazado' ? 'NO' : 'PEND';
+                            const areaNorm = normalizeMovimientoArea(r.area || d.tipo_movimiento);
+                            const enMiSucursal = sameSucursal(r.sucursal, sucursalActiva) || sameSucursal(d.sucursalDestino, sucursalActiva);
+                            const pendienteRecibir = areaNorm === 'Entrada'
+                              && enMiSucursal
+                              && (r.pendienteRecepcionEnfermeria || r.estadoAprobacion === 'pendiente' || !r.estadoAprobacion);
+                            const pendienteIntegrar = areaNorm === 'Entrada'
+                              && enMiSucursal
+                              && r.estadoAprobacion === 'aprobado'
+                              && r.estadoInventario !== 'integrado';
+                            const comentarioDraft = comentariosAprobacion[r.id] ?? (r.comentarioAprobacion || '');
+                            const busy = aprobandoEntradaId === r.id;
+                            const estadoSalidaDestino = r._estadoAprobacionDestino || 'pendiente';
+                            const emp = criterioBool(d, 'criterio_empaque', ['empaque']);
+                            const eti = criterioBool(d, 'criterio_etiqueta', ['etiqueta']);
+
+                            const renderAprobado = () => {
+                              if (areaNorm === 'Salida') {
+                                const label = labelEstadoAprobacion(estadoSalidaDestino);
+                                const tone = estadoSalidaDestino === 'aprobado'
+                                  ? 'text-emerald-700 bg-emerald-50'
+                                  : estadoSalidaDestino === 'rechazado'
+                                    ? 'text-rose-700 bg-rose-50'
+                                    : 'text-amber-700 bg-amber-50';
+                                return (
+                                  <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${tone}`} title="Estado según sucursal destino">
+                                    {label}
+                                  </span>
+                                );
+                              }
+
+                              if (areaNorm === 'Entrada' && pendienteRecibir) {
+                                return (
+                                  <div className="flex items-center justify-center gap-2">
+                                    <label className="inline-flex items-center gap-0.5 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                        checked={false}
+                                        disabled={busy}
+                                        onChange={() => handleAprobarEntradaEnfermeria(r, 'aprobado', comentarioDraft || 'Recibido completo')}
+                                      />
+                                      <span className="font-black text-emerald-700">SI</span>
+                                    </label>
+                                    <label className="inline-flex items-center gap-0.5 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                                        checked={false}
+                                        disabled={busy}
+                                        onChange={() => handleAprobarEntradaEnfermeria(r, 'rechazado', comentarioDraft)}
+                                      />
+                                      <span className="font-black text-rose-700">NO</span>
+                                    </label>
+                                  </div>
+                                );
+                              }
+
+                              const estado = r.estadoAprobacion || 'pendiente';
+                              const label = labelEstadoAprobacion(estado);
+                              const tone = estado === 'aprobado'
+                                ? 'text-emerald-700 bg-emerald-50'
+                                : estado === 'rechazado'
+                                  ? 'text-rose-700 bg-rose-50'
+                                  : 'text-slate-500 bg-slate-100';
+                              return (
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${tone}`}>
+                                    {label}
+                                  </span>
+                                  {pendienteIntegrar && (
+                                    <button
+                                      type="button"
+                                      disabled={integrandoId === r.id}
+                                      onClick={() => handleIntegrarInventarioEnfermeria(r)}
+                                      className="px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[9px] font-bold disabled:opacity-50"
+                                    >
+                                      {integrandoId === r.id ? 'Integrando…' : 'Integrar'}
+                                    </button>
+                                  )}
+                                  {r.estadoInventario === 'integrado' && (
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase">En inventario</span>
+                                  )}
+                                </div>
+                              );
+                            };
+
+                            const renderComentario = () => {
+                              if (areaNorm === 'Entrada' && pendienteRecibir) {
+                                return (
+                                  <input
+                                    type="text"
+                                    value={comentarioDraft}
+                                    disabled={busy}
+                                    onChange={(e) => setComentariosAprobacion((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                                    placeholder="Obligatorio si NO"
+                                    className="w-full min-w-[100px] px-1.5 py-1 rounded border border-slate-200 bg-white text-[10px] text-slate-700 outline-none focus:border-blue-400"
+                                  />
+                                );
+                              }
+                              return (
+                                <span className="text-slate-600 break-words">
+                                  {r.comentarioAprobacion || d.observaciones || '—'}
+                                </span>
+                              );
+                            };
+
+                            const CheckCell = ({ ok }) => (
+                              <td className="px-1 py-1.5 text-center">
+                                {ok === true ? (
+                                  <span className="inline-flex w-4 h-4 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-700 text-[10px] font-black">✓</span>
+                                ) : ok === false ? (
+                                  <span className="inline-flex w-4 h-4 items-center justify-center rounded border border-rose-200 bg-rose-50 text-rose-500 text-[10px] font-black">✗</span>
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                            );
+
                             return (
-                              <tr key={r.id} className="border-t border-slate-50">
-                                <td className="px-2 py-1.5">{r.fechaString}</td>
-                                <td className="px-2 py-1.5 font-semibold">{r.area}</td>
-                                <td className="px-2 py-1.5 truncate max-w-[160px]">{d.compuesto}</td>
-                                <td className="px-2 py-1.5 text-center font-bold">{d.cantidad}</td>
-                                <td className="px-2 py-1.5 text-center font-black">{ap}</td>
-                                <td className="px-2 py-1.5">
-                                  {pendienteRecibir ? (
-                                    <div className="flex gap-1">
-                                      <button type="button" onClick={() => handleAprobarEntradaEnfermeria(r, 'aprobado', 'Recibido completo')}
-                                        className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">Aceptar</button>
-                                      <button type="button" onClick={() => {
-                                        const c = window.prompt('¿Por qué queda pendiente? (incompleto, faltante, etc.)', '') || 'Pendiente de revisión';
-                                        handleAprobarEntradaEnfermeria(r, 'rechazado', c);
-                                      }}
-                                        className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold">Pendiente</button>
-                                    </div>
-                                  ) : (r.comentarioAprobacion || '—')}
+                              <tr key={r.id} className="border-t border-slate-50 align-top">
+                                <td className="px-2 py-1.5 whitespace-nowrap">
+                                  <span className="block">{formatFechaMx(r.fechaString)}</span>
+                                  <span className="text-[8px] font-bold uppercase text-slate-400">{areaNorm}</span>
                                 </td>
+                                <td className="px-2 py-1.5 font-bold text-slate-700">{d.factura || '—'}</td>
+                                <td className="px-2 py-1.5 max-w-[200px]">
+                                  <span className="block truncate font-medium text-slate-800" title={d.compuesto}>{d.compuesto}</span>
+                                </td>
+                                <td className="px-2 py-1.5 text-center font-bold">{d.cantidad}</td>
+                                <td className="px-2 py-1.5 font-semibold text-slate-600">{d.lote || '—'}</td>
+                                <td className="px-2 py-1.5 text-center font-mono">{formatCaducidadCorta(d.caducidad)}</td>
+                                <CheckCell ok={emp} />
+                                <CheckCell ok={eti} />
+                                <td className="px-2 py-1.5 text-center">{renderAprobado()}</td>
+                                <td className="px-2 py-1.5 text-slate-600 max-w-[100px] truncate" title={
+                                  (r.estadoAprobacion === 'aprobado' || r.estadoAprobacion === 'rechazado')
+                                    ? (r.aprobadoPorNombre || r.responsableNombre || '')
+                                    : (r.responsableNombre || '')
+                                }>
+                                  {(r.estadoAprobacion === 'aprobado' || r.estadoAprobacion === 'rechazado')
+                                    ? (r.aprobadoPorNombre || r.responsableNombre || '—')
+                                    : (r.responsableNombre || '—')}
+                                </td>
+                                <td className="px-2 py-1.5">{renderComentario()}</td>
                               </tr>
                             );
                           })}
-                          {historialFarmacia.length === 0 && (
-                            <tr><td colSpan={6} className="px-3 py-4 text-center text-slate-400">Sin bitácoras este mes</td></tr>
+                          {!historialFarmaciaLoading && historialFarmacia.length === 0 && !historialFarmaciaError && (
+                            <tr>
+                              <td colSpan={11} className="px-3 py-4 text-center text-slate-400">
+                                Sin bitácoras en {farmaciaMesHistorial} para {sucursalActiva || 'esta sucursal'}
+                              </td>
+                            </tr>
                           )}
                         </tbody>
                       </table>
@@ -1628,7 +2401,14 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                         })}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <input
+                        type="month"
+                        value={pedidoMesHistorial}
+                        onChange={(e) => setPedidoMesHistorial(e.target.value || new Date().toLocaleDateString('en-CA').slice(0, 7))}
+                        className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600 bg-white"
+                        title="Mes de pedidos"
+                      />
                       <button
                         type="button"
                         onClick={() => setVerHistorialPedidos((v) => !v)}
@@ -1654,8 +2434,17 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                       </div>
                     </div>
                   </div>
+                  {historialPedidosError && (
+                    <p className={`mt-2 text-[11px] font-semibold rounded-lg px-3 py-2 border ${
+                      historialPedidos.length
+                        ? 'text-amber-700 bg-amber-50 border-amber-100'
+                        : 'text-rose-600 bg-rose-50 border-rose-100'
+                    }`}>
+                      {historialPedidosError}
+                    </p>
+                  )}
                   {verHistorialPedidos && (
-                    <div className="mt-3 overflow-auto max-h-48 rounded-lg border border-slate-100">
+                    <div className="mt-3 overflow-auto max-h-56 rounded-lg border border-slate-100">
                       <table className="w-full text-[11px]">
                         <thead>
                           <tr className="bg-slate-50 text-slate-500 uppercase">
@@ -1665,32 +2454,54 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
                           </tr>
                         </thead>
                         <tbody>
-                          {historialPedidos.slice(0, 20).map((p) => {
+                          {historialPedidosLoading && historialPedidos.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-3 py-3 text-center text-slate-400">
+                                <span className="inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Cargando pedidos…</span>
+                              </td>
+                            </tr>
+                          )}
+                          {historialPedidos.slice(0, 30).map((p) => {
                             const filas = p.detalles?.filas || [];
+                            const filasVisibles = filas.filter((f) => f.pedido || f.resolucion);
                             return (
                               <tr key={p.id} className="border-t border-slate-50 align-top">
-                                <td className="px-2 py-1.5 whitespace-nowrap">{p.fechaString}</td>
-                                <td className="px-2 py-1.5">{filas.length} ítem(s)</td>
+                                <td className="px-2 py-1.5 whitespace-nowrap">{formatFechaMx(p.fechaString)}</td>
+                                <td className="px-2 py-1.5">{filasVisibles.length || filas.length} ítem(s)</td>
                                 <td className="px-2 py-1.5">
-                                  {filas.filter((f) => f.pedido).slice(0, 8).map((f, i) => (
-                                    <div key={i} className="flex items-center gap-1.5 py-0.5">
-                                      <span className="truncate max-w-[140px] font-semibold text-slate-700">{f.insumo}</span>
-                                      <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                                        f.resolucion === 'proveedor' ? 'bg-blue-50 text-blue-700'
-                                          : f.resolucion === 'traspaso' ? 'bg-violet-50 text-violet-700'
-                                            : f.resolucion === 'pendiente' ? 'bg-amber-50 text-amber-700'
-                                              : 'bg-slate-100 text-slate-400'
-                                      }`}>
-                                        {f.resolucion === 'proveedor' ? 'Prov' : f.resolucion === 'traspaso' ? 'Trasp' : f.resolucion === 'pendiente' ? 'Pend' : '—'}
-                                      </span>
+                                  {filasVisibles.slice(0, 24).map((f, i) => (
+                                    <div key={i} className="py-0.5">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="truncate max-w-[160px] font-semibold text-slate-700" title={f.insumo}>{f.insumo}</span>
+                                        <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                                          f.resolucion === 'proveedor' ? 'bg-blue-50 text-blue-700'
+                                            : f.resolucion === 'traspaso' ? 'bg-violet-50 text-violet-700'
+                                              : f.resolucion === 'pendiente' ? 'bg-amber-50 text-amber-700'
+                                                : 'bg-slate-100 text-slate-400'
+                                        }`}>
+                                          {f.resolucion === 'proveedor' ? 'Prov' : f.resolucion === 'traspaso' ? 'Trasp' : f.resolucion === 'pendiente' ? 'Pend' : '—'}
+                                        </span>
+                                      </div>
+                                      {f.resolucion === 'pendiente' && f.comentarioResolucion && (
+                                        <p className="text-[10px] text-amber-800/80 pl-0.5 mt-0.5 italic">
+                                          {f.comentarioResolucion}
+                                        </p>
+                                      )}
                                     </div>
                                   ))}
+                                  {filasVisibles.length === 0 && (
+                                    <span className="text-slate-400">Sin resolución aún</span>
+                                  )}
                                 </td>
                               </tr>
                             );
                           })}
-                          {historialPedidos.length === 0 && (
-                            <tr><td colSpan={3} className="px-3 py-3 text-center text-slate-400">Sin pedidos este mes</td></tr>
+                          {!historialPedidosLoading && historialPedidos.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-3 py-3 text-center text-slate-400">
+                                Sin pedidos en {pedidoMesHistorial}{sucursalActiva ? ` · ${sucursalActiva}` : ''}
+                              </td>
+                            </tr>
                           )}
                         </tbody>
                       </table>

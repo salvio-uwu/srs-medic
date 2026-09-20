@@ -32,7 +32,6 @@ export const NAV_CATALOG = [
   { id: 'admin.encuestas', label: 'Encuestas', path: '/admin/encuestas', group: 'Administración', permission: 'admin.reportes', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: 'MessageCircle' },
   { id: 'admin.monitor', label: 'Monitor', path: '/admin/monitor', group: 'Administración', permission: 'admin.monitor', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: 'Activity' },
   { id: 'admin.supervision', label: 'Supervisión', path: '/admin/supervision', group: 'Administración', permission: 'admin.monitor', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: 'Eye' },
-  { id: 'admin.depuracion', label: 'Depuración', path: '/admin/depuracion', group: 'Administración', permission: 'admin.monitor', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: 'FlaskConical' },
   { id: 'admin.ssa', label: 'SSA', path: '/admin/ssa', group: 'Administración', permission: 'admin.dashboard', fallbackRoles: ['admin', 'admin_maestro', 'administrador'], icon: 'ShieldCheck' },
 
   { id: 'rh.dashboard', label: 'Dashboard RH', path: '/rh/dashboard', group: 'Recursos Humanos', permission: 'rh.dashboard', fallbackRoles: ['rh', 'recursos_humanos', 'recursos humanos'], icon: 'LayoutDashboard' },

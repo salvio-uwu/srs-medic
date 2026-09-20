@@ -3,7 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Activity, UserPlus, Package, Tags, FileText, BarChart3,
-  ClipboardCheck, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle, FlaskConical,
+  ClipboardCheck, LogOut, Menu, ChevronLeft, Building2, Bot, Send, Loader2, X, User, MessageCircle,
   ShieldCheck
 } from 'lucide-react';
 import { CalendarBlank } from '@phosphor-icons/react';
@@ -444,7 +444,6 @@ const NAV = [
   { label: 'Dashboard',   icon: Activity,       to: '/admin/dashboard' },
   { label: 'Personal',    icon: UserPlus,        to: '/admin/usuarios' },
   { label: 'Pacientes',   icon: User,            to: '/admin/pacientes' },
-  { label: 'Auditoría',   icon: FlaskConical,    to: '/admin/depuracion' },
   { label: 'Inventario',  icon: Package,         to: '/admin/inventario' },
   { label: 'Catálogos',   icon: Tags,            to: '/admin/catalogos' },
   { label: 'Plantillas',  icon: FileText,        to: '/admin/plantillas' },

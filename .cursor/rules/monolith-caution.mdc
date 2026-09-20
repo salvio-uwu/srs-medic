@@ -8,8 +8,8 @@ alwaysApply: false
 
 Estos archivos concentran lógica crítica (citas, WhatsApp, SOAP, PDFs, permisos, rutas):
 
-- `src/shared/Agenda.jsx` (~4700 líneas)
-- `src/pages/doctor/ExpedienteClinico.jsx` (~4200 líneas)
+- `src/shared/Agenda.jsx` (~5700 líneas)
+- `src/pages/doctor/ExpedienteClinico.jsx` (~4700 líneas)
 - `src/pages/admin/CatalogosGlobales.jsx`
 - `src/components/PlantillaDinamicaModal.jsx`
 - `src/App.jsx` (rutas + chat + pánico + versión)

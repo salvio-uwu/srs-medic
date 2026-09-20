@@ -35,7 +35,6 @@ import MonitorActividad from './pages/admin/MonitorActividad';
 import CatalogosGlobales from './pages/admin/CatalogosGlobales';
 import PlantillasDocumentos from './pages/admin/PlantillasDocumentos';
 import PerfilUsuario from './pages/admin/PerfilUsuario';
-import DepuracionConsultas from './pages/admin/DepuracionConsultas';
 import AutoevaluacionSSA from './pages/ssa/AutoevaluacionSSA';
 import SsaCanvas from './pages/ssa/SsaCanvas';
 import SsaEvaluacion from './pages/ssa/SsaEvaluacion';
@@ -1006,7 +1005,6 @@ function App() {
           <Route path="reportes" element={<PermissionRoute permissionId="admin.reportes" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><Reportes /></PermissionRoute>} />
           <Route path="encuestas" element={<PermissionRoute permissionId="admin.reportes" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><EncuestasSatisfaccion /></PermissionRoute>} />
           <Route path="monitor" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><MonitorActividad /></PermissionRoute>} />
-          <Route path="depuracion" element={<PermissionRoute permissionId="admin.monitor" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><DepuracionConsultas /></PermissionRoute>} />
           <Route path="agenda" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><AgendaAdmin /></PermissionRoute>} />
           <Route path="pacientes" element={<PermissionRoute permissionId="shared.pacientes" fallbackRoles={['admin', 'admin_maestro', 'administrador', 'medico', 'doctor', 'enfermeria', 'enfermera', 'enfermero', 'recepcion']}><Pacientes /></PermissionRoute>} />
           <Route path="ssa" element={<PermissionRoute permissionId="admin.dashboard" fallbackRoles={['admin', 'admin_maestro', 'administrador']}><SsaCanvas /></PermissionRoute>} />

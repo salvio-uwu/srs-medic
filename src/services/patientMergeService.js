@@ -1,11 +1,12 @@
 // src/services/patientMergeService.js
 //
 // Servicio de auditoria y unificacion de duplicados.
-// - Detecta pacientes duplicados por CURP, nombre+fecha, idPaciente, fuzzy y telefono+primerNombre.
+// - Detecta pacientes duplicados por nombre+apellidos + fechaNacimiento + telefono (regla unica).
 // - Une dos pacientes (primario = mas antiguo por fechaRegistro) migrando TODAS las colecciones hijas.
 // - Snapshot de respaldo en 'pacientes_fusionados_log' antes de eliminar el duplicado.
 // - Depura consultas duplicadas (citaId con N>1 o pacienteId+fecha sin citaId) y vacias.
 // - Detecta y repara registros huerfanos (referencian un pacienteId fusionado/inexistente).
+// - Unificacion masiva con omitir grupos criticos (CURP/sexo conflictivos).
 
 import {
   collection,
@@ -49,9 +50,34 @@ const PAGE_SIZE = 500;
 const BATCH_LIMIT = 400;
 
 export const MATCH_TYPES = {
-  name_birth:  { id: 'name_birth', label: 'Mismo nombre + apellidos' },
-  phone_name:  { id: 'phone_name', label: 'Nombre + apellidos + mismo teléfono' }
+  name_birth_phone: {
+    id: 'name_birth_phone',
+    label: 'Nombre + apellidos + fecha nac. + teléfono'
+  }
 };
+
+/** Campos demográficos que el merge auto puede rellenar desde el duplicado si el primario está vacío. */
+export const AUTO_MERGE_FIELDS = [
+  'curp',
+  'telefonoMovil',
+  'telefonoFijo',
+  'email',
+  'fechaNacimiento',
+  'sexo',
+  'grupoSanguineo',
+  'nombre',
+  'apellidoPaterno',
+  'apellidoMaterno',
+  'calleNumero',
+  'colonia',
+  'cp',
+  'municipioEstado',
+  'derechohabiente',
+  'aseguradora',
+  'empresa',
+  'escolaridad',
+  'notasPersonales'
+];
 
 // ─── Helpers de normalizacion ──────────────────────────────────────────
 
@@ -90,6 +116,15 @@ const normDate = (value) => {
 
 const normPhone = (v) => String(v || '').replace(/\D/g, '');
 
+/** Teléfono de contacto: móvil si existe, si no fijo. Evita falsos negativos por campo distinto. */
+const getContactPhone = (px) => {
+  const movil = normPhone(px?.telefonoMovil);
+  if (movil.length >= 7) return movil;
+  const fijo = normPhone(px?.telefonoFijo);
+  if (fijo.length >= 7) return fijo;
+  return '';
+};
+
 const normCurp = (v) =>
   String(v || '')
     .toUpperCase()
@@ -97,6 +132,20 @@ const normCurp = (v) =>
     .trim();
 
 const fold = (s) => normalizeForSearch(s);
+
+const hasValue = (v) => String(v ?? '').trim() !== '';
+
+/**
+ * Clave estricta: nombre completo fold + fecha nac. + teléfono.
+ * Sin fecha o sin teléfono no entra al matching (evita herman@s con el mismo celular del padre).
+ */
+export const buildStrictDuplicateKey = (px) => {
+  const name = fold(getPatientDisplayName(px));
+  const birth = normDate(px?.fechaNacimiento);
+  const phone = getContactPhone(px);
+  if (!name || !birth || !phone) return null;
+  return `${name}|${birth}|${phone}`;
+};
 
 const getMillis = (value) => {
   if (!value) return 0;
@@ -173,9 +222,8 @@ const byId = (pacientes, getFn) => {
 };
 
 /**
- * Solo 2 reglas por rendimiento:
- * 1. Mismo nombreCompleto (fold: sin acentos, minusculas)
- * 2. Mismo nombreCompleto + mismo telefono
+ * Una sola regla: mismo nombre+apellidos + misma fecha de nacimiento + mismo teléfono.
+ * Así no se agrupan menores que comparten el celular de los padres (fecha distinta).
  */
 export const buildDuplicateGroups = (pacientes, options = {}) => {
   const { types = null } = options;
@@ -183,46 +231,103 @@ export const buildDuplicateGroups = (pacientes, options = {}) => {
 
   const groups = [];
 
-  // Regla 1: mismo nombre fold
-  if (active('name_birth')) {
-    for (const arr of byId(pacientes, (px) => {
-      const name = fold(getPatientDisplayName(px));
-      return name || null;
-    })) {
+  if (active('name_birth_phone')) {
+    for (const arr of byId(pacientes, buildStrictDuplicateKey)) {
       const sorted = arr.slice().sort((a, b) => computeAntiguedad(a) - computeAntiguedad(b));
+      const primary = sorted[0];
+      const key = buildStrictDuplicateKey(primary);
       groups.push({
-        key: `nombre_${fold(getPatientDisplayName(sorted[0]))}`,
-        matchType: 'name_birth',
-        types: ['name_birth'],
-        reasonLabel: 'Mismo nombre y apellidos',
+        key: `nbp_${key}`,
+        matchType: 'name_birth_phone',
+        types: ['name_birth_phone'],
+        reasonLabel: 'Mismo nombre, fecha de nacimiento y teléfono',
         patients: sorted,
-        primary: sorted[0],
-        candidates: sorted.slice(1)
-      });
-    }
-  }
-
-  // Regla 2: mismo nombre fold + mismo telefono
-  if (active('phone_name')) {
-    for (const arr of byId(pacientes, (px) => {
-      const name = fold(getPatientDisplayName(px));
-      const phone = normPhone(px.telefonoMovil);
-      return name && phone && phone.length >= 7 ? `${name}|${phone}` : null;
-    })) {
-      const sorted = arr.slice().sort((a, b) => computeAntiguedad(a) - computeAntiguedad(b));
-      groups.push({
-        key: `tel_${sorted[0].id}`,
-        matchType: 'phone_name',
-        types: ['phone_name'],
-        reasonLabel: 'Mismo nombre + mismo teléfono',
-        patients: sorted,
-        primary: sorted[0],
-        candidates: sorted.slice(1)
+        primary,
+        candidates: sorted.slice(1),
+        risks: analyzeGroupRisks(sorted)
       });
     }
   }
 
   return groups;
+};
+
+/**
+ * Detecta conflictos demográficos dentro de un grupo (sin queries extra).
+ * Útil para alertar antes de una unificación masiva.
+ */
+export const analyzeGroupRisks = (patients = []) => {
+  const risks = [];
+  if (!patients || patients.length < 2) return risks;
+
+  if (patients.length >= 3) {
+    risks.push({
+      id: 'triple_or_more',
+      level: 'warning',
+      label: `${patients.length} perfiles en el mismo grupo`
+    });
+  }
+
+  const distinct = (getter) => {
+    const set = new Set();
+    for (const px of patients) {
+      const v = getter(px);
+      if (v) set.add(v);
+    }
+    return [...set];
+  };
+
+  const curps = distinct((px) => normCurp(px.curp));
+  if (curps.length > 1) {
+    risks.push({
+      id: 'curp_conflict',
+      level: 'critical',
+      label: `CURP distintas: ${curps.join(' vs ')}`
+    });
+  }
+
+  const sexos = distinct((px) => String(px.sexo || '').trim().toLowerCase());
+  if (sexos.length > 1) {
+    risks.push({
+      id: 'sexo_conflict',
+      level: 'critical',
+      label: `Sexo distinto entre perfiles (${sexos.join(' / ')})`
+    });
+  }
+
+  const emails = distinct((px) => String(px.email || '').trim().toLowerCase());
+  if (emails.length > 1) {
+    risks.push({
+      id: 'email_conflict',
+      level: 'warning',
+      label: `Correos distintos: ${emails.join(' vs ')}`
+    });
+  }
+
+  const idsHumanos = distinct((px) => String(px.idPaciente || '').trim().toUpperCase());
+  if (idsHumanos.length > 1) {
+    risks.push({
+      id: 'id_paciente_conflict',
+      level: 'warning',
+      label: `idPaciente distintos: ${idsHumanos.join(' vs ')}`
+    });
+  }
+
+  return risks;
+};
+
+export const groupHasCriticalRisks = (group) =>
+  (group?.risks || []).some((r) => r.level === 'critical');
+
+/**
+ * Rellena campos vacíos del primario con valores del duplicado.
+ */
+export const buildAutoFieldsToCopy = (primary, duplicate, fields = AUTO_MERGE_FIELDS) => {
+  const map = {};
+  for (const field of fields) {
+    map[field] = !hasValue(primary?.[field]) && hasValue(duplicate?.[field]) ? 'duplicate' : 'primary';
+  }
+  return map;
 };
 
 // ─── Conteo de docs hijos por paciente ────────────────────────────────
@@ -401,6 +506,118 @@ export const mergePatients = async ({
     primary: { id: primaryId, ...newPrimaryData },
     duplicateRemoved: duplicateId
   };
+};
+
+/**
+ * Unifica todos los grupos detectados: cada candidato se fusiona en el primario (más antiguo).
+ *
+ * @param {object} params
+ * @param {Array} params.groups
+ * @param {string} params.executedBy
+ * @param {boolean} params.skipCritical - omite grupos con riesgos level=critical
+ * @param {(info:object)=>void} params.onProgress
+ * @param {(entry:object)=>void} params.onLog
+ * @returns {Promise<{merged:number, skipped:number, failed:number, removedIds:string[], errors:Array, skippedGroups:Array}>}
+ */
+export const mergeAllDuplicateGroups = async ({
+  groups = [],
+  executedBy = null,
+  skipCritical = true,
+  onProgress,
+  onLog
+}) => {
+  const summary = {
+    merged: 0,
+    skipped: 0,
+    failed: 0,
+    removedIds: [],
+    errors: [],
+    skippedGroups: []
+  };
+
+  const totalCandidates = groups.reduce((acc, g) => acc + (g.candidates?.length || 0), 0);
+  let doneCandidates = 0;
+
+  for (const group of groups) {
+    const risks = group.risks || analyzeGroupRisks(group.patients || []);
+    const hasCritical = risks.some((r) => r.level === 'critical');
+
+    if (skipCritical && hasCritical) {
+      summary.skipped += group.candidates?.length || 0;
+      summary.skippedGroups.push({
+        key: group.key,
+        name: getPatientDisplayName(group.primary),
+        risks
+      });
+      if (onLog) {
+        onLog({
+          msg: `Omitido (crítico): ${getPatientDisplayName(group.primary)} — ${risks.map((r) => r.label).join('; ')}`,
+          kind: 'warning'
+        });
+      }
+      doneCandidates += group.candidates?.length || 0;
+      if (onProgress) {
+        onProgress({
+          done: doneCandidates,
+          total: totalCandidates,
+          phase: 'skip',
+          groupKey: group.key
+        });
+      }
+      continue;
+    }
+
+    let primaryId = group.primary?.id;
+    if (!primaryId) continue;
+
+    for (const candidate of group.candidates || []) {
+      doneCandidates += 1;
+      if (onProgress) {
+        onProgress({
+          done: doneCandidates,
+          total: totalCandidates,
+          phase: 'merge',
+          groupKey: group.key,
+          primaryId,
+          duplicateId: candidate.id,
+          name: getPatientDisplayName(candidate)
+        });
+      }
+
+      try {
+        // Releer primario por si un merge previo ya lo actualizó en el mismo grupo.
+        const primarySnap = await getDoc(doc(db, 'pacientes', primaryId));
+        if (!primarySnap.exists()) {
+          throw new Error(`Primario ${primaryId} ya no existe.`);
+        }
+        const primaryLive = { id: primarySnap.id, ...primarySnap.data() };
+        const fieldsToCopy = buildAutoFieldsToCopy(primaryLive, candidate);
+
+        await mergePatients({
+          primaryId,
+          duplicateId: candidate.id,
+          fieldsToCopy,
+          executedBy,
+          dryRun: false,
+          onLog
+        });
+
+        summary.merged += 1;
+        summary.removedIds.push(candidate.id);
+      } catch (err) {
+        summary.failed += 1;
+        summary.errors.push({
+          groupKey: group.key,
+          primaryId,
+          duplicateId: candidate.id,
+          message: err.message
+        });
+        if (onLog) onLog({ msg: `Error fusionando ${candidate.id}: ${err.message}`, kind: 'error' });
+      }
+    }
+  }
+
+  return summary;
 };
 
 // ─── Consultas duplicadas / vacias ────────────────────────────────────

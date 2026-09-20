@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { sanitizePatientNameFields } from '../utils/patientName';
+import { normalizeForSearch } from '../utils/searchUtils';
 
 const PAGE_SIZE = 600;
 const WRITE_BATCH_LIMIT = 400;
@@ -23,7 +24,8 @@ const hasNameChanges = (current = {}, next = {}) =>
   normalize(current.nombre) !== normalize(next.nombre) ||
   normalize(current.apellidoPaterno) !== normalize(next.apellidoPaterno) ||
   normalize(current.apellidoMaterno) !== normalize(next.apellidoMaterno) ||
-  normalize(current.nombreCompleto) !== normalize(next.nombreCompleto);
+  normalize(current.nombreCompleto) !== normalize(next.nombreCompleto) ||
+  normalize(current.searchName) !== normalize(next.searchName);
 
 const buildProgressSnapshot = ({ scanned, candidates, updated, errors, dryRun, done = false }) => ({
   scanned,
@@ -66,12 +68,17 @@ export const repairPatientNames = async ({ dryRun = true, onProgress, maxDocs = 
       };
 
       const nextNames = sanitizePatientNameFields(currentNames);
-      if (hasNameChanges(currentNames, nextNames)) {
+      const nextSearchName = normalizeForSearch(nextNames.nombreCompleto || '');
+      const currentWithSearch = { ...currentNames, searchName: data.searchName || '' };
+      const nextWithSearch = { ...nextNames, searchName: nextSearchName };
+
+      if (hasNameChanges(currentWithSearch, nextWithSearch)) {
         candidates += 1;
         updates.push({
           id: row.id,
           payload: {
             ...nextNames,
+            searchName: nextSearchName,
             fechaActualizacion: new Date().toISOString(),
             nombreNormalizadoAt: serverTimestamp(),
             nombreNormalizadoVersion: 'v1'

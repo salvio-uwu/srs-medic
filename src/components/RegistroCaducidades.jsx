@@ -1,14 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Save, Loader2, Plus, Trash2, AlertCircle,
-  CheckCircle2, Calendar, Printer, X, Package, Pencil, CalendarX
+  CheckCircle2, Calendar, Printer, X, Package, Pencil, CalendarX,
+  Search, ArrowLeftRight
 } from 'lucide-react';
 import { db } from '../config/firebase';
 import {
   collection, addDoc, serverTimestamp, query, where,
-  onSnapshot, updateDoc, doc
+  onSnapshot, updateDoc, doc, getDocs
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useSessionLocation } from '../context/SessionLocationContext';
+import TraspasoSucursalModal from './TraspasoSucursalModal';
 
 /* ════════════════════════════════════════════════════════════════
    REGISTRO DE CADUCIDADES — Medicamentos Próximos a Caducar
@@ -20,44 +23,187 @@ const MESES = [
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
 ];
 
+let cacheMedicamentosIndex = null;
+
+const normalizeText = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
 const formatDateMX = (str) => {
   if (!str) return '-';
-  const [y, m] = str.split('-');
+  const [y, m] = String(str).split('-');
+  if (!y || !m) return str;
   return `${MESES[Number(m) - 1]} ${y}`;
 };
 
+const toMedicationSearchRow = (m) => {
+  const id = m.id || '';
+  const nombreComercial = m.nombreComercial || m['*NOMBRE COMERCIAL'] || '';
+  const marca = m.marca || m['*MARCA'] || '';
+  const laboratorio = m.laboratorio || m.LABORATORIO || '';
+  const sustanciaActiva = m.sustanciasActivas || m['*SUSTANCIA(S) ACTIVA(S)'] || '';
+  const presentacion = m.presentacion || m['*PRESENTACIÓN'] || m['*PRESENTACION'] || '';
+  const dosis = m.dosis || m.DOSIS || '';
+  const numeroAcomodo = String(m.numeroAcomodo || m.acomodo || m.clave || m.codigo || '').trim();
+  const forma = String(m.formaFarmaceutica || m.forma || '').trim();
+  const searchText = normalizeText([
+    id, nombreComercial, marca, laboratorio, sustanciaActiva, presentacion, dosis, numeroAcomodo, forma
+  ].join(' '));
+  const tokens = Array.from(new Set(
+    normalizeText([nombreComercial, marca, sustanciaActiva, presentacion, numeroAcomodo, id].join(' '))
+      .split(/\s+/)
+      .filter(Boolean)
+      .flatMap((t) => (t.length >= 4 ? [t, t.slice(0, 4), t.slice(0, 5)] : [t]))
+  ));
+  return {
+    id, nombreComercial, marca, laboratorio, sustanciaActiva, presentacion, dosis, numeroAcomodo, forma,
+    searchText, tokens
+  };
+};
+
+const scoreMedicationMatch = (med, queryText) => {
+  if (!queryText) return 0;
+  const q = normalizeText(queryText);
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
+  let score = 0;
+  const nombre = normalizeText(med.nombreComercial);
+  const sustancia = normalizeText(med.sustanciaActiva);
+  const acomodo = normalizeText(med.numeroAcomodo);
+  if (acomodo && (acomodo === q || acomodo.startsWith(q))) score += 120;
+  if (nombre.startsWith(q)) score += 100;
+  if (sustancia.startsWith(q)) score += 80;
+  if (med.searchText.includes(q)) score += 40;
+  const allTokensHit = tokens.every((t) =>
+    med.searchText.includes(t) || med.tokens.some((tok) => tok.startsWith(t) || t.startsWith(tok))
+  );
+  if (!allTokensHit) return 0;
+  tokens.forEach((t) => {
+    if (acomodo.includes(t)) score += 25;
+    if (nombre.includes(t)) score += 18;
+    if (sustancia.includes(t)) score += 14;
+  });
+  return score;
+};
+
+const inferForma = (med) => {
+  const formaCatalogo = String(med?.forma || med?.formaFarmaceutica || '').trim();
+  const blob = `${med?.presentacion || ''} ${med?.sustanciaActiva || ''} ${med?.nombreComercial || ''}`.toUpperCase();
+  if (/\bINYECT|\bINY\b|\bAMPOL|\bAMP\b|\bIV\b|\bIM\b|\bSC\b|\bVIAL\b/.test(blob)) return 'Inyectable';
+  if (blob.includes('SUSP')) return 'Suspensión';
+  if (blob.includes('JARABE')) return 'Jarabe';
+  if (blob.includes('CREM')) return 'Crema';
+  if (blob.includes('OVU')) return 'Óvulo';
+  if (blob.includes('GEL')) return 'Gel';
+  if (/\bSOL(UCION|\.|\b)/.test(blob) && !blob.includes('TAB')) return 'Solución';
+  if (blob.includes('CAP') || blob.includes('CAPS')) return 'Cápsula';
+  if (blob.includes('TAB') || blob.includes('COMPRIM')) return 'Tableta';
+  return formaCatalogo || '';
+};
+
+const emptyForm = () => ({
+  codigo: '',
+  medicamento: '',
+  presentacion: '',
+  forma: '',
+  cantidad: '',
+  lote: '',
+  caducidad: '',
+  medicamentoId: '',
+});
+
 const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
   const { user } = useAuth();
+  const { sessionSucursal } = useSessionLocation();
   const [registros, setRegistros] = useState([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ show: false, msg: '', type: 'success' });
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({ codigo: '', medicamento: '', cantidad: '', lote: '' });
+  const [editForm, setEditForm] = useState({ codigo: '', medicamento: '', presentacion: '', forma: '', cantidad: '', lote: '' });
   const [savingEdit, setSavingEdit] = useState(false);
+  const [traspasoItem, setTraspasoItem] = useState(null);
+  const [sugerenciasMeds, setSugerenciasMeds] = useState([]);
+  const [mostrarMeds, setMostrarMeds] = useState(false);
+  const [catalogoReady, setCatalogoReady] = useState(!!cacheMedicamentosIndex);
 
-  const sucursalActiva = sucursal || user?.sucursal || '';
+  const sucursalActiva = sucursal
+    || sessionSucursal?.nombre
+    || user?.sessionSucursalNombre
+    || user?.sucursal
+    || '';
 
-  // ─── Mes activo ───
   const [mesActivo, setMesActivo] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // ─── Form state ───
-  const [formData, setFormData] = useState({
-    codigo: '',
-    medicamento: '',
-    cantidad: '',
-    lote: ''
-  });
+  const [formData, setFormData] = useState(emptyForm);
 
   const showToast = (msg, type = 'success') => {
     setToast({ show: true, msg, type });
     setTimeout(() => setToast({ show: false, msg: '', type: 'success' }), 4000);
   };
 
-  // ─── Realtime listener para registros de esta sucursal y mes ───
+  // Catálogo admin (mismo criterio que control de insumos)
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (cacheMedicamentosIndex) {
+        if (!cancelled) setCatalogoReady(true);
+        return;
+      }
+      try {
+        const snap = await getDocs(collection(db, 'catalogo_medicamentos'));
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((m) => m.activo !== false)
+          .map(toMedicationSearchRow)
+          .filter((m) => m.nombreComercial || m.sustanciaActiva);
+        if (rows.length > 0) {
+          cacheMedicamentosIndex = rows;
+          if (!cancelled) setCatalogoReady(true);
+          return;
+        }
+        const res = await fetch('/data/medicamentos.json');
+        if (res.ok) {
+          const raw = await res.json();
+          cacheMedicamentosIndex = (Array.isArray(raw) ? raw : [])
+            .map(toMedicationSearchRow)
+            .filter((m) => m.nombreComercial || m.sustanciaActiva);
+        }
+      } catch (err) {
+        console.error('Catálogo caducidades', err);
+      }
+      if (!cancelled) setCatalogoReady(true);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const queryText = normalizeText(formData.medicamento);
+    if (queryText.length < 2 || !cacheMedicamentosIndex) {
+      setSugerenciasMeds([]);
+      setMostrarMeds(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      const ranked = cacheMedicamentosIndex
+        .map((m) => ({ m, score: scoreMedicationMatch(m, queryText) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.m.nombreComercial.localeCompare(b.m.nombreComercial, 'es'))
+        .slice(0, 12)
+        .map((x) => x.m);
+      setSugerenciasMeds(ranked);
+      setMostrarMeds(ranked.length > 0);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [formData.medicamento]);
+
   useEffect(() => {
     if (!sucursalActiva) return;
     const q = query(
@@ -75,30 +221,60 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     return () => unsub();
   }, [sucursalActiva, mesActivo]);
 
-  // ─── Guardar ───
-  const handleGuardar = async () => {
-    if (!formData.codigo.trim()) return showToast('Ingrese el código del medicamento.', 'error');
-    if (!formData.medicamento.trim()) return showToast('Ingrese el nombre del medicamento.', 'error');
-    if (!formData.cantidad || Number(formData.cantidad) <= 0) return showToast('Ingrese una cantidad válida.', 'error');
-    if (!formData.lote.trim()) return showToast('Ingrese el número de lote.', 'error');
+  const seleccionarMedicamento = (med) => {
+    const nombre = [med.nombreComercial, med.presentacion].filter(Boolean).join(' ').trim()
+      || med.sustanciaActiva
+      || '';
+    setFormData((prev) => ({
+      ...prev,
+      medicamento: nombre,
+      presentacion: med.presentacion || prev.presentacion || '',
+      forma: inferForma(med) || prev.forma || '',
+      codigo: med.numeroAcomodo || prev.codigo || '',
+      medicamentoId: med.id || '',
+    }));
+    setMostrarMeds(false);
+    setSugerenciasMeds([]);
+  };
 
+  const mesDesdeCaducidad = useMemo(() => {
+    const raw = String(formData.caducidad || '').trim();
+    const m = raw.match(/^(\d{4})-(\d{2})/);
+    return m ? `${m[1]}-${m[2]}` : '';
+  }, [formData.caducidad]);
+
+  const handleGuardar = async () => {
+    if (!sucursalActiva) return showToast('No hay sucursal activa.', 'error');
+    if (!formData.medicamento.trim()) return showToast('Ingrese el medicamento / compuesto.', 'error');
+    if (!formData.lote.trim()) return showToast('Ingrese el número de lote.', 'error');
+    if (!formData.caducidad || !mesDesdeCaducidad) {
+      return showToast('Indica la fecha de caducidad (se usa para ubicar el mes).', 'error');
+    }
+    if (!formData.cantidad || Number(formData.cantidad) <= 0) return showToast('Ingrese una cantidad válida.', 'error');
+
+    const mesTarget = mesDesdeCaducidad;
     setLoading(true);
     try {
       await addDoc(collection(db, 'caducidades_almacen'), {
-        codigo: formData.codigo.trim(),
+        codigo: (formData.codigo || '').trim(),
         medicamento: formData.medicamento.trim().toUpperCase(),
+        presentacion: (formData.presentacion || '').trim(),
+        forma: (formData.forma || '').trim(),
+        medicamentoId: formData.medicamentoId || null,
         cantidad: Number(formData.cantidad),
         lote: formData.lote.trim().toUpperCase(),
-        mesCaducidad: mesActivo,
-        mesLabel: formatDateMX(mesActivo),
+        caducidad: formData.caducidad,
+        mesCaducidad: mesTarget,
+        mesLabel: formatDateMX(mesTarget),
         sucursal: sucursalActiva,
         responsableNombre: user?.nombre || 'Sin nombre',
         responsableId: user?.uid || '',
         responsableRol: user?.rol || '',
         creadoEn: serverTimestamp()
       });
-      showToast('Medicamento registrado correctamente.');
-      setFormData({ codigo: '', medicamento: '', cantidad: '', lote: '' });
+      showToast(`Medicamento agregado en ${formatDateMX(mesTarget)}.`);
+      setFormData(emptyForm());
+      if (mesTarget !== mesActivo) setMesActivo(mesTarget);
     } catch (err) {
       console.error('Error guardando caducidad:', err);
       showToast('Error al guardar el registro.', 'error');
@@ -106,7 +282,6 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     setLoading(false);
   };
 
-  // ─── Baja (soft delete — solo para medicamentos que no se pudieron vender, etc.) ───
   const handleEliminar = async (id) => {
     const motivo = window.prompt('Motivo de baja (caducado, no se pudo vender, merma, etc.):', '') || '';
     if (!motivo.trim()) {
@@ -129,12 +304,13 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     }
   };
 
-  // ─── Editar ───
   const startEdit = (reg) => {
     setEditId(reg.id);
     setEditForm({
       codigo: reg.codigo || '',
       medicamento: reg.medicamento || '',
+      presentacion: reg.presentacion || '',
+      forma: reg.forma || '',
       cantidad: String(reg.cantidad || ''),
       lote: reg.lote || ''
     });
@@ -142,11 +318,10 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
 
   const cancelEdit = () => {
     setEditId(null);
-    setEditForm({ codigo: '', medicamento: '', cantidad: '', lote: '' });
+    setEditForm({ codigo: '', medicamento: '', presentacion: '', forma: '', cantidad: '', lote: '' });
   };
 
   const handleUpdate = async () => {
-    if (!editForm.codigo.trim()) return showToast('Ingrese el código del medicamento.', 'error');
     if (!editForm.medicamento.trim()) return showToast('Ingrese el nombre del medicamento.', 'error');
     if (!editForm.cantidad || Number(editForm.cantidad) <= 0) return showToast('Ingrese una cantidad válida.', 'error');
     if (!editForm.lote.trim()) return showToast('Ingrese el número de lote.', 'error');
@@ -156,6 +331,8 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
       await updateDoc(doc(db, 'caducidades_almacen', editId), {
         codigo: editForm.codigo.trim(),
         medicamento: editForm.medicamento.trim().toUpperCase(),
+        presentacion: (editForm.presentacion || '').trim(),
+        forma: (editForm.forma || '').trim(),
         cantidad: Number(editForm.cantidad),
         lote: editForm.lote.trim().toUpperCase(),
         actualizadoEn: serverTimestamp(),
@@ -171,28 +348,47 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
     setSavingEdit(false);
   };
 
-  // ─── Imprimir ───
+  const abrirTraspaso = (reg) => setTraspasoItem({
+    nombre: reg.medicamento || '',
+    numeroAcomodo: reg.codigo || '',
+    lote: reg.lote || '',
+    caducidad: reg.caducidad || reg.mesCaducidad || '',
+    cantidadDisponible: Number(reg.cantidad) || 0,
+    sucursalOrigen: reg.sucursal || sucursalActiva || '',
+    presentacion: reg.presentacion || '',
+    forma: reg.forma || '',
+    medicamentoId: reg.medicamentoId || null,
+    caducidadDocId: reg.id,
+  });
+
   const handlePrint = () => {
+    if (!registros.length) {
+      showToast('No hay registros para imprimir en este mes.', 'warning');
+      return;
+    }
     const rows = registros.map((r, i) => `
       <tr style="${i % 2 === 0 ? '' : 'background:#f8fafc'}">
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.codigo || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.codigo || '—'}</td>
         <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.medicamento || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.presentacion || ''}</td>
-        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.forma || ''}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.presentacion || '—'}</td>
+        <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px">${r.forma || '—'}</td>
         <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;text-align:center;font-weight:700">${r.cantidad}</td>
         <td style="border:1px solid #cbd5e1;padding:6px 10px;font-size:12px;font-weight:600">${r.lote || ''}</td>
       </tr>
     `).join('');
 
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
-    if (!printWindow) return;
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) {
+      showToast('El navegador bloqueó la ventana de impresión.', 'error');
+      return;
+    }
     printWindow.document.write(`<!DOCTYPE html><html><head><title>Caducidades ${formatDateMX(mesActivo)}</title>
       <style>body{font-family:system-ui,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}
       th{background:#1e293b;color:#fff;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #334155}
       @media print{button{display:none!important}}</style></head><body>
       <div style="text-align:center;margin-bottom:16px">
         <h2 style="margin:0;font-size:18px;color:#1e293b">MEDICAMENTO PRÓXIMO A CADUCAR</h2>
-        <p style="margin:4px 0 0;font-size:13px;color:#64748b;font-weight:600">${formatDateMX(mesActivo).toUpperCase()} — ${sucursalActiva.toUpperCase()}</p>
+        <p style="margin:4px 0 0;font-size:13px;color:#64748b;font-weight:600">${formatDateMX(mesActivo).toUpperCase()} — ${(sucursalActiva || '').toUpperCase()}</p>
       </div>
       <table>
         <thead><tr>
@@ -216,17 +412,17 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
 
   return (
     <div className={`flex flex-col gap-5 flex-1 ${embedded ? '' : 'max-w-4xl w-full mx-auto'}`}>
-      {/* Toast */}
       {toast.show && (
         <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[600] flex items-center gap-2.5 px-5 py-3 rounded-xl shadow-lg border backdrop-blur-md ${
-          toast.type === 'error' ? 'bg-red-50/95 border-red-200 text-red-700' : 'bg-emerald-50/95 border-emerald-200 text-emerald-700'
+          toast.type === 'error' ? 'bg-red-50/95 border-red-200 text-red-700'
+            : toast.type === 'warning' ? 'bg-amber-50/95 border-amber-200 text-amber-800'
+              : 'bg-emerald-50/95 border-emerald-200 text-emerald-700'
         }`}>
           {toast.type === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}
           <span className="font-bold text-sm">{toast.msg}</span>
         </div>
       )}
 
-      {/* ─── SELECTOR DE MES ─── */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-500 rounded-xl flex items-center justify-center shadow-sm">
@@ -235,7 +431,7 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
           <div>
             <h3 className="text-[15px] font-bold text-slate-800">Caducidades de Almacén</h3>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-              {sucursalActiva} — {formatDateMX(mesActivo)}
+              {sucursalActiva || 'Sin sucursal'} — {formatDateMX(mesActivo)}
             </p>
           </div>
         </div>
@@ -255,60 +451,124 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
         </div>
       </div>
 
-      {/* ─── FORMULARIO DE CAPTURA ─── */}
+      {/* Formulario estilo control de insumos */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 sm:p-6">
         <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-100">
           <Plus size={16} className="text-blue-500"/>
-          <h4 className="text-[13px] font-bold text-slate-700">Agregar Medicamento</h4>
+          <div>
+            <h4 className="text-[13px] font-bold text-slate-700">Agregar Medicamento</h4>
+            <p className="text-[10px] text-slate-400 font-medium">
+              La fecha de caducidad ubica el registro en el mes correcto automáticamente.
+              {!catalogoReady ? ' Cargando catálogo…' : ''}
+            </p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Código */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="sm:col-span-2 lg:col-span-3 relative">
+            <label className={labelBase}>Compuesto / Medicamento * (catálogo admin)</label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                className={`${inputBase} pl-9`}
+                placeholder="Buscar por nombre, sustancia o código…"
+                value={formData.medicamento}
+                onChange={e => setFormData(prev => ({ ...prev, medicamento: e.target.value, medicamentoId: '' }))}
+                onFocus={() => { if (sugerenciasMeds.length) setMostrarMeds(true); }}
+                autoComplete="off"
+              />
+            </div>
+            {mostrarMeds && sugerenciasMeds.length > 0 && (
+              <ul className="absolute z-20 mt-1 w-full max-h-48 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                {sugerenciasMeds.map((med) => (
+                  <li key={med.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
+                      onClick={() => seleccionarMedicamento(med)}
+                    >
+                      <span className="block text-[12px] font-bold text-slate-800 truncate">
+                        {med.nombreComercial || med.sustanciaActiva}
+                      </span>
+                      <span className="block text-[10px] text-slate-500 truncate">
+                        {[med.presentacion, med.numeroAcomodo && `Cód. ${med.numeroAcomodo}`].filter(Boolean).join(' · ')}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div>
-            <label className={labelBase}>Código</label>
+            <label className={labelBase}>Lote *</label>
             <input
               type="text"
               className={inputBase}
-              placeholder="Código de barras del medicamento"
-              value={formData.codigo}
-              onChange={e => setFormData(prev => ({ ...prev, codigo: e.target.value }))}
+              placeholder="Número de lote"
+              value={formData.lote}
+              onChange={e => setFormData(prev => ({ ...prev, lote: e.target.value }))}
             />
           </div>
 
-          {/* Medicamento */}
-          <div className="sm:col-span-1 lg:col-span-1">
-            <label className={labelBase}>Medicamento</label>
-            <input
-              type="text"
-              className={inputBase}
-              placeholder="Nombre completo y presentación"
-              value={formData.medicamento}
-              onChange={e => setFormData(prev => ({ ...prev, medicamento: e.target.value }))}
-            />
-          </div>
-
-          {/* Cantidad */}
           <div>
-            <label className={labelBase}>Cantidad</label>
+            <label className={labelBase}>Caducidad *</label>
+            <input
+              type="date"
+              className={inputBase}
+              value={formData.caducidad}
+              onChange={e => setFormData(prev => ({ ...prev, caducidad: e.target.value }))}
+            />
+            {mesDesdeCaducidad && (
+              <p className="mt-1 text-[10px] font-bold text-emerald-600">
+                Se agregará a: {formatDateMX(mesDesdeCaducidad)}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className={labelBase}>Cantidad *</label>
             <input
               type="number"
               min="1"
               className={inputBase}
-              placeholder="Piezas en almacén"
+              placeholder="Cajas / Pzas"
               value={formData.cantidad}
               onChange={e => setFormData(prev => ({ ...prev, cantidad: e.target.value }))}
             />
           </div>
 
-          {/* Lote */}
           <div>
-            <label className={labelBase}>Lote</label>
+            <label className={labelBase}>Presentación</label>
             <input
               type="text"
               className={inputBase}
-              placeholder="Número de lote del fabricante"
-              value={formData.lote}
-              onChange={e => setFormData(prev => ({ ...prev, lote: e.target.value }))}
+              placeholder="Ej: Caja 30 tabs"
+              value={formData.presentacion}
+              onChange={e => setFormData(prev => ({ ...prev, presentacion: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label className={labelBase}>Forma farmacéutica</label>
+            <input
+              type="text"
+              className={inputBase}
+              placeholder="Ej: Tableta"
+              value={formData.forma}
+              onChange={e => setFormData(prev => ({ ...prev, forma: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label className={labelBase}>Código</label>
+            <input
+              type="text"
+              className={inputBase}
+              placeholder="Código / acomodo"
+              value={formData.codigo}
+              onChange={e => setFormData(prev => ({ ...prev, codigo: e.target.value }))}
             />
           </div>
         </div>
@@ -316,7 +576,7 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
         <div className="flex justify-end mt-5 pt-4 border-t border-slate-100">
           <button
             onClick={handleGuardar}
-            disabled={loading}
+            disabled={loading || !sucursalActiva}
             className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-bold text-sm rounded-xl hover:shadow-lg hover:shadow-blue-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>}
@@ -325,7 +585,6 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
         </div>
       </div>
 
-      {/* ─── TABLA DE REGISTROS DEL MES ─── */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -343,16 +602,17 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
           </div>
         ) : (
           <>
-            {/* Desktop Table */}
             <div className="hidden md:block overflow-auto">
-              <table className="w-full text-sm border-collapse">
+              <table className="w-full text-sm border-collapse min-w-[720px]">
                 <thead>
                   <tr>
-                    <th className="bg-white px-4 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Código</th>
-                    <th className="bg-white px-4 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Medicamento</th>
-                    <th className="bg-white px-4 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-center border-b border-slate-100">Cantidad</th>
-                    <th className="bg-white px-4 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Lote</th>
-                    <th className="bg-white px-3 py-2 border-b border-slate-100 w-14"></th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Código</th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Medicamento</th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Presentación</th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Forma</th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-center border-b border-slate-100">Cant.</th>
+                    <th className="bg-white px-3 py-2 text-[9px] uppercase tracking-wider text-slate-400 text-left border-b border-slate-100">Lote</th>
+                    <th className="bg-white px-2 py-2 border-b border-slate-100 w-24"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -370,14 +630,20 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                           <td className="px-2 py-1.5 border-b border-slate-50">
                             <input className={inputClass} value={editForm.medicamento} onChange={e => setEditForm(prev => ({ ...prev, medicamento: e.target.value }))} />
                           </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50">
+                            <input className={inputClass} value={editForm.presentacion} onChange={e => setEditForm(prev => ({ ...prev, presentacion: e.target.value }))} />
+                          </td>
+                          <td className="px-2 py-1.5 border-b border-slate-50">
+                            <input className={inputClass} value={editForm.forma} onChange={e => setEditForm(prev => ({ ...prev, forma: e.target.value }))} />
+                          </td>
                           <td className="px-2 py-1.5 border-b border-slate-50 text-center">
-                            <input type="number" min="1" className={`${inputClass} text-center w-20`} value={editForm.cantidad} onChange={e => setEditForm(prev => ({ ...prev, cantidad: e.target.value }))} />
+                            <input type="number" min="1" className={`${inputClass} text-center w-16`} value={editForm.cantidad} onChange={e => setEditForm(prev => ({ ...prev, cantidad: e.target.value }))} />
                           </td>
                           <td className="px-2 py-1.5 border-b border-slate-50">
                             <input className={inputClass} value={editForm.lote} onChange={e => setEditForm(prev => ({ ...prev, lote: e.target.value }))} />
                           </td>
                           <td className="px-2 py-1.5 border-b border-slate-50 text-center">
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 justify-center">
                               <button onClick={handleUpdate} disabled={savingEdit} className="p-1 rounded bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors" title="Guardar">
                                 {savingEdit ? <Loader2 size={12} className="animate-spin"/> : <CheckCircle2 size={12}/>}
                               </button>
@@ -389,16 +655,21 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                         </>
                       ) : (
                         <>
-                          <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-800 text-[12px]">{reg.codigo}</td>
-                          <td className="px-4 py-2.5 border-b border-slate-50 text-[12px] text-slate-700">{reg.medicamento}</td>
-                          <td className="px-4 py-2.5 border-b border-slate-50 text-center">
+                          <td className="px-3 py-2.5 border-b border-slate-50 font-semibold text-slate-800 text-[12px]">{reg.codigo || '—'}</td>
+                          <td className="px-3 py-2.5 border-b border-slate-50 text-[12px] text-slate-700">{reg.medicamento}</td>
+                          <td className="px-3 py-2.5 border-b border-slate-50 text-[11px] text-slate-600">{reg.presentacion || '—'}</td>
+                          <td className="px-3 py-2.5 border-b border-slate-50 text-[11px] text-slate-600">{reg.forma || '—'}</td>
+                          <td className="px-3 py-2.5 border-b border-slate-50 text-center">
                             <span className="inline-flex items-center px-2.5 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-md text-[11px] font-bold">
                               {reg.cantidad}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 border-b border-slate-50 font-semibold text-slate-600 text-[12px]">{reg.lote}</td>
-                          <td className="px-3 py-2.5 border-b border-slate-50 text-center">
-                            <div className="flex items-center gap-0.5">
+                          <td className="px-3 py-2.5 border-b border-slate-50 font-semibold text-slate-600 text-[12px]">{reg.lote}</td>
+                          <td className="px-2 py-2.5 border-b border-slate-50 text-center">
+                            <div className="flex items-center gap-0.5 justify-center">
+                              <button onClick={() => abrirTraspaso(reg)} className="p-1 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Traspasar a otra sucursal">
+                                <ArrowLeftRight size={12}/>
+                              </button>
                               <button onClick={() => startEdit(reg)} className="p-1 rounded text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors" title="Editar">
                                 <Pencil size={12}/>
                               </button>
@@ -420,7 +691,6 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
               </table>
             </div>
 
-            {/* Mobile Cards */}
             <div className="md:hidden flex flex-col gap-1.5 p-2.5">
               {registros.map((reg) => {
                 const isEditing = editId === reg.id;
@@ -428,8 +698,8 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
 
                 if (isEditing) {
                   return (
-                    <div key={reg.id} className="bg-blue-50/50 rounded-lg border border-blue-200 p-3">
-                      <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div key={reg.id} className="bg-blue-50/50 rounded-lg border border-blue-200 p-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Código</label>
                           <input className={mobileInputClass} value={editForm.codigo} onChange={e => setEditForm(prev => ({ ...prev, codigo: e.target.value }))} />
@@ -439,9 +709,19 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                           <input className={mobileInputClass} value={editForm.lote} onChange={e => setEditForm(prev => ({ ...prev, lote: e.target.value }))} />
                         </div>
                       </div>
-                      <div className="mb-2">
+                      <div>
                         <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Medicamento</label>
                         <input className={mobileInputClass} value={editForm.medicamento} onChange={e => setEditForm(prev => ({ ...prev, medicamento: e.target.value }))} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Presentación</label>
+                          <input className={mobileInputClass} value={editForm.presentacion} onChange={e => setEditForm(prev => ({ ...prev, presentacion: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Forma</label>
+                          <input className={mobileInputClass} value={editForm.forma} onChange={e => setEditForm(prev => ({ ...prev, forma: e.target.value }))} />
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="flex-1">
@@ -464,29 +744,49 @@ const RegistroCaducidades = ({ sucursal = '', embedded = false }) => {
                 <div key={reg.id} className="bg-white rounded-lg border border-slate-100 p-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-bold text-slate-800 truncate">{reg.medicamento}</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] text-slate-400 font-semibold">Cód: {reg.codigo}</span>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      <span className="text-[10px] text-slate-400 font-semibold">Cód: {reg.codigo || '—'}</span>
                       <span className="text-[10px] text-slate-400 font-semibold">Lote: {reg.lote}</span>
+                      {(reg.presentacion || reg.forma) && (
+                        <span className="text-[10px] text-slate-400 font-semibold truncate">
+                          {[reg.presentacion, reg.forma].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <span className="px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded text-[11px] font-bold">{reg.cantidad}</span>
+                  <button onClick={() => abrirTraspaso(reg)} className="p-1 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Traspasar">
+                    <ArrowLeftRight size={12}/>
+                  </button>
                   <button onClick={() => startEdit(reg)} className="p-1 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors" title="Editar">
                     <Pencil size={12}/>
                   </button>
                   {confirmDelete === reg.id ? (
-                    <div className="flex items-center gap-1">
+                    <>
                       <button onClick={() => handleEliminar(reg.id)} className="p-1 rounded bg-red-100 text-red-600"><CheckCircle2 size={12}/></button>
                       <button onClick={() => setConfirmDelete(null)} className="p-1 rounded bg-slate-100 text-slate-500"><X size={12}/></button>
-                    </div>
+                    </>
                   ) : (
                     <button onClick={() => setConfirmDelete(reg.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 size={12}/></button>
                   )}
                 </div>
-              )})}
+                );
+              })}
             </div>
           </>
         )}
       </div>
+
+      {traspasoItem && (
+        <TraspasoSucursalModal
+          item={traspasoItem}
+          onClose={() => setTraspasoItem(null)}
+          onDone={(res) => {
+            showToast(res?.msg || 'Traspaso registrado.', 'success');
+            setTraspasoItem(null);
+          }}
+        />
+      )}
     </div>
   );
 };

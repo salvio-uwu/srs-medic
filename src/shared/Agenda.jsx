@@ -21,6 +21,10 @@ import CustomDropdown from '../components/CustomDropdown';
 import ModalCatalogoMedicamentos from '../components/ModalCatalogoMedicamentos';
 import sonidoCampana from '../assets/notificaciondeconsulta.wav';
 import { getEstadoDetallado } from '../utils/citaStatus';
+import {
+  pacienteHaVenidoAConsulta,
+  resolverTipoConsultaConHistorial,
+} from '../utils/tipoConsultaPaciente';
 
 const NOTICIAS_FALLBACK = [
   {
@@ -545,10 +549,65 @@ const STYLES = `
     flex-shrink: 0;
     background: white;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .timeline-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
   }
   .timeline-title {
     font-family: 'Sora', sans-serif;
     font-size: 18px; font-weight: 700; color: var(--slate-900);
+  }
+  .day-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .day-nav-btn {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    border: 1px solid var(--slate-200);
+    background: white;
+    color: var(--slate-600);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .day-nav-btn:hover {
+    color: var(--blue-600);
+    border-color: var(--blue-200);
+    background: var(--blue-50);
+  }
+  .day-nav-label {
+    font-family: 'Sora', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--slate-800);
+    text-transform: capitalize;
+    min-width: 0;
+  }
+  .day-nav-today {
+    border: 1px solid var(--blue-200);
+    background: var(--blue-50);
+    color: var(--blue-700);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+
+  /* Barra de fecha fija (móvil): fuera del scroll para que no se pierda al ir a la hora actual */
+  .agenda-date-bar {
+    display: none;
   }
   .count-badge {
     background: var(--blue-50); border: 1px solid var(--blue-100);
@@ -678,10 +737,21 @@ const STYLES = `
     padding-top: 14px;
     padding-bottom: 6px;
     padding-left: 8px;
+    min-height: 44px;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .cita-time-pill.pill-disabled {
+    cursor: default;
   }
   .cita-time-pill:hover {
     background: var(--slate-100, #f1f5f9);
     box-shadow: 0 0 0 2px var(--slate-300, #cbd5e1);
+  }
+  .cita-time-pill.pill-disabled:hover {
+    background: transparent;
+    box-shadow: none;
   }
   .cita-time-pill:hover .pill-checkbox {
     border-color: var(--slate-400, #94a3b8);
@@ -689,6 +759,9 @@ const STYLES = `
   }
   .cita-time-pill:active {
     transform: scale(0.97);
+  }
+  .cita-time-pill.pill-disabled:active {
+    transform: none;
   }
   .cita-time-pill.pill-selected {
     background: var(--red-50, #fef2f2);
@@ -1540,6 +1613,41 @@ const STYLES = `
       width: 100%;
       justify-content: flex-start;
     }
+    .agenda-date-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-shrink: 0;
+      padding: 8px 14px;
+      background: white;
+      border-bottom: 1px solid var(--slate-100);
+      position: relative;
+      z-index: 45;
+    }
+    .agenda-date-bar .day-nav {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .agenda-date-bar .day-nav-label {
+      flex: 1;
+      text-align: center;
+      font-size: 14px;
+    }
+    .agenda-date-bar .day-nav-btn {
+      width: 40px;
+      height: 40px;
+    }
+    /* El calendario lateral queda abajo y confunde: en móvil se navega con la barra fija */
+    .sidebar-left .cal-widget {
+      display: none;
+    }
+    .timeline-header-left .day-nav {
+      display: none;
+    }
+    .weekly-panel > .timeline-header {
+      display: none;
+    }
     .header-right {
       flex-wrap: wrap;
       gap: 6px;
@@ -1577,6 +1685,17 @@ const STYLES = `
       flex-direction: column;
       align-items: flex-start;
       gap: 10px;
+    }
+    .day-nav {
+      width: 100%;
+    }
+    .day-nav-label {
+      flex: 1;
+      font-size: 14px;
+    }
+    .day-nav-btn {
+      width: 40px;
+      height: 40px;
     }
     .timeline-meta {
       width: 100%;
@@ -2032,6 +2151,7 @@ const Agenda = () => {
     enfermeroAsignadoId: '',
     enfermeroAsignadoNombre: ''
   });
+  const [tipoConsultaDetectado, setTipoConsultaDetectado] = useState(false);
 
   const consultorioActivo = useMemo(
     () => catalogoConsultorios.find((item) => item.id === consultorioActivoId) || null,
@@ -2060,6 +2180,10 @@ const Agenda = () => {
   const lastSelectedSlotRef = useRef(null);
 
   const toggleSlotSeleccionado = (slotStartTime, shiftKey = false) => {
+    if (!canBloquearHorarios) {
+      showToast('No tienes permiso para bloquear horarios', 'warning');
+      return;
+    }
     setSlotsSeleccionados(prev => {
       const next = new Set(prev);
 
@@ -2283,6 +2407,16 @@ const Agenda = () => {
       const nuevasCitas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       prevCitasLength.current = nuevasCitas.length;
       setCitas(nuevasCitas);
+      // Nombres desde la propia cita (sin N listeners a pacientes/)
+      const nombres = {};
+      nuevasCitas.forEach((c) => {
+        if (!c.pacienteId) return;
+        const nombre = String(c.pacienteNombre || c.paciente || '').trim();
+        if (nombre) nombres[c.pacienteId] = nombre;
+      });
+      if (Object.keys(nombres).length > 0) {
+        setPacientesNombres((prev) => ({ ...prev, ...nombres }));
+      }
       setLoading(false);
     }, () => { setLoading(false); });
 
@@ -2290,48 +2424,37 @@ const Agenda = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, user?.rol]);
 
-  // Suscripción a nombres frescos de pacientes referenciados en las citas
-  useEffect(() => {
-    const ids = [...new Set(citas.map(c => c.pacienteId).filter(Boolean))];
-    if (ids.length === 0) return;
-    const unsubs = ids.map(id =>
-      onSnapshot(doc(db, 'pacientes', id), (snap) => {
-        if (snap.exists()) {
-          const nombre = snap.data().nombreCompleto || '';
-          setPacientesNombres(prev => {
-            if (prev[id] === nombre) return prev;
-            return { ...prev, [id]: nombre };
-          });
-        }
-      }, () => {})
-    );
-    return () => unsubs.forEach(u => u());
-  }, [citas]);
-
-  /* ── INVENTARIO (TIEMPO REAL) — solo la sucursal de la sesión ── */
+  /* ── INVENTARIO (lectura única; no requiere tiempo real) ── */
   useEffect(() => {
     const nombreSucursal = sessionSucursal?.nombre || user?.sucursalActual || user?.sucursal || '';
     if (!nombreSucursal) { setAlertasCaducidad([]); return undefined; }
-    const qInv = query(collection(db, 'inventario'), where('sucursal', '==', nombreSucursal));
-    const unsub = onSnapshot(qInv, (snap) => {
-      const hoy = new Date();
-      const limit = new Date();
-      limit.setMonth(hoy.getMonth() + 3);
-      const alertas = [];
-      snap.docs.forEach((docRef) => {
-        const item = docRef.data();
-        if (item.caducidad) {
-          const fCad = new Date(item.caducidad);
-          if (fCad <= limit && item.stock > 0) {
-            const dias = Math.ceil((fCad - hoy) / 86400000);
-            alertas.push({ id: docRef.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
+    let cancelled = false;
+    const cargarInventario = async () => {
+      try {
+        const qInv = query(collection(db, 'inventario'), where('sucursal', '==', nombreSucursal));
+        const snap = await getDocs(qInv);
+        if (cancelled) return;
+        const hoy = new Date();
+        const limit = new Date();
+        limit.setMonth(hoy.getMonth() + 3);
+        const alertas = [];
+        snap.docs.forEach((docRef) => {
+          const item = docRef.data();
+          if (item.caducidad) {
+            const fCad = new Date(item.caducidad);
+            if (fCad <= limit && item.stock > 0) {
+              const dias = Math.ceil((fCad - hoy) / 86400000);
+              alertas.push({ id: docRef.id, ...item, diasRestantes: dias, riesgo: dias <= 30 ? 'alto' : 'medio' });
+            }
           }
-        }
-      });
-      setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
-    }, () => {});
-
-    return () => unsub();
+        });
+        setAlertasCaducidad(alertas.sort((a, b) => a.diasRestantes - b.diasRestantes));
+      } catch (err) {
+        if (!cancelled) console.warn('Inventario no disponible:', err?.message || err);
+      }
+    };
+    cargarInventario();
+    return () => { cancelled = true; };
   }, [sessionSucursal?.nombre, user?.sucursal, user?.sucursalActual]);
 
   /* ── NOTIFICATIONS ── */
@@ -2425,30 +2548,36 @@ const Agenda = () => {
         activo: item.activo !== false
       }));
 
-    const unsub1 = onSnapshot(query(collection(db, 'catalogo_motivos_consulta'), orderBy('nombre', 'asc')), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
-      setCatalogoMotivos(parseMotivos(rows));
-    }, () => {});
+    let cancelled = false;
+    const cargarCatalogos = async () => {
+      try {
+        const [motivosSnap, consultoriosSnap, sucursalesSnap, enfermerosSnap, doctoresSnap] = await Promise.all([
+          getDocs(query(collection(db, 'catalogo_motivos_consulta'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'))),
+          getDocs(query(collection(db, 'users'), where('rol', 'in', ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']))),
+          getDocs(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor']))),
+        ]);
+        if (cancelled) return;
 
-    const unsub2 = onSnapshot(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc')), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
-      setCatalogoConsultorios(parseConsultorios(rows));
-    }, () => {});
+        const motivosRows = motivosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
+        setCatalogoMotivos(parseMotivos(motivosRows));
 
-    const unsub3 = onSnapshot(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc')), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
-      setCatalogoSucursales(parseSucursales(rows));
-    }, () => {});
+        const consultoriosRows = consultoriosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
+        setCatalogoConsultorios(parseConsultorios(consultoriosRows));
 
-    const unsub4 = onSnapshot(query(collection(db, 'users'), where('rol', 'in', ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa'])), (snap) => {
-      setCatalogoEnfermeros(snap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id, rol: d.data().rol || '' })));
-    }, () => {});
+        const sucursalesRows = sucursalesSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item?.activo !== false && item?.nombre);
+        setCatalogoSucursales(parseSucursales(sucursalesRows));
 
-    const unsub5 = onSnapshot(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor'])), (snap) => {
-      setCatalogoDoctores(snap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id })).filter((item) => item.nombre));
-    }, () => {});
+        setCatalogoEnfermeros(enfermerosSnap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id, rol: d.data().rol || '' })));
+        setCatalogoDoctores(doctoresSnap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id })).filter((item) => item.nombre));
+      } catch (err) {
+        if (!cancelled) console.warn('Catálogos agenda no disponibles:', err?.message || err);
+      }
+    };
 
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
+    cargarCatalogos();
+    return () => { cancelled = true; };
   }, [user?.sucursal]);
 
   /* ── HORARIOS BLOQUEADOS (TIEMPO REAL) ── */
@@ -2626,9 +2755,27 @@ const Agenda = () => {
     setShowPacienteModal(false);
   };
 
-  const seleccionarPaciente = (p) => {
-    setNuevaCita({ ...nuevaCita, paciente: p.nombre, pacienteId: p.id, pacienteTelefono: p.telefono });
+  const seleccionarPaciente = async (p) => {
+    setNuevaCita((prev) => ({
+      ...prev,
+      paciente: p.nombre,
+      pacienteId: p.id,
+      pacienteTelefono: p.telefono,
+    }));
     setMostrarSugerencias(false);
+    setTipoConsultaDetectado(false);
+    try {
+      const haVenido = await pacienteHaVenidoAConsulta(p.id);
+      if (!haVenido) return;
+      setNuevaCita((prev) => {
+        if (prev.pacienteId !== p.id) return prev;
+        const tipoConsulta = resolverTipoConsultaConHistorial(prev.tipoConsulta, true, 'slug');
+        return { ...prev, tipoConsulta };
+      });
+      setTipoConsultaDetectado(true);
+    } catch (err) {
+      console.warn('No se pudo detectar tipo de consulta:', err);
+    }
   };
 
   const getMotivoSeleccionado = (motivoId) => {
@@ -2960,6 +3107,13 @@ const Agenda = () => {
         return;
       }
 
+      const haVenido = await pacienteHaVenidoAConsulta(nuevaCita.pacienteId);
+      const tipoConsultaFinal = resolverTipoConsultaConHistorial(nuevaCita.tipoConsulta, haVenido, 'slug');
+      if (tipoConsultaFinal !== nuevaCita.tipoConsulta) {
+        setTipoConsultaDetectado(true);
+        showToast('Se marcó como subsecuente: el paciente ya tiene consulta previa.', 'info');
+      }
+
       let meetLink = '';
       if (nuevaCita.esTeleconsulta) {
         const roomId = `srs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2973,6 +3127,7 @@ const Agenda = () => {
       }
       const citaRef = await addDoc(collection(db, "citas"), {
         ...nuevaCita, meetLink,
+        tipoConsulta: tipoConsultaFinal,
         motivo: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
         motivoNombreSnapshot: motivoSeleccionado?.nombre || nuevaCita.motivo || 'Consulta',
         motivoId: motivoSeleccionado?.id || nuevaCita.motivoId || '',
@@ -3041,6 +3196,7 @@ const Agenda = () => {
         enfermeroAsignadoId: '',
         enfermeroAsignadoNombre: ''
       });
+      setTipoConsultaDetectado(false);
 
       if (nuevaCita.esTeleconsulta && nuevaCita.pacienteTelefono) {
         try {
@@ -3071,6 +3227,15 @@ const Agenda = () => {
     } catch (error) { showToast(error.message,"error"); }
   };
 
+  const resolverTipoNotaFinalizacion = (motivo = '') => {
+    const m = String(motivo).toLowerCase();
+    if (m.includes('documento') || m.includes('trámite') || m.includes('tramite')) return 'Trámite / Documentos';
+    if (m.includes('breve')) return 'Consulta breve';
+    if (m.includes('estudio') || m.includes('resultado') || m.includes('eco')) return 'Estudio / Resultado';
+    if (m.includes('retir')) return 'Paciente se retiró';
+    return 'Nota de visita';
+  };
+
   const finalizarCita = async (citaId, motivoFinalizacion) => {
     if (!citaId) return;
     const motivo = String(motivoFinalizacion || '').trim();
@@ -3080,6 +3245,16 @@ const Agenda = () => {
     }
     setActionLoading(`finalizar-${citaId}`);
     try {
+      const citaLocal = citaAFinalizar?.id === citaId
+        ? citaAFinalizar
+        : (citas.find((c) => c.id === citaId) || selectedCita);
+      const pacienteId = citaLocal?.pacienteId || '';
+      const pacienteNombre = citaLocal?.pacienteNombre
+        || citaLocal?.paciente
+        || (pacienteId ? pacientesNombres[pacienteId] : '')
+        || 'Paciente';
+      const tipoNota = resolverTipoNotaFinalizacion(motivo);
+
       await updateDoc(doc(db, 'citas', citaId), {
         estado: 'completada',
         completadaAt: serverTimestamp(),
@@ -3089,9 +3264,77 @@ const Agenda = () => {
         finalizadoPorUid: user?.uid || '',
         finalizadoDesde: 'agenda_medico',
       });
+
+      // Registrar en historial clínico para ecos / estudios / trámites sin expediente abierto.
+      if (pacienteId) {
+        try {
+          const histSnap = await getDocs(query(
+            collection(db, 'historial_clinico'),
+            where('pacienteId', '==', pacienteId),
+            where('citaId', '==', citaId)
+          ));
+
+          if (histSnap.empty) {
+            await addDoc(collection(db, 'historial_clinico'), {
+              pacienteId,
+              pacienteNombre,
+              medicoNombre: user?.nombre || 'Médico',
+              medicoId: user?.uid || 'anonimo',
+              fecha: serverTimestamp(),
+              citaId,
+              tipoNota,
+              motivoFinalizacion: motivo,
+              origenRegistro: 'agenda_finalizacion',
+              consulta: {
+                padecimiento: motivo,
+                diagnostico: {
+                  enfermedad_actual: tipoNota,
+                  indicaciones: motivo,
+                  tratamiento_lista: []
+                }
+              },
+              consultorioId: citaLocal?.consultorioId || consultorioActivo?.id || '',
+              consultorioNombre: citaLocal?.consultorioNombre
+                || (typeof citaLocal?.consultorio === 'string' ? citaLocal.consultorio : citaLocal?.consultorio?.nombre)
+                || consultorioActivo?.nombre
+                || '',
+              sucursalId: citaLocal?.sucursalId || sessionSucursal?.id || '',
+              sucursalNombre: citaLocal?.sucursalNombre || sessionSucursal?.nombre || '',
+            });
+          } else {
+            // Ya hay historial de esa cita (p. ej. consulta completa): solo anexar el motivo.
+            const histDoc = histSnap.docs[0];
+            const data = histDoc.data() || {};
+            const updatePayload = {
+              motivoFinalizacion: motivo,
+              actualizadoEnFinalizacionAt: serverTimestamp(),
+            };
+            if (!data.consulta?.padecimiento && !data.consulta?.diagnostico?.enfermedad_actual) {
+              updatePayload.tipoNota = data.tipoNota || tipoNota;
+              updatePayload.consulta = {
+                ...(data.consulta || {}),
+                padecimiento: motivo,
+                diagnostico: {
+                  ...((data.consulta && data.consulta.diagnostico) || {}),
+                  enfermedad_actual: tipoNota,
+                  indicaciones: motivo,
+                }
+              };
+            }
+            await updateDoc(histDoc.ref, updatePayload);
+          }
+        } catch (histErr) {
+          console.error('No se pudo guardar nota de finalización en historial_clinico:', histErr);
+          showToast('Visita cerrada, pero no se pudo guardar en historial clínico. Revisa conexión e intenta de nuevo.', 'warning');
+          if (selectedCita?.id === citaId) setSelectedCita(null);
+          cerrarFinalizarCita();
+          return;
+        }
+      }
+
       if (selectedCita?.id === citaId) setSelectedCita(null);
       cerrarFinalizarCita();
-      showToast('Visita finalizada correctamente', 'success');
+      showToast('Visita finalizada y registrada en historial clínico', 'success');
     } catch (err) {
       console.error(err);
       showToast('Error al finalizar la visita', 'error');
@@ -3917,6 +4160,40 @@ const Agenda = () => {
           </div>
         </header>
 
+        {/* Barra de fecha fija en móvil (fuera de .main-content para que el auto-scroll no la oculte) */}
+        <div className="agenda-date-bar">
+          <div className="day-nav">
+            <button
+              type="button"
+              className="day-nav-btn"
+              onClick={() => cambiarDia(vista === 'semanal' ? -7 : -1)}
+              title={vista === 'semanal' ? 'Semana anterior' : 'Día anterior'}
+              aria-label={vista === 'semanal' ? 'Semana anterior' : 'Día anterior'}
+            >
+              <ChevronLeft size={16}/>
+            </button>
+            <span className="day-nav-label">
+              {vista === 'semanal'
+                ? `${weekDays[0]?.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })} – ${weekDays[weekDays.length - 1]?.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}`
+                : currentDate.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
+            </span>
+            <button
+              type="button"
+              className="day-nav-btn"
+              onClick={() => cambiarDia(vista === 'semanal' ? 7 : 1)}
+              title={vista === 'semanal' ? 'Semana siguiente' : 'Día siguiente'}
+              aria-label={vista === 'semanal' ? 'Semana siguiente' : 'Día siguiente'}
+            >
+              <ChevronRight size={16}/>
+            </button>
+            {!isCurrentDateToday && (
+              <button type="button" className="day-nav-today" onClick={() => setCurrentDate(new Date())}>
+                <CalendarClock size={12}/> Hoy
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* ══ MAIN ════════════════════════════════════════════════ */}
         <div className="main-content" ref={mainContentRef}>
 
@@ -4012,7 +4289,25 @@ const Agenda = () => {
               {/* CENTER: TIMELINE */}
               <div className="timeline-panel panel">
                 <div className="timeline-header">
-                  <h2 className="timeline-title sora">Consultas del día</h2>
+                  <div className="timeline-header-left">
+                    <h2 className="timeline-title sora">Consultas del día</h2>
+                    <div className="day-nav">
+                      <button type="button" className="day-nav-btn" onClick={() => cambiarDia(-1)} title="Día anterior" aria-label="Día anterior">
+                        <ChevronLeft size={16}/>
+                      </button>
+                      <span className="day-nav-label">
+                        {currentDate.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </span>
+                      <button type="button" className="day-nav-btn" onClick={() => cambiarDia(1)} title="Día siguiente" aria-label="Día siguiente">
+                        <ChevronRight size={16}/>
+                      </button>
+                      {!isCurrentDateToday && (
+                        <button type="button" className="day-nav-today" onClick={() => setCurrentDate(new Date())}>
+                          <CalendarClock size={12}/> Ir a hoy
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <div className="timeline-meta">
                     <button className={`count-badge timeline-action-btn ${timelineFiltro === 'pacientes' ? 'active' : ''}`} onClick={onClickPacientes}>
                       {citasDelDia.length} pacientes
@@ -4103,14 +4398,35 @@ const Agenda = () => {
                       >
                         {/* ── TIME PILL (clickable para bloquear) ── */}
                           <div
-                            className={`cita-time cita-time-pill ${estaSeleccionado ? 'pill-selected' : ''} ${esBloqueado ? 'pill-blocked' : ''}`}
-                            onClick={(e) => { e.stopPropagation(); toggleSlotSeleccionado(slot.startTime, e.shiftKey); }}
-                            title={esBloqueado ? `Bloqueado: ${justificacionSlot || 'Sin justificación'}` : 'Click para seleccionar y bloquear'}
+                            role={canBloquearHorarios ? 'button' : undefined}
+                            tabIndex={canBloquearHorarios ? 0 : undefined}
+                            className={`cita-time cita-time-pill ${estaSeleccionado ? 'pill-selected' : ''} ${esBloqueado ? 'pill-blocked' : ''} ${!canBloquearHorarios ? 'pill-disabled' : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!canBloquearHorarios) return;
+                              toggleSlotSeleccionado(slot.startTime, e.shiftKey);
+                            }}
+                            onKeyDown={(e) => {
+                              if (!canBloquearHorarios) return;
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                toggleSlotSeleccionado(slot.startTime, e.shiftKey);
+                              }
+                            }}
+                            title={
+                              esBloqueado
+                                ? `Bloqueado: ${justificacionSlot || 'Sin justificación'}`
+                                : canBloquearHorarios
+                                  ? 'Toca para seleccionar y bloquear/desbloquear'
+                                  : slot.startTime
+                            }
                           >
-                            {estaSeleccionado ? (
-                              <CheckCircle size={12} style={{ position: 'absolute', top: 4, right: 2, color: esBloqueado ? 'var(--green-500, #22c55e)' : 'var(--red-500, #ef4444)' }}/>
-                            ) : (
-                              <div className="pill-checkbox" />
+                            {canBloquearHorarios && (
+                              estaSeleccionado ? (
+                                <CheckCircle size={12} style={{ position: 'absolute', top: 4, right: 2, color: esBloqueado ? 'var(--green-500, #22c55e)' : 'var(--red-500, #ef4444)' }}/>
+                              ) : (
+                                <div className="pill-checkbox" />
+                              )
                             )}
                             <span className="cita-time-main sora">{slot.startTime}</span>
                             <span className="cita-time-range">{slot.value}</span>
@@ -4311,34 +4627,45 @@ const Agenda = () => {
                 </div>
 
                 {/* Barra flotante selección de horarios */}
-                {slotsSeleccionados.size > 0 && (
-                  <div style={{
-                    padding: '12px 20px', borderTop: '2px solid var(--slate-200)',
+                {canBloquearHorarios && slotsSeleccionados.size > 0 && (
+                  <div className="bloqueo-action-bar" style={{
+                    padding: '12px 16px',
+                    paddingBottom: 'max(12px, env(safe-area-inset-bottom))',
+                    borderTop: '2px solid var(--slate-200)',
                     background: 'white', display: 'flex', alignItems: 'center',
                     justifyContent: 'space-between', gap: 12, flexShrink: 0,
                     flexWrap: 'wrap',
-                    boxShadow: '0 -4px 12px rgba(0,0,0,.06)'
+                    boxShadow: '0 -8px 24px rgba(15,23,42,.12)',
+                    position: 'fixed',
+                    left: 12,
+                    right: 12,
+                    bottom: 12,
+                    zIndex: 80,
+                    borderRadius: 16,
+                    border: '1px solid var(--slate-200)'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Lock size={16} style={{ color: 'var(--slate-500)' }}/>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <Lock size={16} style={{ color: 'var(--slate-500)', flexShrink: 0 }}/>
                       <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate-700)' }}>
                         {slotsSeleccionados.size} horario{slotsSeleccionados.size !== 1 ? 's' : ''} seleccionado{slotsSeleccionados.size !== 1 ? 's' : ''}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 'auto', justifyContent: 'flex-end', flex: '1 1 280px' }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 'auto', justifyContent: 'flex-end', flex: '1 1 220px' }}>
                       <button
+                        type="button"
                         onClick={cancelarSeleccion}
-                        style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid var(--slate-200)', background: 'white', color: 'var(--slate-600)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                        style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid var(--slate-200)', background: 'white', color: 'var(--slate-600)', fontSize: 12, fontWeight: 700, cursor: 'pointer', minHeight: 44 }}
                       >
                         Cancelar
                       </button>
                       {(accionBloqueoSeleccion === 'desbloquear' || accionBloqueoSeleccion === 'mixto') && (
                         <button
+                          type="button"
                           onClick={() => { setShowBloqueoModal('desbloquear'); setJustificacionBloqueo(''); }}
                           style={{
-                            padding: '8px 20px', borderRadius: 10, border: '1px solid var(--green-300, #86efac)',
+                            padding: '10px 20px', borderRadius: 10, border: '1px solid var(--green-300, #86efac)',
                             background: 'var(--green-50, #f0fdf4)', color: 'var(--green-700, #15803d)',
-                            fontSize: 12, fontWeight: 700, cursor: 'pointer'
+                            fontSize: 12, fontWeight: 700, cursor: 'pointer', minHeight: 44
                           }}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><CheckCircle size={13}/> Desbloquear</span>
@@ -4346,11 +4673,12 @@ const Agenda = () => {
                       )}
                       {(accionBloqueoSeleccion === 'bloquear' || accionBloqueoSeleccion === 'mixto') && (
                         <button
+                          type="button"
                           onClick={() => { setShowBloqueoModal('bloquear'); setJustificacionBloqueo(''); }}
                           style={{
-                            padding: '8px 20px', borderRadius: 10, border: 'none',
+                            padding: '10px 20px', borderRadius: 10, border: 'none',
                             background: 'var(--red-600, #dc2626)', color: 'white',
-                            fontSize: 12, fontWeight: 700, cursor: 'pointer'
+                            fontSize: 12, fontWeight: 700, cursor: 'pointer', minHeight: 44
                           }}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Lock size={13}/> Bloquear</span>
@@ -4426,6 +4754,29 @@ const Agenda = () => {
           {/* ── VISTA SEMANAL ────────────────────────────────────── */}
           {vista === 'semanal' && (
             <div className="weekly-panel">
+              <div className="timeline-header" style={{ borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0' }}>
+                <div className="timeline-header-left">
+                  <h2 className="timeline-title sora">Vista semanal</h2>
+                  <div className="day-nav">
+                    <button type="button" className="day-nav-btn" onClick={() => cambiarDia(-7)} title="Semana anterior" aria-label="Semana anterior">
+                      <ChevronLeft size={16}/>
+                    </button>
+                    <span className="day-nav-label">
+                      {weekDays[0]?.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}
+                      {' – '}
+                      {weekDays[weekDays.length - 1]?.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                    <button type="button" className="day-nav-btn" onClick={() => cambiarDia(7)} title="Semana siguiente" aria-label="Semana siguiente">
+                      <ChevronRight size={16}/>
+                    </button>
+                    {!isCurrentDateToday && (
+                      <button type="button" className="day-nav-today" onClick={() => setCurrentDate(new Date())}>
+                        <CalendarClock size={12}/> Ir a hoy
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
               <div className="weekly-scroll">
                 {/* Header días */}
                 <div className="weekly-header" style={{ gridTemplateColumns: '72px repeat(6, 1fr)' }}>
@@ -4433,7 +4784,13 @@ const Agenda = () => {
                   {weekDays.map((day, i) => {
                     const isToday = new Date().toDateString() === day.toDateString();
                     return (
-                      <div key={i} className="weekly-header-cell" style={{ background: isToday ? 'var(--blue-50)' : 'white' }}>
+                      <div
+                        key={i}
+                        className="weekly-header-cell"
+                        style={{ background: isToday ? 'var(--blue-50)' : 'white', cursor: 'pointer' }}
+                        onClick={() => { setCurrentDate(new Date(day)); setVista('dashboard'); }}
+                        title="Ver este día"
+                      >
                         <div className="wday-name" style={{ color: isToday ? 'var(--blue-600)' : 'var(--slate-400)' }}>
                           {day.toLocaleDateString('es-MX', { weekday: 'short' })}
                         </div>
@@ -5049,6 +5406,7 @@ const Agenda = () => {
                                     value={nuevaCita.paciente}
                                     onChange={e => {
                                         setNuevaCita({ ...nuevaCita, paciente: e.target.value, pacienteId: '', pacienteTelefono: '' });
+                                        setTipoConsultaDetectado(false);
                                         const txt = e.target.value.toLowerCase().trim();
                                         if (txt.length > 1) {
                                             fetchPacientesSugerencias(txt);
@@ -5197,10 +5555,18 @@ const Agenda = () => {
                                   { value: 'subsecuente', label: 'Subsecuente' }
                               ]}
                               value={nuevaCita.tipoConsulta}
-                              onChange={val => setNuevaCita({ ...nuevaCita, tipoConsulta: val })}
+                              onChange={val => {
+                                setTipoConsultaDetectado(false);
+                                setNuevaCita({ ...nuevaCita, tipoConsulta: val });
+                              }}
                               placeholder="Seleccionar..."
                               inputStyle={inputStyle}
                           />
+                          {tipoConsultaDetectado && nuevaCita.tipoConsulta === 'subsecuente' && (
+                            <p className="mt-1.5 text-[11px] font-semibold text-emerald-700">
+                              Detectado automáticamente: el paciente ya tiene consulta previa.
+                            </p>
+                          )}
                       </div>
 
                       {/* Sucursal */}

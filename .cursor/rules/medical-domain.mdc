@@ -5,26 +5,43 @@ alwaysApply: true
 
 # Dominio SRS-Medic
 
-ERP clínico México. UI en español. Permisos: `hasPermission(user, permissionId, fallbackRoles)` en `src/services/permissionService.js`. Admin siempre accede a `admin.*`.
+ERP clínico México (Centro Médico Santa Cruz). UI en español. Mapa completo: `CONTEXTO_PROYECTO.md`.
 
-## Colecciones Firestore
-- Clínico: `pacientes`, `historial_clinico`, `citas`, `consultas`, `estudios_previos`
-- Enfermería: `triage_enfermeria`, `notas_enfermeria`, `ordenes_enfermeria`, `registros_krit`, `caducidades_almacen`
-- Catálogos: `catalogo_medicamentos`, `catalogo_estudios`, `catalogo_consultorios`, `catalogo_sucursales`, `catalogo_plantillas_documentos`
-- Ops: `users`, `inventario` | Chat: `canales`, `chats_privados`, `panic_alerts` | SSA: `ssa_cuestionario`, `ssa_auditorias`
+Permisos: `hasPermission(user, permissionId, fallbackRoles)` en `src/services/permissionService.js`. Roles admin (`admin`, `admin_maestro`, `administrador`) siempre acceden a `admin.*`. Tabla canónica: `PERMISSION_GROUPS` en `Usuarios.jsx`.
+
+## Colecciones Firestore (no inventar ni renombrar)
+
+- Clínico: `pacientes`, `historial_clinico`, `citas`, `consultas`, `estudios_previos`, `historico_embarazos`
+- Enfermería: `triage_enfermeria`, `notas_enfermeria`, `ordenes_enfermeria`, `bitacora_px_enfermeria`, `registros_krit`, `registros_autoclave`, `caducidades_almacen`, `bitacoras_operativas`, `bitacora_carro_rojo` (+ `/{sucursalId}/historial`)
+- Catálogos: `catalogo_medicamentos`, `catalogo_estudios`, `catalogo_procedimientos`, `catalogo_procedimientos_enfermeria`, `catalogo_consultorios`, `catalogo_sucursales`, `catalogo_especialidades`, `catalogo_plantillas_documentos`, `catalogo_motivos_consulta`, `catalogo_sintomatologia`, `catalogo_sintomatologia_categorias`, `catalogo_referencias_medicas`, `catalogo_documentos_capacitacion`, `catalogo_documentos_capacitacion_medicos`, `catalogo_pedido_medicamentos`, `catalogo_categorias_pedido`
+- Ops: `users` (+ `documentos`), `inventario`, `horarios_bloqueados`, `asistencia_diaria`, `bitacorasLimpieza`, `auth_registro_permitido`
+- Chat: `canales`, `chats_privados`, `panic_alerts`
+- SSA: `ssa_cuestionario`, `ssa_auditorias`
+- Share/audit: `expedientes_compartidos`, `encuestas_satisfaccion`, `patient_links`, `resumenes_homologados`, `pacientes_fusionados_log`, `auditoria_*`
+
+Reglas en repo: `firestore.rules`, `storage.rules`.
 
 ## Permisos clave
-`admin.dashboard`, `admin.usuarios`, `admin.monitor`, `admin.catalogos`, `doctor.agenda`, `shared.agenda`, `shared.pacientes`, `enfermeria.dashboard`, `enfermeria.jefatura`, `rh.dashboard`, `intendencia.registro`
+
+`admin.dashboard`, `admin.usuarios`, `admin.monitor`, `admin.catalogos`, `admin.plantillas`, `admin.reportes`, `doctor.agenda`, `doctor.expediente`, `shared.agenda`, `shared.pacientes`, `enfermeria.dashboard`, `enfermeria.triage`, `enfermeria.hoja`, `enfermeria.jefatura`, `rh.dashboard`, `intendencia.registro`
+
+Home: `/inicio`. `/portal` y `/doctor/consulta` redirigen. `/compartido/:token` es público.
 
 ## Expediente
-`pacientes` → SOAP en `historial_clinico` (`pacienteId`) → PDF (`src/components/pdf/`, `limpiar()` en `expedienteElectronico.js`) → share (`expedienteShareService.js`)
+
+`pacientes` → SOAP en `historial_clinico` (`pacienteId`) → PDF (`src/components/pdf/`, `limpiar()` en `expedienteElectronico.js`) → share (`expedienteShareService.js`). Entrada típica: `navigate('/doctor/expediente', { state: { pacienteId, citaId } })`.
 
 ## Cloud Functions (frontend)
-`askGemini`, `enviarWhatsAppNotificacion`, `enviarEncuestaWhatsApp`, `generarBoletinMedicoSeguro`, `analizarBitacora`
-No conectadas: `analizarMedicamento`, `crearSesionMeet`
+
+Conectadas: `askGemini`, `enviarWhatsAppNotificacion`, `generarBoletinMedicoSeguro`, `crearUsuarioStaff`, `resetUserPassword`. `analizarBitacora` existe; su página no está en el router.
+No conectadas: `analizarMedicamento`, `crearSesionMeet`, `enviarEncuestaWhatsApp` (comentada), `webhookWhatsApp` (HTTP).
 
 ## Archivos críticos (cambios mínimos)
+
 `Agenda.jsx`, `ExpedienteClinico.jsx`, `CatalogosGlobales.jsx`, `PlantillaDinamicaModal.jsx`, `App.jsx`
 
 ## Servicios
-`permissionService`, `patientSearchService`, `patientMergeService`, `expedienteShareService`, `documentStorageService`, `clinicalAuditService`
+
+`permissionService`, `patientSearchService`, `patientMergeService`, `expedienteShareService`, `documentStorageService`, `clinicalAuditService` (sin UI), `asistenciaService`, `speechDictationService`
+
+No existen: `Consultorio.jsx`, `NotaMedicaRapida`. Plataformas: web, Capacitor 6, Tauri 2.

@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
-import { BarChart3, Stethoscope, FileText, ChevronRight } from 'lucide-react';
+import { BarChart3, Stethoscope, ClipboardList, Baby, FlaskConical, Pill, Timer } from 'lucide-react';
 import ReporteSuive from './ReporteSuive';
+import ReporteConsultas from './ReporteConsultas';
+import ReporteConsultasPediatricas from './ReporteConsultasPediatricas';
+import ReporteEstudios from './ReporteEstudios';
+import ReporteMedicamentosRecetados from './ReporteMedicamentosRecetados';
+import ReporteTiemposAtencion from './ReporteTiemposAtencion';
+import ReporteConsultasEmbarazadas from './ReporteConsultasEmbarazadas';
 
 const STYLES = `
   .rp { font-family: 'DM Sans', system-ui, sans-serif; padding: 20px; max-width: 1440px; margin: 0 auto; background: #f8fafc; min-height: 100vh; }
@@ -37,6 +43,60 @@ const STYLES = `
 
 const REPORTES = [
   {
+    id: 'consultas',
+    label: 'Consultas',
+    desc: 'Listado de consultas por periodo · exportar Excel',
+    icon: <ClipboardList size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteConsultas,
+  },
+  {
+    id: 'consultas-pediatricas',
+    label: 'Consultas pediátricas',
+    desc: 'Consultas de menores de 18 años · exportar Excel',
+    icon: <Baby size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteConsultasPediatricas,
+  },
+  {
+    id: 'estudios',
+    label: 'Estudios',
+    desc: 'Estudios y paquetes solicitados por consulta · exportar Excel',
+    icon: <FlaskConical size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteEstudios,
+  },
+  {
+    id: 'medicamentos',
+    label: 'Medicamentos recetados',
+    desc: 'Por veces, folio o consultorio · exportar Excel',
+    icon: <Pill size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteMedicamentosRecetados,
+  },
+  {
+    id: 'tiempos',
+    label: 'Tiempos de atención',
+    desc: 'Promedios mensuales por médico · gráfico y Excel',
+    icon: <Timer size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteTiemposAtencion,
+  },
+  {
+    id: 'embarazadas',
+    label: 'Consultas embarazadas',
+    desc: 'Control prenatal NOM-007 · FUM/FPP/FU/FCF · Excel',
+    icon: <Baby size={18} />,
+    color: '#0077B6',
+    bg: '#eff6ff',
+    component: ReporteConsultasEmbarazadas,
+  },
+  {
     id: 'suive',
     label: 'Reporte SUIVE',
     desc: 'Vigilancia epidemiológica · Matriz de morbilidad CIE-10',
@@ -45,13 +105,10 @@ const REPORTES = [
     bg: '#eff6ff',
     component: ReporteSuive,
   },
-  // Placeholder para futuros reportes
-  // { id: 'financiero', label: 'Reporte Financiero', desc: 'Ingresos, egresos y productividad', icon: <DollarSign size={18} />, color: '#059669', bg: '#ecfdf5', component: null },
-  // { id: 'operativo', label: 'Reporte Operativo', desc: 'Citas, ocupación y tiempos de espera', icon: <Clock size={18} />, color: '#d97706', bg: '#fffbeb', component: null },
 ];
 
 const Reportes = () => {
-  const [activeTab, setActiveTab] = useState('suive');
+  const [activeTab, setActiveTab] = useState('consultas');
 
   const activeReport = REPORTES.find((r) => r.id === activeTab);
   const ActiveComponent = activeReport?.component;

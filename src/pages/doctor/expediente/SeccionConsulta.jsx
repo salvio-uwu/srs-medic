@@ -1,7 +1,7 @@
 // src/pages/doctor/expediente/SeccionConsulta.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { functions } from '../../../config/firebase';
 import { db } from '../../../config/firebase';
 import { PROCEDURE_CATEGORY_OPTIONS, getProcedureCategoryLabel, normalizeProcedureCategory, normalizeProcedureRecord } from '../../../services/procedureCatalogService';
@@ -20,6 +20,7 @@ import {
     AlertTriangle, ChevronRight, ChevronDown, Pill, X, Check, Info, Calculator, Zap,
     Sparkles, Loader2, Brain, Pencil, Plus, Link2, ScanLine, Radiation, Images, Boxes, Microscope, ClipboardList, Bandage, Syringe, Printer, ShieldAlert, Scale, ArrowUp, ArrowDown, Phone, MapPin
 } from 'lucide-react';
+import { startSpeechDictation, stopSpeechDictation } from '../../../services/speechDictationService';
 
 let cacheCie10 = null;
 let cacheMeds = null;
@@ -434,9 +435,10 @@ const SeccionConsulta = ({
             setCatalogoEstudiosLoading(true);
         }
 
-        const unsubscribeStudies = onSnapshot(
-            collection(db, 'catalogo_estudios'),
-            (snap) => {
+        const cargarEstudios = async () => {
+            try {
+                const snap = await getDocs(collection(db, 'catalogo_estudios'));
+                if (!isMounted) return;
                 const rows = snap.docs
                     .map((d) => normalizeStudyRecord({ id: d.id, ...d.data() }, d.id))
                     .filter((row) => row.descripcion);
@@ -448,9 +450,9 @@ const SeccionConsulta = ({
 
                 const activeRows = rows.filter((row) => row.activo !== false);
                 applyStudies(activeRows);
-            },
-            (error) => {
-                console.error('Error suscribiendo catalogo_estudios en tiempo real', error);
+            } catch (error) {
+                console.error('Error cargando catalogo_estudios', error);
+                if (!isMounted) return;
                 if (Array.isArray(cacheStudies) && cacheStudies.length > 0) {
                     setCatalogoEstudios(cacheStudies);
                     setCatalogoEstudiosLoading(false);
@@ -458,11 +460,12 @@ const SeccionConsulta = ({
                 }
                 applyFallback();
             }
-        );
+        };
+
+        cargarEstudios();
 
         return () => {
             isMounted = false;
-            unsubscribeStudies();
         };
     }, []);
 
@@ -486,17 +489,18 @@ const SeccionConsulta = ({
             setCatalogoProcedimientosLoading(true);
         }
 
-        const unsubscribeProcedures = onSnapshot(
-            collection(db, 'catalogo_procedimientos'),
-            (snap) => {
+        const cargarProcedimientos = async () => {
+            try {
+                const snap = await getDocs(collection(db, 'catalogo_procedimientos'));
+                if (!isMounted) return;
                 const rows = snap.docs
                     .map((d) => normalizeProcedureRecord({ id: d.id, ...d.data() }, d.id))
                     .filter((row) => row.nombre)
                     .filter((row) => row.activo !== false);
                 applyProcedures(rows);
-            },
-            (error) => {
-                console.error('Error suscribiendo catalogo_procedimientos en tiempo real', error);
+            } catch (error) {
+                console.error('Error cargando catalogo_procedimientos', error);
+                if (!isMounted) return;
                 if (Array.isArray(cacheProcedures) && cacheProcedures.length > 0) {
                     setCatalogoProcedimientos(cacheProcedures);
                     setCatalogoProcedimientosLoading(false);
@@ -504,11 +508,12 @@ const SeccionConsulta = ({
                 }
                 applyProcedures([]);
             }
-        );
+        };
+
+        cargarProcedimientos();
 
         return () => {
             isMounted = false;
-            unsubscribeProcedures();
         };
     }, []);
 
@@ -532,17 +537,18 @@ const SeccionConsulta = ({
             setCatalogoReferenciasMedicasLoading(true);
         }
 
-        const unsubscribeReferencias = onSnapshot(
-            collection(db, 'catalogo_referencias_medicas'),
-            (snap) => {
+        const cargarReferencias = async () => {
+            try {
+                const snap = await getDocs(collection(db, 'catalogo_referencias_medicas'));
+                if (!isMounted) return;
                 const rows = snap.docs
                     .map((d) => normalizeReferenciaMedicaRecord({ id: d.id, ...d.data() }, d.id))
                     .filter((row) => row.nombreMedico)
                     .filter((row) => row.activo !== false);
                 applyReferencias(rows);
-            },
-            (error) => {
-                console.error('Error suscribiendo catalogo_referencias_medicas', error);
+            } catch (error) {
+                console.error('Error cargando catalogo_referencias_medicas', error);
+                if (!isMounted) return;
                 if (Array.isArray(cacheReferenciasMedicas) && cacheReferenciasMedicas.length > 0) {
                     setCatalogoReferenciasMedicas(cacheReferenciasMedicas);
                     setCatalogoReferenciasMedicasLoading(false);
@@ -550,20 +556,27 @@ const SeccionConsulta = ({
                 }
                 applyReferencias([]);
             }
-        );
+        };
+
+        cargarReferencias();
 
         return () => {
             isMounted = false;
-            unsubscribeReferencias();
         };
     }, []);
 
     // --- CARGA ATAJOS DESDE FIRESTORE ---
     useEffect(() => {
-        const unsubSintomas = onSnapshot(
-            collection(db, 'catalogo_sintomatologia'),
-            (snap) => {
-                const items = snap.docs
+        let cancelled = false;
+        const cargarAtajos = async () => {
+            try {
+                const [sintomasSnap, categoriasSnap] = await Promise.all([
+                    getDocs(collection(db, 'catalogo_sintomatologia')),
+                    getDocs(query(collection(db, 'catalogo_sintomatologia_categorias'), orderBy('orden', 'asc'))),
+                ]);
+                if (cancelled) return;
+
+                const items = sintomasSnap.docs
                     .map(d => ({ id: d.id, ...d.data() }))
                     .filter(item => item.activo !== false && item.nombre)
                     .sort((a, b) => {
@@ -573,14 +586,8 @@ const SeccionConsulta = ({
                         return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' });
                     });
                 setAtajos(items.length > 0 ? items : ATAJOS_DEFAULT);
-            },
-            () => setAtajos(ATAJOS_DEFAULT)
-        );
 
-        const unsubCategorias = onSnapshot(
-            query(collection(db, 'catalogo_sintomatologia_categorias'), orderBy('orden', 'asc')),
-            (snap) => {
-                const rows = snap.docs
+                const rows = categoriasSnap.docs
                     .map((d) => {
                         const data = d.data();
                         return {
@@ -593,14 +600,15 @@ const SeccionConsulta = ({
                     })
                     .filter((item) => item.activo !== false);
                 setCategoriasSintomas(rows.length > 0 ? rows : SYMPTOM_CATEGORY_DEFAULTS);
-            },
-            () => setCategoriasSintomas(SYMPTOM_CATEGORY_DEFAULTS)
-        );
-
-        return () => {
-            unsubSintomas();
-            unsubCategorias();
+            } catch {
+                if (!cancelled) {
+                    setAtajos(ATAJOS_DEFAULT);
+                    setCategoriasSintomas(SYMPTOM_CATEGORY_DEFAULTS);
+                }
+            }
         };
+        cargarAtajos();
+        return () => { cancelled = true; };
     }, []);
 
     const paquetesCatalogo = useMemo(
@@ -1317,13 +1325,32 @@ Responde en formato breve y claro en español, máximo 4 líneas. No uses markdo
         else if (editandoMedIndex === index + 1) setEditandoMedIndex(index);
     };
 
-    const toggleDictado = () => {
-        if (!('webkitSpeechRecognition' in window)) return alert("Navegador no soportado");
-        if (isListening) { setIsListening(false); return; }
-        const recognition = new window.webkitSpeechRecognition();
-        recognition.lang = 'es-MX'; recognition.onstart = () => setIsListening(true); recognition.onend = () => setIsListening(false);
-        recognition.onresult = (e) => { const t = e.results[0][0].transcript; updateCampo('consulta.padecimiento', (expediente.consulta.padecimiento || '') + " " + t); };
-        recognition.start();
+    const toggleDictado = async () => {
+        if (isListening) {
+            setIsListening(false);
+            await stopSpeechDictation();
+            return;
+        }
+        try {
+            await startSpeechDictation({
+                language: 'es-MX',
+                onStart: () => setIsListening(true),
+                onEnd: () => setIsListening(false),
+                onResult: (transcript) => {
+                    updateCampo(
+                        'consulta.padecimiento',
+                        `${expediente.consulta.padecimiento || ''} ${transcript}`.trim()
+                    );
+                },
+                onError: (err) => {
+                    setIsListening(false);
+                    const msg = err?.message || 'No se pudo iniciar el dictado.';
+                    alert(msg);
+                },
+            });
+        } catch {
+            setIsListening(false);
+        }
     };
 
     const glassCard = "bg-white border border-slate-200 shadow-sm rounded-2xl flex flex-col min-h-0";

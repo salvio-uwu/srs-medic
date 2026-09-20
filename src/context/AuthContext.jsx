@@ -23,6 +23,10 @@ import {
   touchActividad,
 } from '../services/asistenciaService';
 import AuthSplash from '../components/AuthSplash';
+import {
+  isFirebasePermissionDenied,
+  reportFirebasePermissionError,
+} from '../utils/firebaseErrors';
 
 const AuthContext = createContext();
 
@@ -130,7 +134,12 @@ export const AuthProvider = ({ children }) => {
       return applyProfile(currentUser, profileData);
     } catch (error) {
       console.error('Error leyendo perfil (getDoc):', error);
-      setProfileError('fetch');
+      if (isFirebasePermissionDenied(error)) {
+        reportFirebasePermissionError(error, { source: 'auth-profile-getDoc', force: true });
+        setProfileError('permission');
+      } else {
+        setProfileError('fetch');
+      }
       setLoading(false);
       return null;
     }
@@ -245,6 +254,10 @@ export const AuthProvider = ({ children }) => {
           (error) => {
             clearProfileReleaseTimer();
             console.error('Error sincronizando perfil:', error);
+            if (isFirebasePermissionDenied(error)) {
+              reportFirebasePermissionError(error, { source: 'auth-profile-onSnapshot', force: true });
+              setProfileError('permission');
+            }
             if (lastProfile && lastProfileUid === currentUser.uid) {
               setUser({ ...currentUser, ...lastProfile });
             } else {
@@ -510,7 +523,16 @@ export const AuthProvider = ({ children }) => {
         <AuthSplash />
       ) : showProfileStuck ? (
         <AuthSplash
-          status="No se pudo cargar el perfil. Revisa tu conexión."
+          status={
+            profileError === 'permission'
+              ? 'Acceso restringido por reglas de seguridad. Contacta a soporte.'
+              : 'No se pudo cargar el perfil. Revisa tu conexión.'
+          }
+          subtitle={
+            profileError === 'permission'
+              ? 'Si eres personal autorizado, usa el aviso en pantalla para contactar soporte.'
+              : 'Preparando el sistema de gestion clinica.'
+          }
           onRetry={retryProfile}
           onLogout={logout}
         />

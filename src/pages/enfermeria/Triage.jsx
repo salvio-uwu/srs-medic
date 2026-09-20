@@ -4,7 +4,7 @@ import {
   Save, Activity, ArrowLeft, CheckCircle, XCircle, FlaskConical, Plus, Stethoscope
 } from 'lucide-react';
 import { db, auth } from '../../config/firebase';
-import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, deleteField } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import AvatarPaciente from '../../components/AvatarPaciente';
 import VirtualKeyboard from '../../components/VirtualKeyboard';
 
@@ -210,13 +210,14 @@ const Triage = () => {
 
         // 2. Actualizar Cita (Comunicación con el Médico)
         if (citaId) {
-            await updateDoc(doc(db, "citas", citaId), { 
-                estado: 'en_espera', 
+            await updateDoc(doc(db, "citas", citaId), {
+                estado: 'en_espera',
                 signos_vitales: signos,
                 triage_alergias: alergiasTexto,
                 triage_alergias_struct: alergias,
                 triage_enfermedades: enfermedades,
-                triageIniciadoAt: deleteField(), // limpia el marcador de "En triage" al completar
+                // Conservar triageIniciadoAt para reportes de tiempos (estado UI usa `estado`, no borra el inicio)
+                triageCompletadoAt: serverTimestamp(),
             });
         }
 

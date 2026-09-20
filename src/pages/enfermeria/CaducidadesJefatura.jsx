@@ -173,16 +173,20 @@ const CaducidadesJefatura = () => {
       `;
     }).join('');
 
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800');
-    if (!printWindow) return;
+    const printWindow = window.open('', '_blank', 'width=1100,height=800');
+    if (!printWindow) {
+      alert('El navegador bloqueó la ventana de impresión. Permite ventanas emergentes.');
+      return;
+    }
+    const bodyContent = sections || '<p style="text-align:center;color:#94a3b8;padding:24px">Sin registros de caducidades para el mes/filtro seleccionado.</p>';
     printWindow.document.write(`<!DOCTYPE html><html><head><title>Caducidades ${mesLabel}</title>
       <style>body{font-family:system-ui,sans-serif;padding:20px;color:#1e293b}
       @media print{button{display:none!important}@page{size:landscape;margin:10mm}}</style></head><body>
       <div style="text-align:center;margin-bottom:20px">
         <h1 style="margin:0;font-size:20px;color:#1e293b">MEDICAMENTO PRÓXIMO A CADUCAR — ALMACÉN</h1>
-        <p style="margin:4px 0 0;font-size:14px;color:#64748b;font-weight:600">${mesLabel.toUpperCase()}</p>
+        <p style="margin:4px 0 0;font-size:14px;color:#64748b;font-weight:600">${mesLabel.toUpperCase()}${filtroSucursal ? ` · ${filtroSucursal}` : ' · TODAS'}</p>
       </div>
-      ${sections}
+      ${bodyContent}
       <p style="margin-top:20px;font-size:10px;color:#94a3b8;text-align:right">Impreso: ${new Date().toLocaleString('es-MX')} | Generado por: ${escapeHtml(user?.nombre || '')}</p>
       <div style="text-align:center;margin-top:16px"><button onclick="window.print()" style="background:#1e293b;color:#fff;border:none;padding:10px 28px;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px">Imprimir</button></div>
       </body></html>`);

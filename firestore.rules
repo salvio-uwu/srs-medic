@@ -1,0 +1,377 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function userDocPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserProfile() {
+      return isAuth() && exists(userDocPath());
+    }
+
+    function userRol() {
+      return hasUserProfile()
+        ? get(userDocPath()).data.get('rol', '').lower()
+        : '';
+    }
+
+    function isAdminRole() {
+      return userRol() in ['admin', 'admin_maestro', 'administrador'];
+    }
+
+    function isMedicoRole() {
+      return userRol() in ['medico', 'doctor'];
+    }
+
+    function isEnfermeriaRole() {
+      return userRol() in ['enfermeria', 'enfermera', 'enfermero'];
+    }
+
+    function isJefaturaRole() {
+      return userRol() in ['jefa_enfermeria', 'jefa'];
+    }
+
+    function isRhRole() {
+      return userRol() in ['rh', 'recursos_humanos', 'recursos humanos'];
+    }
+
+    function isIntendenciaRole() {
+      return userRol() in ['intendencia', 'limpieza'];
+    }
+
+    function isRecepcionRole() {
+      return userRol() in ['recepcion', 'operativo'];
+    }
+
+    // Personal autorizado: cuenta Auth + documento users/{uid} con rol asignado por admin.
+    // Bloquea cuentas autoregistradas sin perfil (hallazgo Strix vuln-0002).
+    function isStaff() {
+      return hasUserProfile() && userRol().size() > 0;
+    }
+
+    function isClinicalStaff() {
+      return isStaff() && (
+        isAdminRole() || isMedicoRole() || isEnfermeriaRole() || isJefaturaRole()
+      );
+    }
+
+    function isCatalogWriter() {
+      return isStaff() && (isAdminRole() || isJefaturaRole());
+    }
+
+    function isSelfSessionUpdate() {
+      let allowed = [
+        'isOnline', 'statusOperativo', 'lastSeen', 'lastLogin',
+        'sessionSucursalId', 'sessionSucursalNombre',
+        'sessionConsultorioId', 'sessionConsultorioNombre',
+        'sucursalActual', 'sucursalActualId',
+        'consultorioActualId', 'consultorioActual',
+        'consultorioId', 'consultorio', 'consultorioUbicacion',
+        'consultorioRecurrenteId', 'consultorioRecurrente',
+        'fotoPerfil'
+      ];
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
+    }
+
+    function isSharedViewsOnlyUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']);
+    }
+
+    // ── Usuarios ─────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || isStaff());
+      allow create: if isAdminRole();
+      allow update: if isAdminRole()
+        || (isAuth() && request.auth.uid == uid && isStaff() && isSelfSessionUpdate());
+      allow delete: if isAdminRole();
+    }
+
+    match /users/{uid}/documentos/{docId} {
+      allow read, write: if isStaff() && (isAdminRole() || isRhRole() || request.auth.uid == uid);
+    }
+
+    // ── Clínico ──────────────────────────────────────────────────────────
+    match /pacientes/{docId} {
+      allow read, write: if isClinicalStaff() || isRecepcionRole() || isRhRole();
+    }
+
+    match /historial_clinico/{docId} {
+      allow read, write: if isClinicalStaff() || isAdminRole();
+    }
+
+    match /consultas/{docId} {
+      allow read, write: if isClinicalStaff() || isRecepcionRole();
+    }
+
+    match /citas/{docId} {
+      allow read, write: if isStaff();
+    }
+
+    match /estudios_previos/{docId} {
+      allow read, write: if isClinicalStaff();
+    }
+
+    match /historico_embarazos/{docId} {
+      allow read, write: if isClinicalStaff();
+    }
+
+    match /ordenes_enfermeria/{docId} {
+      allow read, write: if isClinicalStaff() || isEnfermeriaRole() || isJefaturaRole();
+    }
+
+    match /resumenes_homologados/{docId} {
+      allow read, write: if isClinicalStaff() || isAdminRole();
+    }
+
+    match /patient_links/{docId} {
+      allow read, write: if isClinicalStaff() || isAdminRole();
+    }
+
+    match /auditoria_expediente_clinico/{docId} {
+      allow read, write: if isClinicalStaff() || isAdminRole();
+    }
+
+    match /auditoria_historial_migrado/{docId} {
+      allow read, write: if isAdminRole();
+    }
+
+    match /pacientes_fusionados_log/{docId} {
+      allow read, write: if isAdminRole();
+    }
+
+    // Enlace compartido (QR): solo get por token UUID — sin listado ni runQuery público.
+    // La app usa getDoc(/expedientes_compartidos/{token}); el PDF se sirve vía URL firmada de Storage.
+    match /expedientes_compartidos/{token} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isStaff();
+      allow update: if isStaff() || (!isAuth() && isSharedViewsOnlyUpdate());
+      allow delete: if isAdminRole();
+    }
+
+    // ── Enfermería ───────────────────────────────────────────────────────
+    match /triage_enfermeria/{docId} {
+      allow read, write: if isClinicalStaff() || isRecepcionRole();
+    }
+
+    match /notas_enfermeria/{docId} {
+      allow read, write: if isClinicalStaff();
+    }
+
+    match /bitacora_px_enfermeria/{docId} {
+      allow read, write: if isClinicalStaff();
+    }
+
+    match /bitacoras_operativas/{docId} {
+      allow read, write: if isClinicalStaff() || isIntendenciaRole();
+    }
+
+    match /caducidades_almacen/{docId} {
+      allow read, write: if isClinicalStaff() || isJefaturaRole();
+    }
+
+    match /registros_autoclave/{docId} {
+      allow read, write: if isClinicalStaff() || isJefaturaRole();
+    }
+
+    match /registros_krit/{docId} {
+      allow read, write: if isClinicalStaff() || isJefaturaRole();
+    }
+
+    match /bitacora_carro_rojo/{sucursalId} {
+      allow read, write: if isClinicalStaff() || isJefaturaRole();
+    }
+
+    match /bitacora_carro_rojo/{sucursalId}/historial/{histId} {
+      allow read, write: if isClinicalStaff() || isJefaturaRole();
+    }
+
+    // ── Catálogos ────────────────────────────────────────────────────────
+    match /catalogo_medicamentos/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole() || isJefaturaRole();
+    }
+
+    match /catalogo_estudios/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_procedimientos/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_procedimientos_enfermeria/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole() || isJefaturaRole();
+    }
+
+    match /catalogo_consultorios/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_sucursales/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole() || isJefaturaRole();
+    }
+
+    match /catalogo_especialidades/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_motivos_consulta/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_sintomatologia/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_sintomatologia_categorias/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_referencias_medicas/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_plantillas_documentos/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_documentos_capacitacion/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole() || isJefaturaRole();
+    }
+
+    match /catalogo_documentos_capacitacion_medicos/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /catalogo_categorias_pedido/{docId} {
+      allow read: if isStaff();
+      allow write: if isCatalogWriter();
+    }
+
+    match /catalogo_pedido_medicamentos/{docId} {
+      allow read: if isStaff();
+      allow write: if isCatalogWriter();
+    }
+
+    // ── Operaciones ──────────────────────────────────────────────────────
+    match /inventario/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole() || isJefaturaRole();
+    }
+
+    match /bitacorasLimpieza/{docId} {
+      allow read: if isStaff();
+      allow write: if isIntendenciaRole() || isAdminRole();
+    }
+
+    match /horarios_bloqueados/{docId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isStaff() && (
+        isAdminRole() || docId.matches('^' + request.auth.uid + '(_.*)?$')
+      );
+    }
+
+    match /configuracion/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /contadores/{docId} {
+      allow read, write: if isClinicalStaff() || isAdminRole();
+    }
+
+    // ── Asistencia ───────────────────────────────────────────────────────
+    match /asistencia_diaria/{docId} {
+      allow read: if isStaff() && (
+        isAdminRole() || isRhRole() || docId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow write: if isStaff() && docId.matches('^' + request.auth.uid + '_.*');
+    }
+
+    // ── Auditoría ────────────────────────────────────────────────────────
+    match /auditoria_admin_usuarios/{docId} {
+      allow read, write: if isAdminRole();
+    }
+
+    match /auditoria_movimientos_consultorio/{docId} {
+      allow read, write: if isStaff();
+    }
+
+    match /auditoria_password_resets/{docId} {
+      allow read, write: if false;
+    }
+
+    // ── Chat / alertas ───────────────────────────────────────────────────
+    match /canales/{canalId} {
+      allow read, write: if isStaff();
+    }
+
+    match /canales/{canalId}/mensajes/{msgId} {
+      allow read, write: if isStaff();
+    }
+
+    match /chats_privados/{chatId} {
+      allow read: if isStaff()
+        && request.auth.uid in resource.data.get('participantes', []);
+      allow create: if isStaff()
+        && request.auth.uid in request.resource.data.get('participantes', []);
+      allow update, delete: if isStaff()
+        && request.auth.uid in resource.data.get('participantes', []);
+    }
+
+    match /chats_privados/{chatId}/mensajes/{msgId} {
+      allow read, write: if isStaff();
+    }
+
+    match /panic_alerts/{docId} {
+      allow read, write: if isStaff();
+    }
+
+    // ── SSA ──────────────────────────────────────────────────────────────
+    match /ssa_cuestionario/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdminRole();
+    }
+
+    match /ssa_auditorias/{docId} {
+      allow read, write: if isAdminRole() || isMedicoRole();
+    }
+
+    // ── Encuestas (solo Cloud Functions escriben) ────────────────────────
+    match /encuestas_satisfaccion/{docId} {
+      allow read: if isAdminRole();
+      allow write: if false;
+    }
+
+    // Solo Cloud Functions (Admin SDK) — tokens temporales para alta de usuarios.
+    match /auth_registro_permitido/{email} {
+      allow read, write: if false;
+    }
+
+    // Denegar todo lo no declarado explícitamente.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

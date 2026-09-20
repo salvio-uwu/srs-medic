@@ -3,28 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { UserPlus, Trash2, MapPin, Search, ShieldCheck, Table2, FilterX, Clock3, Users, Activity, WifiOff, Stethoscope, Shield, Key, RefreshCw, User, Mail, Lock, Edit, Eye, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { db, auth, functions } from '../../config/firebase';
 import { collection, getDocs, setDoc, doc, deleteDoc, addDoc, serverTimestamp, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, getAuth, deleteUser } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
-import { initializeApp, getApps, getApp } from 'firebase/app';
 import useIsMobile from '../../hooks/useIsMobile';
-
-const firebaseConfig = {
-  apiKey: 'AIzaSyCIPnSQkdWm6YgdYlIZ8G5V4wu-oTFFTfg',
-  authDomain: 'srs-feacb.firebaseapp.com',
-  projectId: 'srs-feacb',
-  storageBucket: 'srs-feacb.firebasestorage.app',
-  messagingSenderId: '568441727812',
-  appId: '1:568441727812:web:ddc7f3ab84e2a5ab440511'
-};
-
-let secondaryApp;
-if (getApps().some((app) => app.name === 'Secondary')) {
-  secondaryApp = getApp('Secondary');
-} else {
-  secondaryApp = initializeApp(firebaseConfig, 'Secondary');
-}
-
-const secondaryAuth = getAuth(secondaryApp);
 
 const ROLE_OPTIONS = [
   { value: 'medico', label: 'Médico', helper: 'Consulta médica y expediente clínico completo' },
@@ -515,8 +495,6 @@ const Usuarios = () => {
     if (!validateForm()) return;
 
     setSaving(true);
-    let newUser = null;
-    let userProvisioned = false;
     try {
       const isEditing = !!editingUserId;
       const normalizedEmail = formData.email.trim().toLowerCase();
@@ -590,11 +568,7 @@ const Usuarios = () => {
         return;
       }
 
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, normalizedEmail, formData.password);
-      newUser = userCredential.user;
-
       const baseData = {
-        uid: newUser.uid,
         nombre: nombreCompleto,
         nombres: formData.nombre.trim(),
         apellidos: formData.apellidos.trim(),
@@ -636,9 +610,18 @@ const Usuarios = () => {
         baseData.sucursalId = idsNew.sucursalId;
       }
 
-      const userRef = doc(db, 'users', newUser.uid);
-      await setDoc(userRef, baseData);
+      const crearUsuarioStaffFn = httpsCallable(functions, 'crearUsuarioStaff');
+      const createResult = await crearUsuarioStaffFn({
+        email: normalizedEmail,
+        password: formData.password,
+        profile: baseData,
+      });
+      const newUserUid = createResult?.data?.uid;
+      if (!newUserUid) {
+        throw new Error('No se recibió el UID del usuario creado.');
+      }
 
+      const userRef = doc(db, 'users', newUserUid);
       const savedSnap = await getDoc(userRef);
       const savedData = savedSnap.exists() ? savedSnap.data() : null;
       const missingFields = [];
@@ -694,11 +677,9 @@ const Usuarios = () => {
         throw new Error(`No se pudo validar el guardado en Firestore. Revisa: ${missingFields.join(', ')}`);
       }
 
-      userProvisioned = true;
-
       await auditAction({
         action: 'alta_usuario',
-        targetUid: newUser.uid,
+        targetUid: newUserUid,
         targetNombre: nombreCompleto,
         payload: {
           rol: formData.rol,
@@ -711,22 +692,9 @@ const Usuarios = () => {
       setViewMode('tabla');
       resetUserForm();
     } catch (error) {
-      if (newUser && !userProvisioned) {
-        try {
-          await deleteUser(newUser);
-        } catch (cleanupError) {
-          console.error('Error limpiando usuario de Auth tras fallo de Firestore:', cleanupError);
-        }
-      }
-      alert(`Error creando usuario: ${error.message}`);
+      const msg = error?.message || 'Error desconocido al crear usuario.';
+      alert(`Error creando usuario: ${msg}`);
     } finally {
-      try {
-        if (secondaryAuth.currentUser) {
-          await secondaryAuth.signOut();
-        }
-      } catch (signOutError) {
-        console.error('Error cerrando sesion secundaria:', signOutError);
-      }
       setSaving(false);
     }
   };

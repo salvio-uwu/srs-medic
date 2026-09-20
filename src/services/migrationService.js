@@ -7,6 +7,7 @@ import { collection, doc, getDocs, limit, query, serverTimestamp, setDoc, where,
 import { db } from '../config/firebase';
 import { buildPatientHumanId } from '../utils/patientId';
 import { sanitizePatientNameFields } from '../utils/patientName';
+import { normalizeForSearch } from '../utils/searchUtils';
 
 // ─── UTILIDADES DE TRANSFORMACIÓN ───
 
@@ -56,6 +57,7 @@ export const transformPatient = (row) => {
     apellidoPaterno,
     apellidoMaterno,
     nombreCompleto,
+    searchName: normalizeForSearch(nombreCompleto),
     idPaciente,
     idPacienteMigrado: cleanStr(row.id),
     // Datos personales

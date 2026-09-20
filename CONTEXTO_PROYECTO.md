@@ -1,380 +1,411 @@
 # CONTEXTO COMPLETO DEL PROYECTO: SRS-Medic
 
-> Documento generado para dar contexto a Claude Web. Cópialo y pégalo al inicio de tu conversación.
+> Fuente canónica de cómo funciona la app **hoy**. Contraste contra el código: 2026-09-04 (versión `1.3.10`).
+> Úsalo al pegar contexto en un chat nuevo. Las rules de Cursor (`.cursor/rules/medical-domain.mdc`) son el resumen siempre activo; este archivo es el mapa.
 
 ---
 
-## 1. DESCRIPCIÓN GENERAL
+## 1. QUÉ ES
 
-**SRS-Medic** es un sistema web de gestión clínica integral (ERP médico) para clínicas y consultorios. Está orientado a pequeñas/medianas clínicas con múltiples roles de usuario. El proyecto está 100% en español (México).
-
----
-
-## 2. STACK TECNOLÓGICO
-
-### Frontend
-- **React 19** + **Vite 7** — Framework y build tool
-- **React Router DOM 7** — Navegación SPA
-- **Tailwind CSS 3** — Estilos utility-first
-- **lucide-react** — Iconografía
-
-### Backend / Base de datos
-- **Firebase 12** — Auth, Firestore (BD), Storage, Cloud Functions
-- **Firestore** — Base de datos NoSQL en tiempo real
-- **Firebase Auth** — Autenticación por email/password
-
-### IA Integrada
-- **Google Gemini 2.0 Flash** — Vía Firebase Cloud Functions
-- Función `analizarMedicamento`: valida medicamentos contra alergias del paciente (respuesta JSON)
-
-### Generación de documentos
-- **@react-pdf/renderer** — Generación de PDFs desde React
-- **docx + docxtemplater** — Documentos Word (.docx)
-- **file-saver** — Descarga de archivos en navegador
-- **react-to-print** — Impresión directa
-
-### Gráficos / Utilerías
-- **recharts** — Gráficos en React
-- **date-fns** — Manejo de fechas
+ERP clínico para clínicas en México (Centro Médico Santa Cruz). UI 100 % en español. Roles de personal (no hay portal de paciente). Tres superficies: **web** (Vite), **desktop** (Tauri 2, shell sin lógica Rust) y **Android** (Capacitor 6 WebView que carga producción).
 
 ---
 
-## 3. ESTRUCTURA DE CARPETAS
+## 2. STACK
 
-```
-srs-medic/
-├── src/
-│   ├── App.jsx                    # Router principal (todas las rutas)
-│   ├── context/
-│   │   └── AuthContext.jsx        # Context de autenticación global
-│   ├── config/
-│   │   └── firebase.js            # Inicialización Firebase (auth, db, storage, functions)
-│   ├── pages/
-│   │   ├── auth/
-│   │   │   ├── Login.jsx          # Página de login
-│   │   │   └── PortalAcceso.jsx   # Portal intermedio de selección de rol
-│   │   ├── admin/
-│   │   │   ├── DashboardAdmin.jsx
-│   │   │   ├── Inventario.jsx
-│   │   │   ├── Usuarios.jsx
-│   │   │   ├── Supervision.jsx
-│   │   │   ├── Reportes.jsx
-│   │   │   └── MonitorActividad.jsx  # "Torre de Control" de personal
-│   │   ├── doctor/
-│   │   │   ├── Consultorio.jsx       # Consulta rápida (modo simple)
-│   │   │   ├── ExpedienteClinico.jsx # Expediente completo (módulo principal)
-│   │   │   ├── NotaMedicaRapida.jsx
-│   │   │   ├── Pacientes.jsx
-│   │   │   └── expediente/
-│   │   │       ├── SeccionConsulta.jsx      # Tab: Consulta actual
-│   │   │       ├── SeccionAntecedentes.jsx  # Tab: Antecedentes del paciente
-│   │   │       └── SeccionResumen.jsx       # Tab: Resumen/notas previas
-│   │   └── enfermeria/
-│   │       ├── AgendaEnfermeria.jsx   # Dashboard principal de enfermería
-│   │       ├── Triage.jsx
-│   │       └── HojaEnfermeria.jsx
-│   ├── components/
-│   │   ├── FormatoReceta.jsx          # Receta imprimible (print CSS)
-│   │   ├── HistoriaClinicaModal.jsx   # Modal de historial clínico
-│   │   ├── ModalPaciente.jsx          # Modal de datos del paciente
-│   │   ├── DocumentosImagenesModal.jsx
-│   │   ├── ExportarHistoriaModal.jsx
-│   │   ├── ConsentimientoModal.jsx
-│   │   ├── EstudioPrevioModal.jsx
-│   │   ├── HistoricoEstudiosModal.jsx
-│   │   ├── EnviarHistoriaModal.jsx
-│   │   ├── HistoricoEmbarazosModal.jsx
-│   │   ├── CartaBuenaSaludModal.jsx
-│   │   ├── CartaPasaporteModal.jsx
-│   │   ├── SolicitudDIFModal.jsx
-│   │   ├── DengueModal.jsx
-│   │   ├── PrenupcialesModal.jsx
-│   │   ├── AvisoPrivacidadModal.jsx
-│   │   ├── AntidopingModal.jsx
-│   │   ├── CovidModal.jsx
-│   │   ├── InfluenzaModal.jsx
-│   │   └── pdf/                       # 13 componentes PDF con react-pdf/renderer
-│   │       ├── AntidopingPDF.jsx
-│   │       ├── AvisoPrivacidadPDF.jsx
-│   │       ├── CartaBuenaSaludAdultoPDF.jsx
-│   │       ├── CartaBuenaSaludMenorPDF.jsx
-│   │       ├── CartaBuenaSaludPDF.jsx
-│   │       ├── CartaPasaporteUniversalPDF.jsx
-│   │       ├── ConsentimientoInformadoPDF.jsx
-│   │       ├── CovidPDF.jsx
-│   │       ├── DenguePDF.jsx
-│   │       ├── DocumentoHistoriaPDF.jsx
-│   │       ├── InfluenzaPDF.jsx
-│   │       ├── PrenupcialesPDF.jsx
-│   │       └── SolicitudDIFPDF.jsx
-│   ├── shared/
-│   │   ├── Agenda.jsx               # Agenda compartida (admin/doctor/enfermería)
-│   │   ├── Pacientes.jsx            # Vista de pacientes compartida
-│   │   └── Mensajeria.jsx           # (En desarrollo)
-│   └── services/
-│       ├── authService.js
-│       ├── inventoryService.js
-│       └── patientService.js
-└── functions/
-    └── index.js                     # Cloud Function: analizarMedicamento (Gemini IA)
-```
+| Capa | Tecnología |
+|------|------------|
+| Frontend | React 19, Vite 7, React Router 7, Tailwind 3, JavaScript/JSX (sin TypeScript) |
+| Iconos | `lucide-react` (principal), `@phosphor-icons/react` (admin) |
+| Backend | Firebase 12 — Auth email/password, Firestore, Storage, Cloud Functions |
+| IA | Gemini / Vertex AI vía Cloud Functions (`askGemini` y otras) |
+| PDF | `@react-pdf/renderer` (principal); `html2canvas` + `jspdf` / `html-to-image` como fallback de captura |
+| Excel | `xlsx` (reportes e importación) |
+| Búsqueda | Meilisearch (cliente existe; **sync no cableado** al CRUD) |
+| Móvil | Capacitor 6 (`Share`, `Filesystem`, `StatusBar`, speech recognition) |
+| Desktop | Tauri 2 (`src-tauri/`) |
+
+**No hay** React Query/SWR, tests automatizados ni `React.lazy`. Firestore se llama desde componentes con el SDK.
+
+Proyecto Firebase: `srs-feacb`. Init: `src/config/firebase.js` exporta `auth`, `db`, `storage`, `functions`.
 
 ---
 
-## 4. RUTAS DE LA APLICACIÓN (App.jsx)
+## 3. ENTRY POINTS
 
-```
-/                        → Login
-/portal                  → PortalAcceso (selección de rol)
+| Archivo | Rol |
+|---------|-----|
+| `src/main.jsx` | Providers **sin StrictMode** (bug Firestore `INTERNAL ASSERTION FAILED`). Decodifica URL ofuscada antes del router. |
+| `src/App.jsx` | Router, `PermissionRoute`/`GuestRoute`, chat global, pánico, banner de versión |
+| `src/config/firebase.js` | Init Firebase |
+| `src/config/navigationCatalog.js` | Menú lateral por permisos |
+| `functions/index.js` | Cloud Functions |
+| `deploy.sh` | Build + rsync Tailscale + Docker |
 
-/admin/dashboard         → DashboardAdmin
-/admin/inventario        → Inventario
-/admin/usuarios          → Usuarios
-/admin/supervision       → Supervision
-/admin/reportes          → Reportes
-/admin/monitor           → MonitorActividad (Torre de Control)
-
-/doctor/consulta         → Consultorio (consulta rápida)
-/doctor/expediente       → ExpedienteClinico (expediente completo)
-/doctor/nota-rapida      → NotaMedicaRapida
-
-/enfermeria/dashboard    → AgendaEnfermeria
-/enfermeria/triage       → Triage
-/enfermeria/hoja-enfermeria → HojaEnfermeria
-
-/agenda                  → Agenda (compartida)
-/pacientes               → Pacientes (compartida)
-```
+Providers (`main.jsx`): `FirebaseErrorProvider` → `AuthProvider` → `SessionLocationProvider` → `App`.
 
 ---
 
-## 5. SISTEMA DE AUTENTICACIÓN (AuthContext.jsx)
+## 4. ESTRUCTURA DE CARPETAS (`src/`)
 
-El `AuthContext` es el proveedor global de autenticación. Expone:
-
-```js
-const { user, login, logout, loading, cambiarEstadoOperativo } = useAuth();
+```
+src/
+├── App.jsx, main.jsx
+├── config/          firebase.js, navigationCatalog.js
+├── context/         AuthContext, SessionLocationContext, FirebaseErrorContext
+├── hooks/           useAppVersion, useMonitorData, useToast, useIsMobile
+├── pages/
+│   ├── auth/        Login (activo). Bienvenida y PortalAcceso: en disco, NO montados.
+│   ├── home/        Inicio.jsx — hub post-login
+│   ├── admin/       dashboard, inventario, usuarios, catálogos, plantillas, reportes, SSA, monitor…
+│   ├── doctor/      ExpedienteClinico + tabs expediente/. Pacientes. Capacitación.
+│   ├── enfermeria/  agenda, triage, jefatura, carro rojo, caducidades, hoja, orden, registros…
+│   ├── rh/          DashboardRH
+│   ├── intendencia/ RegistroLimpiezaManual (ruta activa). CapturaBitacora y DashboardIntendencia: NO montados.
+│   └── ssa/         canvas, editor, evaluación, historial
+├── components/      modales clínicos, chat, pánico, enfermería, pdf/
+├── shared/          AppShell, AdminLayout, Agenda.jsx (monolito)
+├── services/        RBAC, pacientes, share, catálogos, asistencia…
+└── utils/           expedienteElectronico, citaStatus, patientName, routeObfuscator, sessionIdle, firebaseErrors
 ```
 
-### Objeto `user`
-Combina datos de **Firebase Auth** + datos del documento en **Firestore `users/{uid}`**:
-```js
-user = {
-  uid,
-  email,
-  nombre,          // campo de Firestore
-  rol,             // 'admin' | 'doctor' | 'enfermeria' | 'paciente'
-  sucursal,        // campo de Firestore
-  isOnline,        // true/false
-  statusOperativo, // 'disponible' | 'ocupado' | 'comida' | 'administrativo' | 'offline'
-  lastLogin,
-  lastSeen,
-  ...otrosDatosDeFirestore
-}
-```
+**No existen:** `Consultorio.jsx`, `NotaMedicaRapida.jsx`, `shared/Pacientes.jsx`, `shared/Mensajeria.jsx`.
+**Vacíos y sin ruta:** `pages/doctor/Consulta.jsx`, `pages/doctor/DashboardDoctor.jsx`.
+**Backups:** `*.old.jsx` en enfermería (carro rojo) — no usar.
 
-### Funciones
-- **`login(email, password)`** — Login con Firebase Auth, actualiza `isOnline: true` y `statusOperativo: 'disponible'` en Firestore.
-- **`logout()`** — Cierra sesión y marca `isOnline: false` en Firestore.
-- **`cambiarEstadoOperativo(estado, datosExtra)`** — Permite al médico/enfermera cambiar su estado en tiempo real (integrado con la Torre de Control del admin).
-
-### Heartbeat
-Cada 2 minutos actualiza `lastSeen` e `isOnline: true` en Firestore para mantener presencia en tiempo real.
+Datos estáticos: `public/data/cie10.json`, `estudios.json`, `medicamentos.json`, `inventario.csv`.
 
 ---
 
-## 6. MÓDULO PRINCIPAL: EXPEDIENTE CLÍNICO (ExpedienteClinico.jsx)
+## 5. AUTENTICACIÓN Y SESIÓN
 
-Es el módulo más complejo. Se accede desde la agenda pasando state de navegación:
+### AuthContext (`src/context/AuthContext.jsx`)
+
+Expone: `{ user, login, logout, loading, profileError, retryProfile, cambiarEstadoOperativo }`.
+
+1. `signInWithEmailAndPassword`
+2. Perfil `users/{uid}` con `getDoc` (timeout 4 s) + `onSnapshot`
+3. `user` = Firebase Auth **más** todo el documento Firestore (`rol`, `permissions` / `permissionList`, `statusOperativo`, `isOnline`, `lastSeen`, `sessionSucursal*`, `sessionConsultorio*`, etc.)
+4. Cache `localStorage` `srs_auth_profile_cache_v1`
+5. Hidratado si hay `rol` o permisos
+6. Logout: gracia 250 ms sin cache / **1500 ms** con cache (no 2.5 s)
+7. Idle **30 min** (`src/utils/sessionIdle.js`); heartbeat cada **2 min** (`lastSeen`, `isOnline`, `asistencia_diaria`)
+8. Splash hard-stop 8 s
+
+Signup público bloqueado: Cloud Function `beforeUserCreatedBlockPublicSignup` + allowlist `auth_registro_permitido`. Alta de staff: `crearUsuarioStaff`.
+
+### SessionLocationContext
+
+Sucursal/consultorio de sesión. Catálogos `catalogo_sucursales` + `catalogo_consultorios`. Persistencia en `users/{uid}` y `sessionStorage` `srs_loc_confirmed_{uid}`. Gate: `WelcomeLocationGate`.
+
+### FirebaseErrorContext
+
+Errores `permission-denied` → `FirebasePermissionSupportModal`.
+
+### Rutas
+
+- `GuestRoute`: login; si hay sesión → `/inicio`
+- `PermissionRoute`: `hasPermission(user, permissionId, fallbackRoles)`; si no → `/inicio`. `permissionId` puede ser array (OR).
+- `RequireAuth`: solo sesión hidratada (`/inicio`, `/ssa/evaluar/:templateId`)
+- `/compartido/:token`: **público** (expediente compartido)
+
+Home de todos: `/inicio` (`resolveUserHomePath`). `/portal` redirige a `/inicio`. `/doctor/consulta` redirige a `/agenda`.
+
+---
+
+## 6. PERMISOS Y ROLES
+
+Helper: `hasPermission` en `src/services/permissionService.js`. Admin (`admin` | `admin_maestro` | `administrador`) **siempre** accede a `admin.*`. Si el usuario tiene `permissionList` o mapa `permissions`, manda eso; si no, `fallbackRoles`.
+
+Tabla canónica UI: `PERMISSION_GROUPS` en `src/pages/admin/Usuarios.jsx`.
+
+| id | Módulo |
+|----|--------|
+| `admin.dashboard` | Dashboard, inventario, agenda admin, SSA admin |
+| `admin.usuarios` | Usuarios / personal |
+| `admin.catalogos` | Catálogos globales |
+| `admin.plantillas` | Plantillas de documentos |
+| `admin.reportes` | Reportes + encuestas |
+| `admin.monitor` | Monitor, supervisión, depuración |
+| `admin.supervision` | En matriz RH (la ruta `/admin/supervision` usa `admin.monitor`) |
+| `doctor.agenda` | Capacitación médicos; también abre `/agenda` (OR con `shared.agenda`) |
+| `doctor.expediente` | Expediente clínico médico |
+| `doctor.notaRapida` | Default de rol médico; **no hay ruta** |
+| `enfermeria.dashboard` | Agenda enfermería, carro rojo, caducidades, capacitación, expediente enfermería |
+| `enfermeria.triage` | Triage + antecedentes rápidos |
+| `enfermeria.hoja` | Hoja de enfermería |
+| `enfermeria.jefatura` | Jefatura + registros |
+| `rh.dashboard` | Dashboard RH |
+| `intendencia.registro` | Bitácora limpieza |
+| `shared.agenda` | Agenda compartida `/agenda` |
+| `shared.pacientes` | Pacientes |
+
+Alta de roles (`ROLE_OPTIONS`): `medico`, `enfermeria`, `jefa_enfermeria`, `intendencia`, `rh`, `admin`, `operativo`, `recepcion`.
+
+Aliases en fallbacks: `doctor`/`medico`, `enfermera`/`enfermero`, `jefa`, `administrador`/`admin_maestro`, `recursos_humanos`, `limpieza`.
+
+---
+
+## 7. RUTAS (`src/App.jsx`)
+
+### Públicas / guest
+| Path | Destino |
+|------|---------|
+| `/`, `/login` | Login |
+| `/portal` | → `/inicio` |
+| `/compartido/:token` | Vista pública de expediente |
+| `/app/*` | Decodifica ruta ofuscada |
+
+### Auth
+| Path | Página |
+|------|--------|
+| `/inicio` | Hub (`Inicio`) |
+| `/ssa/evaluar/:templateId` | Evaluación SSA (solo auth) |
+
+### Admin (`AdminLayout`)
+`/admin/dashboard`, `inventario`, `usuarios`, `usuarios/:userId`, `supervision`, `catalogos`, `plantillas`, `reportes`, `encuestas`, `monitor`, `depuracion`, `agenda`, `pacientes`, `ssa`, `ssa/editor/:templateId`, `ssa/historial`.
+
+### Otros
+| Path | Página |
+|------|--------|
+| `/rh/dashboard` | DashboardRH |
+| `/intendencia/registro` | RegistroLimpiezaManual |
+| `/doctor/expediente` | ExpedienteClinico |
+| `/expediente-electronico` | ExpedienteClinico (admin) |
+| `/doctor/capacitacion` | CapacitacionMedicos |
+| `/enfermeria/dashboard` | AgendaEnfermeria |
+| `/enfermeria/jefatura` | DashboardJefaEnfermeria |
+| `/enfermeria/registros` | RegistrosEnfermeriaView |
+| `/enfermeria/carro-rojo` | Carro rojo (jefa vs piso) |
+| `/enfermeria/triage` | Triage |
+| `/enfermeria/antecedentes` | AntecedentesRapidos |
+| `/enfermeria/hoja-enfermeria` | HojaEnfermeria |
+| `/enfermeria/capacitacion` | CapacitacionEnfermeria |
+| `/enfermeria/caducidades` | CaducidadesEnfermeria |
+| `/enfermeria/expediente` | ExpedienteClinico (no en menú; desde agenda) |
+| `/enfermeria/orden-servicio` | OrdenServicioEnfermeria |
+| `/agenda` | Agenda compartida |
+| `/pacientes` | Pacientes |
+| `*` | → `/inicio` |
+
+Globales en `App`: chat (`ChatPanel`), pánico (`PanicButton`), poll de versión (`useAppVersion`).
+
+---
+
+## 8. EXPEDIENTE CLÍNICO
+
+Monolito: `src/pages/doctor/ExpedienteClinico.jsx`. Archivo crítico: no refactorizar sin permiso.
+
+### Entrada
 ```js
 navigate('/doctor/expediente', { state: { pacienteId, citaId, motivo } })
 ```
+Enfermería: `/enfermeria/expediente`. Admin: `/expediente-electronico` o modal `ExpedienteElectronicoModal`. Al abrir cita activa: `citas.estado = 'en_consulta'`.
 
-### Tabs del expediente
-1. **Consulta** (`SeccionConsulta`) — Padecimiento actual, exploración física, diagnóstico, receta, estudios
-2. **Resumen** (`SeccionResumen`) — Notas previas y resumen del paciente
-3. **Historial/Antecedentes** (`SeccionAntecedentes`) — Antecedentes hereditarios, no patológicos, patológicos, aparatos, alergias, vacunas, cirugías, CIE-10
+### Tabs
+1. **Resumen** (`SeccionResumen`) — default: notas previas, gráficas, IA, documentos
+2. **Historial** (`SeccionAntecedentes`) — heredofamiliares, no patológicos, patológicos, aparatos, alergias, vacunas, cirugías, CIE-10
+3. **Consulta** (`SeccionConsulta`) — padecimiento, exploración, diagnóstico, Rx, estudios, procedimientos, referencias; dictado de voz
 
-### Estructura del estado `expediente`
+### Estado `expediente` (forma real)
+
 ```js
 {
-  px_info: {
-    edad, id_receta, telefono, alergias_base,
-    grupo_sanguineo, fum, fpp, sdg,
-    es_embarazada, requiere_cirugia: { general, ginecologica },
-    fecha_nacimiento
-  },
-  control_embarazo: {
-    num_embarazo, num_bebes, riesgo, acido_folico,
-    complicaciones: { diabetes, infeccion_urinaria, preeclampsia, hemorragia, sospecha_covid, hipertension }
-  },
+  px_info: { edad, id_receta, telefono, alergias_base, grupo_sanguineo, fum, fpp, sdg, es_embarazada, requiere_cirugia, fecha_nacimiento },
+  control_embarazo: { num_embarazo, num_bebes, riesgo, acido_folico, fondo_uterino, fcf, num_consulta_prenatal, complicaciones },
   resumen: { notas_previas, resumen_paciente },
-  antecedentes: {
-    hereditarios: { diabetes, hipertension, cardiopatia, ... }, // por familiar (mama, papa, hermanos, tios, primos, abuelos)
-    no_patologicos: { bano, lavado_dientes, habitacion, alimentacion, sedentarismo, otros },
-    patologicos: {
-      actuales, quirurgicos, transfusionales, traumaticos, hospitalizaciones,
-      adicciones: { tabaquismo, alcohol, drogas, detalle },
-      especificos: { glaucoma, calculo, reflujo, incontinencia, dislipidemias, otro }
-    },
-    aparatos: { digestivo, cardiovascular, respiratorio, urinario, genital, hematologico, endocrino, osteomuscular, nervioso, sensorial, psicosomatico, otro },
-    alergias: { tipo, lista: [{sustancia}], otras },
-    vacunas: { lista, otras },
-    cirugias: { lista: [{procedimiento, operacion, nota, unidad, fechaRegistro, diagnostico, medico}] },
-    cie10: []
-  },
+  antecedentes: { hereditarios, no_patologicos, patologicos, aparatos, alergias, vacunas, cirugias, cie10 },
   consulta: {
     padecimiento,
-    exploracion: {
-      signos: { ta, temp, fc, fr, spo2 },
-      antropometria: { peso, talla, cintura, cadera, imc, peso_ideal },
-      colesterol: { trigliceridos, colesterol, hba1c },
-      fisica: { habitus, cabeza, cuello, torax, genitales, extremidades, columna, abdomen },
-      glucosa: { lista }
-    },
-    diagnostico: { enfermedad_actual, tratamiento_lista: [{nombre, dosis}], indicaciones, pronostico },
-    estudios: { paquetes_seleccionados, estudios_seleccionados, notas_generales }
+    exploracion: { signos, antropometria, colesterol, fisica, glucosa },
+    diagnostico: { enfermedad_actual, tratamiento_lista, indicaciones, pronostico },
+    estudios, procedimientos, referencias_medicas
   },
   meta: { costo, segunda_opinion }
 }
 ```
 
-### Funciones importantes
-- **`updateCampo(path, value)`** — Actualiza el estado de forma profunda con path de puntos. Ej: `updateCampo('consulta.diagnostico.indicaciones', 'texto')`
-- **`handleGuardar()`** — Guarda en Firestore colección `historial_clinico`, actualiza el estado de la cita a `completada`, limpia el borrador local.
-- **Auto-guardado local** — Cada 1 segundo guarda borrador en `localStorage`. Al entrar, si existe un borrador reciente (<24h) muestra modal para restaurarlo.
-- **Temporizador de consulta** — Cuenta regresiva de 3 minutos con alertas sonoras (Web Audio API) y alertas visuales.
+`updateCampo('consulta.diagnostico.indicaciones', valor)` actualiza por path.
 
-### Colección Firestore: `historial_clinico`
-```js
-{
-  ...expediente,
-  pacienteId,
-  pacienteNombre,
-  medicoNombre,
-  medicoId,
-  fecha: serverTimestamp()
-}
-```
+### Guardado
+- Autosave debounce **1.5 s** → `localStorage` `autosave_draft_${citaId}` y a veces `citas.consultaDraft`
+- **Finalizar** → `historial_clinico` + actualiza `pacientes` + cita `completada` + limpia draft
+- Sanitizar: `limpiar()` / `deepSanitize()` en `src/utils/expedienteElectronico.js`
+- PDF: `src/components/pdf/ExpedienteElectronicoPDF.jsx`
+- Compartir: `expedienteShareService` → Storage + `expedientes_compartidos` → `/compartido/{token}` (30 días)
+
+Temporizador de consulta: cuenta regresiva (Web Audio + UI).
 
 ---
 
-## 7. COLECCIONES FIRESTORE
+## 9. AGENDA
 
-| Colección | Descripción |
-|-----------|-------------|
-| `users` | Perfiles de usuarios (médicos, admin, enfermería). Contiene `rol`, `nombre`, `sucursal`, `isOnline`, `statusOperativo`, `lastSeen` |
-| `pacientes` | Datos de pacientes: `nombreCompleto`, `apellidoPaterno`, `apellidoMaterno`, `fechaNacimiento`, `sexo`, `telefonoMovil`, `email`, `grupoSanguineo`, `notasPersonales` |
-| `historial_clinico` | Registro de cada consulta guardada (ver estructura de `expediente` arriba) |
-| `citas` | Citas/agenda: `estado` ('pendiente', 'completada'), `pacienteId`, `pacienteNombre`, `signos_vitales`, `triage_motivo`, `triage_alergias` |
-| `consultas` | Consultas rápidas del módulo Consultorio |
-| `inventario` | Medicamentos e insumos del inventario |
+`src/shared/Agenda.jsx` — monolito crítico (~5.7k líneas). Citas, filtros sucursal/consultorio, teleconsulta, unificar pacientes, WhatsApp, entrada a expediente.
 
----
+Estados (`src/utils/citaStatus.js`):
 
-## 8. FUNCIÓN DE IA (functions/index.js)
+| UI | Firestore |
+|----|-----------|
+| Esperando triage | `pendiente` sin `triageIniciadoAt` |
+| En triage | tiene `triageIniciadoAt` |
+| Esperando consulta | `en_espera` |
+| En consulta | `en_consulta` |
+| En procedimiento | `en_procedimiento` |
+| Finalizada | `completada` |
+| Cancelada | `cancelada` |
 
-Firebase Cloud Function `analizarMedicamento`:
+WhatsApp (`enviarWhatsAppNotificacion`): siguiente paciente, teleconsulta al agendar, recordatorio. Flags: `notificadoWhatsApp`, `notificadoWhatsAppAt`, `recordatorioEnviado`. Boletín: `generarBoletinMedicoSeguro`.
 
-**Entrada:**
-```js
-{ medicamento: "Amoxicilina", historialAlergias: ["Penicilina", "Polen"] }
-```
-
-**Lógica:** Llama a Gemini 2.0 Flash con un prompt de farmacólogo experto para detectar reacciones alérgicas directas o cruzadas.
-
-**Salida JSON:**
-```js
-{ riesgo: true, mensaje: "Riesgo de reacción cruzada: Amoxicilina es una penicilina semisintética..." }
-```
+Bloqueos: `horarios_bloqueados`.
 
 ---
 
-## 9. MÓDULO CONSULTORIO (Consultorio.jsx)
+## 10. MÓDULOS POR ÁREA
 
-Módulo de consulta rápida/simple (diferente al Expediente Clínico completo).
-- Ficha del paciente: nombre, edad, peso, alergias (campos locales, no vinculados a Firestore por pacienteId directamente)
-- Cronómetro de consulta (15 min por defecto)
-- Integración con Torre de Control: al iniciar consulta cambia `statusOperativo` a `ocupado`, al finalizar a `disponible`
-- Receta con buscador de inventario (mock data por ahora)
-- Al finalizar: guarda en colección `consultas` y lanza `window.print()` para imprimir receta
+### Admin
+Dashboard, inventario, usuarios (alta vía `crearUsuarioStaff`, reset password), catálogos (`CatalogosGlobales`), plantillas (`PlantillaDinamicaModal`), reportes, encuestas, monitor, supervisión, depuración (merge duplicados), agenda admin, SSA.
 
----
+Reportes: Consultas, Pediátricas, Estudios, Medicamentos recetados, Tiempos de atención, Embarazadas (NOM-007), SUIVE.
 
-## 10. DOCUMENTOS PDF DISPONIBLES
+### Médico
+Agenda + expediente + capacitación (`catalogo_documentos_capacitacion_medicos`).
 
-Generados con `@react-pdf/renderer`. Se abren desde el **Centro de Documentación** dentro del Expediente Clínico:
+### Enfermería
+Agenda/torre, triage → `triage_enfermeria`, hoja → `notas_enfermeria`, orden de servicio → `ordenes_enfermeria` + `historial_clinico`, jefatura (almacén, KRIT, autoclave, caducidades, carro rojo, pedidos), registros.
 
-**Certificados Médicos:**
-- Carta de Buena Salud (Adulto)
-- Carta de Buena Salud (Menor)
-- Carta Pasaporte Universal (menor/mayor)
-- Solicitud DIF
-- Prenupciales
-
-**Legal y Privacidad:**
-- Consentimiento Informado
-- Aviso de Privacidad
-
-**Pruebas Rápidas:**
-- Antidoping (Orina)
-- COVID-19 (Ag)
-- Influenza A+B
-- Prueba Dengue
-- (Panel Viral y Panel VSR — pendientes)
+### RH / Intendencia / SSA / Chat
+RH: `/rh/dashboard`. Intendencia: `/intendencia/registro` → `bitacorasLimpieza`. SSA: `ssa_cuestionario`, `ssa_auditorias`. Chat: `canales`, `chats_privados`. Pánico: `panic_alerts`.
 
 ---
 
-## 11. SISTEMA DE ESTADOS OPERATIVOS (Torre de Control)
+## 11. COLECCIONES FIRESTORE
 
-El admin puede ver en tiempo real el estado de cada médico/enfermera en `MonitorActividad`.
+Nombres en español de prod: **no renombrar**.
 
-**Estados posibles:** `disponible` | `ocupado` | `comida` | `administrativo` | `offline`
+### Clínico
+`pacientes`, `historial_clinico`, `citas`, `consultas` (legacy, p. ej. SUIVE), `estudios_previos`, `historico_embarazos`
 
-El estado se actualiza en Firestore `users/{uid}.statusOperativo` y se lee en tiempo real con listeners de Firestore.
+### Enfermería / ops clínicas
+`triage_enfermeria`, `notas_enfermeria`, `ordenes_enfermeria`, `bitacora_px_enfermeria`, `registros_krit`, `registros_autoclave`, `caducidades_almacen`, `bitacoras_operativas`, `bitacora_carro_rojo` + sub `/{sucursalId}/historial`
 
----
+### Catálogos
+`catalogo_sucursales`, `catalogo_consultorios`, `catalogo_especialidades`, `catalogo_motivos_consulta`, `catalogo_medicamentos`, `catalogo_estudios`, `catalogo_procedimientos`, `catalogo_procedimientos_enfermeria`, `catalogo_referencias_medicas`, `catalogo_sintomatologia`, `catalogo_sintomatologia_categorias`, `catalogo_plantillas_documentos`, `catalogo_documentos_capacitacion`, `catalogo_documentos_capacitacion_medicos`, `catalogo_pedido_medicamentos`, `catalogo_categorias_pedido`
 
-## 12. PATRONES Y CONVENCIONES DE CÓDIGO
+### Operaciones
+`users` (+ sub `documentos`), `inventario`, `horarios_bloqueados`, `asistencia_diaria`, `bitacorasLimpieza`, `auth_registro_permitido`
 
-- **Componentes funcionales** con hooks de React
-- **Tailwind CSS** para todos los estilos (sin CSS modules ni styled-components)
-- **No hay TypeScript** — Todo en JSX/JS
-- **Sin React Query/SWR** — Fetching directo con funciones de Firestore
-- **Modales con estado booleano** — Ej: `const [showModal, setShowModal] = useState(false)`
-- **Navegación con state** — `navigate('/ruta', { state: { datos } })`; se lee con `useLocation().state`
-- **`updateCampo(path, value)`** — Patrón de actualización profunda de estado por string de path
-- **Diseño visual:** Glassmorphism + Tailwind (bordes suaves, backdrop-blur, sombras suaves)
-- **Iconos:** `lucide-react` exclusivamente
+### Comunicación
+`canales` / `mensajes`, `chats_privados` / `mensajes`, `panic_alerts`
 
----
+### Compliance / share / auditoría
+`ssa_cuestionario`, `ssa_auditorias`, `encuestas_satisfaccion`, `expedientes_compartidos`, `patient_links`, `resumenes_homologados`, `pacientes_fusionados_log`, `auditoria_admin_usuarios`, `auditoria_movimientos_consultorio`, `auditoria_historial_migrado`, `auditoria_expediente_clinico` (servicio sin UI), `auditoria_password_resets` (solo CF)
 
-## 13. COSAS IMPORTANTES / DEUDA TÉCNICA CONOCIDA
+Reglas en repo: `firestore.rules`, `storage.rules` (verificar si ya están desplegadas).
 
-- `Consultorio.jsx` usa un inventario **mock** (datos locales hardcoded), no conectado a Firestore real
-- `src/services/` existen los archivos pero pueden estar **vacíos o sin implementar**
-- `Mensajeria.jsx` está en desarrollo, sin funcionalidad completa
-- La función IA tiene la **API Key de Gemini hardcodeada** en el código (deuda de seguridad)
-- El `AuthContext` no tiene **protección de rutas** (PrivateRoute) — cualquiera puede acceder a las rutas sin estar autenticado
-- El módulo `Pacientes` existe tanto en `pages/doctor/Pacientes.jsx` como en `shared/Pacientes.jsx`
+Storage (entre otros): `expedientes_compartidos/`, `expedientes/{pacienteId}/documentos/`, `chat_files/`, `estudios_previos/`, `capacitacion/`, `usuarios/`.
 
 ---
 
-## 14. COMANDOS DE DESARROLLO
+## 12. CLOUD FUNCTIONS (`functions/index.js`)
+
+Secretos: `GEMINI_API_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `GOOGLE_CALENDAR_*`. Nunca hardcodear.
+
+| Función | Tipo | Frontend |
+|---------|------|----------|
+| `askGemini` | onCall | Sí — consulta, resumen, capacitaciones, chat admin, registros |
+| `enviarWhatsAppNotificacion` | onCall | Sí — Agenda, AgendaEnfermeria |
+| `generarBoletinMedicoSeguro` | onCall | Sí — Agenda |
+| `analizarBitacora` | onCall | Sí — CapturaBitacora (página no montada; el callable existe) |
+| `crearUsuarioStaff` | onCall | Sí — Usuarios |
+| `resetUserPassword` | onCall | Sí — Usuarios |
+| `enviarEncuestaWhatsApp` | onCall | **No** (código comentado en ExpedienteClinico) |
+| `analizarMedicamento` | onCall | **No** |
+| `crearSesionMeet` | onCall | **No** |
+| `webhookWhatsApp` | HTTP | N/A |
+| `beforeUserCreatedBlockPublicSignup` | Auth blocking | N/A |
+
+---
+
+## 13. SERVICIOS (`src/services/`)
+
+**Cableados:** `permissionService`, `asistenciaService`, `patientSearchService`, `patientLinkService`, `patientMergeService`, `patientNameRepairService`, `migrationService`, `expedienteShareService`, `documentStorageService`, `nativePdfShare`, `enfermeriaPatientLogService`, `studyCatalogService`, `procedureCatalogService`, `symptomCatalogService`, `referenciaMedicaService`, `homologationService`, `speechDictationService`.
+
+**Muertos:** `clinicalAuditService` (0 imports UI), `patientMeiliSyncService` + `meilisearchClient` (sync no al CRUD), `authService.js` / `inventoryService.js` / `patientService.js` (archivos vacíos).
+
+---
+
+## 14. PDFs (`src/components/pdf/`)
+
+Expediente electrónico, historia, consentimiento, aviso de privacidad, cartas de buena salud (adulto/menor/genérica), pasaporte, DIF, COVID, dengue, influenza, antidoping, prenupciales, informe monitor.
+
+Plantillas dinámicas: `catalogo_plantillas_documentos` + `PlantillaDinamicaModal`.
+
+---
+
+## 15. PLATAFORMAS, DEPLOY, VERSIÓN
+
+- **Web:** `deploy.sh` → bump versión, `npm run build`, rsync a nodos Tailscale (`prometeo@…/srs-medic`), Docker (`Dockerfile.runtime`). Meilisearch en `100.95.63.70` (`docker compose --profile meili`).
+- **Android:** `ANDROID.md`. APK `releases/SRS-Medic.apk`. WebView apunta a `https://centromedicosantacruz.com`. Descarga: `/descargas/`.
+- **Tauri:** `src-tauri/` — wrapper desktop; versión propia en `tauri.conf.json`.
+- **Versión:** `package.json` → `__BUILD_VERSION__` + `public/version.json`. Cliente: `useAppVersion` (poll 2 min). Ver `VERSIONADO.md`.
+
+Comandos:
 
 ```bash
-npm run dev        # Inicia servidor de desarrollo (puerto 5173)
-npm run build      # Build de producción
-npm run lint       # Linting con ESLint
-
-# Firebase
-firebase deploy --only functions   # Deploy Cloud Functions
-firebase deploy                    # Deploy completo
-
-# Docker
-docker-compose up                  # Levanta con Docker (watchPolling activo)
+npm run dev          # Vite :5173
+npm run build
+npm run android:sync / android:apk / android:run
+./deploy.sh          # producción
 ```
 
 ---
 
-*Fin del documento de contexto. El proyecto está en desarrollo activo.*
+## 16. ARCHIVOS CRÍTICOS (cambios mínimos)
+
+- `src/shared/Agenda.jsx`
+- `src/pages/doctor/ExpedienteClinico.jsx`
+- `src/pages/admin/CatalogosGlobales.jsx`
+- `src/components/PlantillaDinamicaModal.jsx`
+- `src/App.jsx`
+
+Regla: no extraer/refactorizar salvo petición explícita. UI y comentarios en español (México). No inventar colecciones ni Cloud Functions.
+
+---
+
+## 17. INTEGRACIONES MUERTAS / DEUDA REAL
+
+- `analizarMedicamento`, `crearSesionMeet`: CF existen, UI no las llama
+- `enviarEncuestaWhatsApp`: CF existe; llamada en expediente **comentada**
+- Meili sync: servicio existe, no integrado al CRUD de pacientes
+- `docxtemplater` / `react-to-print`: en `package.json`; sin uso claro en `src/`
+- `clinicalAuditService`: escribe colección, nadie lo importa
+- Páginas en disco sin ruta: `Bienvenida`, `PortalAcceso`, `DashboardEnfermeria`, `DashboardIntendencia`, `CapturaBitacora`, `Consulta.jsx` vacío, `DashboardDoctor.jsx` vacío
+
+**Ya no aplica** (el `.md` viejo lo decía): inventario mock de Consultorio; servicios vacíos como único estado; ausencia de protección de rutas; API Key de Gemini hardcodeada (ahora `defineSecret`).
+
+---
+
+## 18. CONVENCIONES
+
+- Componentes funcionales + hooks
+- Tailwind + estilos inline/CSS variables (no unificar sin pedirlo)
+- Modales con boolean `useState`
+- Navegación con `navigate('/ruta', { state })` + `useLocation().state`
+- `onSnapshot` siempre con cleanup
+- Creates Firestore: preferir `serverTimestamp()`
+- Queries `in` / `__name__`: máximo 10 IDs por chunk
+
+---
+
+## 19. OTROS DOCS DEL REPO
+
+| Archivo | Uso |
+|---------|-----|
+| `AGENTS.md` | Cómo deben trabajar los agentes |
+| `.cursor/rules/medical-domain.mdc` | Dominio siempre activo |
+| `.cursor/skills/srs-medic-domain/` | Referencia extendida para agentes |
+| `VERSIONADO.md` | Poll de versión |
+| `ANDROID.md` | APK Capacitor |
+| `contextoproyecto.txt` | Puntero a este archivo (el dump de 16k líneas estaba desactualizado) |
+
+*Fin. Si el código y este documento discrepan, gana el código; actualiza este archivo.*

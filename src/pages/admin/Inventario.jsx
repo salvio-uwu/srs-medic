@@ -1,17 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Building2, ChevronDown, ChevronLeft, ChevronRight, Edit3,
-  Plus, RefreshCcw, Save, Search, ShieldAlert, Trash2, X
+  FileText, Plus, RefreshCcw, Save, Search, ShieldAlert, Trash2, X
 } from 'lucide-react';
 import {
   addDoc, collection, deleteDoc, doc, getDocs, query, where,
-  serverTimestamp, setDoc, updateDoc
+  serverTimestamp, setDoc, updateDoc, writeBatch
 } from 'firebase/firestore';
+import { pdf } from '@react-pdf/renderer';
 import { db } from '../../config/firebase';
 import useIsMobile from '../../hooks/useIsMobile';
+import EtiquetasAcomodoPDF from '../../components/pdf/EtiquetasAcomodoPDF';
 
 /* ─── constants ─── */
 const PAGE_SIZE = 30;
+const BATCH_LIMIT = 450;
 
 const EMPTY_FORM = {
   color: '#eab308', medicamento: '', grupo: '', sustanciaActiva: '',
@@ -68,6 +71,72 @@ const resolveUser = () => {
   } catch { return { uid: 'system', nombre: 'Sistema' }; }
 };
 
+/* ─── número de acomodo: parse / format / cascada ─── */
+/** 0 = permitido y repetible; el orden del anaquel (cascada) inicia en 1. */
+const parseAcomodo = (value) => {
+  const raw = String(value ?? '').trim().replace(/^#/, '');
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+const isOrderedAcomodo = (n) => n != null && n >= 1;
+
+const detectAcomodoWidth = (rows = []) => {
+  let width = 0;
+  rows.forEach((row) => {
+    const raw = String(row.numeroAcomodo ?? '').trim().replace(/^#/, '');
+    if (/^\d+$/.test(raw) && parseInt(raw, 10) >= 1) width = Math.max(width, raw.length);
+  });
+  return width || 3;
+};
+
+const formatAcomodo = (n, width = 3) => {
+  if (n === 0) return '0';
+  return String(n).padStart(Math.max(width, String(n).length), '0');
+};
+
+const acomodoUpdateFields = (formatted, user) => ({
+  numeroAcomodo: formatted,
+  'NUMERO ACOMODO': formatted,
+  'NUMERO DE ACOMODO': formatted,
+  updatedAt: serverTimestamp(),
+  updatedBy: user.uid,
+  updatedByName: user.nombre,
+});
+
+/** Desplaza en cascada solo acomodos >= 1. El 0 nunca participa. */
+const shiftAcomodos = async ({ rows, fromInclusive, toInclusive = Infinity, delta, excludeId = null, width = 3, user }) => {
+  if (!delta || !Number.isFinite(fromInclusive)) return 0;
+  const from = Math.max(1, fromInclusive);
+
+  const targets = rows
+    .map((row) => ({ id: row.id, n: parseAcomodo(row.numeroAcomodo) }))
+    .filter((row) => {
+      if (!row.id || row.id === excludeId || !isOrderedAcomodo(row.n)) return false;
+      if (row.n < from) return false;
+      if (Number.isFinite(toInclusive) && row.n > toInclusive) return false;
+      return true;
+    })
+    // Al subir: primero los más altos; al bajar: primero los más bajos (evita choques temporales)
+    .sort((a, b) => (delta > 0 ? b.n - a.n : a.n - b.n));
+
+  if (!targets.length) return 0;
+
+  for (let i = 0; i < targets.length; i += BATCH_LIMIT) {
+    const chunk = targets.slice(i, i + BATCH_LIMIT);
+    const batch = writeBatch(db);
+    chunk.forEach((row) => {
+      const next = row.n + delta;
+      if (next < 1) return;
+      batch.update(doc(db, 'catalogo_medicamentos', row.id), acomodoUpdateFields(formatAcomodo(next, width), user));
+    });
+    await batch.commit();
+  }
+
+  return targets.length;
+};
+
 /* ─── normalize from Firestore ─── */
 const normalize = (id, d = {}) => {
   const med = d.medicamento || d.nombreComercial || d['*NOMBRE COMERCIAL'] || '';
@@ -92,12 +161,14 @@ const normalize = (id, d = {}) => {
 };
 
 /* ─── build payload for Firestore ─── */
-const buildPayload = (f, user) => ({
+const buildPayload = (f, user, acomodoOverride = null) => {
+  const acomodoRaw = acomodoOverride != null ? acomodoOverride : (f.numeroAcomodo || '').trim();
+  return {
   medicamento: f.medicamento.trim(),
   medicamentoLower: f.medicamento.trim().toLowerCase(),
   grupo: f.grupo.trim(),
   sustanciaActiva: f.sustanciaActiva.trim(),
-  numeroAcomodo: (f.numeroAcomodo || '').trim(),
+  numeroAcomodo: acomodoRaw,
   presentacion: f.presentacion.trim(),
   dosis: f.dosis.trim(),
   indicacion: (f.indicacion || '').trim(),
@@ -125,10 +196,13 @@ const buildPayload = (f, user) => ({
   'OPCION 2': (f.opcion2 || '').trim(),
   'ADVERTENCIA ': (f.advertencia || '').trim(),
   EMBARAZO: (f.embarazo || '').trim(),
+  'NUMERO ACOMODO': acomodoRaw,
+  'NUMERO DE ACOMODO': acomodoRaw,
   updatedAt: serverTimestamp(),
   updatedBy: user.uid,
   updatedByName: user.nombre,
-});
+};
+};
 
 const trunc = (s, n = 20) => (!s ? '—' : s.length > n ? s.slice(0, n) + '…' : s);
 
@@ -160,6 +234,10 @@ const Inventario = () => {
 
   // delete confirm
   const [confirmDelete, setConfirmDelete] = useState(null);
+
+  // reacomodo confirm (popup limpio para usuario final)
+  const [confirmAcomodo, setConfirmAcomodo] = useState(null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   // modal tab + access control catalogs
   const [modalTab, setModalTab] = useState('general');
@@ -324,15 +402,130 @@ const Inventario = () => {
     });
   };
 
-  /* ── save ── */
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!form.medicamento.trim()) { setError('Medicamento es obligatorio.'); return; }
+  /* ── save (con reacomodo en cascada del N° de acomodo) ── */
+  const buildAcomodoPlan = () => {
+    const rows = allDocsRef.current;
+    const width = detectAcomodoWidth(rows);
+    const targetN = parseAcomodo(form.numeroAcomodo);
+    const oldN = editingId
+      ? parseAcomodo(rows.find((r) => r.id === editingId)?.numeroAcomodo)
+      : null;
+
+    let needsShift = false;
+    let mode = 'none'; // insert | moveForward | moveBack | clear | toZero
+
+    // 0 es repetible: no empuja a nadie. Si salía de un acomodo >= 1, sí se cierra el hueco.
+    if (targetN === 0) {
+      if (isOrderedAcomodo(oldN)) {
+        needsShift = rows.some((r) => {
+          if (r.id === editingId) return false;
+          const n = parseAcomodo(r.numeroAcomodo);
+          return isOrderedAcomodo(n) && n > oldN;
+        });
+        mode = needsShift ? 'toZero' : 'none';
+      }
+    } else if (isOrderedAcomodo(targetN)) {
+      if (!editingId || !isOrderedAcomodo(oldN)) {
+        // Alta o venir desde 0/vacío hacia un lugar del anaquel
+        needsShift = rows.some((r) => {
+          if (r.id === editingId) return false;
+          const n = parseAcomodo(r.numeroAcomodo);
+          return isOrderedAcomodo(n) && n >= targetN;
+        });
+        mode = needsShift ? 'insert' : 'none';
+      } else if (targetN < oldN) {
+        needsShift = rows.some((r) => {
+          if (r.id === editingId) return false;
+          const n = parseAcomodo(r.numeroAcomodo);
+          return isOrderedAcomodo(n) && n >= targetN && n < oldN;
+        });
+        mode = needsShift ? 'moveForward' : 'none';
+      } else if (targetN > oldN) {
+        needsShift = rows.some((r) => {
+          if (r.id === editingId) return false;
+          const n = parseAcomodo(r.numeroAcomodo);
+          return isOrderedAcomodo(n) && n > oldN && n <= targetN;
+        });
+        mode = needsShift ? 'moveBack' : 'none';
+      }
+    } else if (editingId && isOrderedAcomodo(oldN)) {
+      // Campo vacío: sale del anaquel ordenado
+      needsShift = rows.some((r) => {
+        if (r.id === editingId) return false;
+        const n = parseAcomodo(r.numeroAcomodo);
+        return isOrderedAcomodo(n) && n > oldN;
+      });
+      mode = needsShift ? 'clear' : 'none';
+    }
+
+    const posLabel = targetN != null ? formatAcomodo(targetN, width) : '';
+    let title = 'Actualizar orden del anaquel';
+    let message = '';
+    let detail = '';
+
+    if (mode === 'insert') {
+      title = 'Este número ya está en uso';
+      message = `El número #${posLabel} ya pertenece a otro medicamento. Si continúas, este medicamento ocupará ese lugar.`;
+      detail = 'Los medicamentos que estaban en esa posición o después recibirán un número nuevo de forma automática, para mantener el orden del anaquel.';
+    } else if (mode === 'moveForward') {
+      title = 'Cambiar número de acomodo';
+      message = `Este medicamento pasará a ocupar el número #${posLabel}.`;
+      detail = 'Los que estaban en medio se correrán un lugar para abrirle espacio.';
+    } else if (mode === 'moveBack') {
+      title = 'Cambiar número de acomodo';
+      message = `Este medicamento pasará a ocupar el número #${posLabel}.`;
+      detail = 'Los números intermedios se ajustarán solos para no dejar huecos.';
+    } else if (mode === 'toZero') {
+      title = 'Pasar a acomodo 0';
+      message = 'Este medicamento quedará con número 0. Puedes tener varios medicamentos con 0 al mismo tiempo.';
+      detail = 'El lugar que ocupaba en el anaquel (desde 1) se cerrará y los siguientes números se ajustarán solos.';
+    } else if (mode === 'clear') {
+      title = 'Quitar número de acomodo';
+      message = 'Se quitará el número de acomodo de este medicamento.';
+      detail = 'Los siguientes en el anaquel se ajustarán para no dejar un espacio vacío.';
+    }
+
+    return { rows, width, targetN, oldN, needsShift, mode, title, message, detail };
+  };
+
+  const executeSave = async (plan) => {
+    const user = resolveUser();
+    const { rows, width, targetN, oldN } = plan;
+    const formattedAcomodo = targetN != null ? formatAcomodo(targetN, width) : '';
+    const payload = buildPayload(form, user, formattedAcomodo);
+
     setSaving(true);
     setError('');
-    const user = resolveUser();
-    const payload = buildPayload(form, user);
+    setConfirmAcomodo(null);
+
     try {
+      if (targetN === 0) {
+        // Sale del anaquel ordenado hacia 0 (repetible)
+        if (isOrderedAcomodo(oldN)) {
+          await shiftAcomodos({
+            rows, fromInclusive: oldN + 1, delta: -1, excludeId: editingId, width, user,
+          });
+        }
+      } else if (isOrderedAcomodo(targetN)) {
+        if (!editingId || !isOrderedAcomodo(oldN)) {
+          await shiftAcomodos({
+            rows, fromInclusive: targetN, delta: 1, excludeId: editingId, width, user,
+          });
+        } else if (targetN < oldN) {
+          await shiftAcomodos({
+            rows, fromInclusive: targetN, toInclusive: oldN - 1, delta: 1, excludeId: editingId, width, user,
+          });
+        } else if (targetN > oldN) {
+          await shiftAcomodos({
+            rows, fromInclusive: oldN + 1, toInclusive: targetN, delta: -1, excludeId: editingId, width, user,
+          });
+        }
+      } else if (editingId && isOrderedAcomodo(oldN)) {
+        await shiftAcomodos({
+          rows, fromInclusive: oldN + 1, delta: -1, excludeId: editingId, width, user,
+        });
+      }
+
       if (editingId) {
         await setDoc(doc(db, 'catalogo_medicamentos', editingId), payload, { merge: true });
       } else {
@@ -349,10 +542,27 @@ const Inventario = () => {
       await fetchPage(true);
     } catch (err) {
       console.error(err);
-      setError('No se pudo guardar. Verifica permisos.');
+      setError('No se pudo guardar. Revisa tu conexión o permisos e intenta de nuevo.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!form.medicamento.trim()) { setError('El nombre del medicamento es obligatorio.'); return; }
+
+    if (String(form.numeroAcomodo || '').trim() && parseAcomodo(form.numeroAcomodo) == null) {
+      setError('El número de acomodo debe ser 0 o un entero positivo (por ejemplo: 0, 1, 6).');
+      return;
+    }
+
+    const plan = buildAcomodoPlan();
+    if (plan.needsShift) {
+      setConfirmAcomodo(plan);
+      return;
+    }
+    await executeSave(plan);
   };
 
   /* ── toggle activo ── */
@@ -373,10 +583,28 @@ const Inventario = () => {
     }
   };
 
-  /* ── delete ── */
+  /* ── delete (cierra hueco de acomodo) ── */
   const handleDelete = async (id) => {
     try {
+      const user = resolveUser();
+      const rows = allDocsRef.current;
+      const width = detectAcomodoWidth(rows);
+      const deletedN = parseAcomodo(rows.find((r) => r.id === id)?.numeroAcomodo);
+
       await deleteDoc(doc(db, 'catalogo_medicamentos', id));
+
+      // Solo cerrar hueco si salía del anaquel ordenado (>= 1). El 0 no mueve a nadie.
+      if (isOrderedAcomodo(deletedN)) {
+        await shiftAcomodos({
+          rows,
+          fromInclusive: deletedN + 1,
+          delta: -1,
+          excludeId: id,
+          width,
+          user,
+        });
+      }
+
       setConfirmDelete(null);
       if (selectedMed?.id === id) setSelectedMed(null);
       await fetchPage(true);
@@ -412,6 +640,42 @@ const Inventario = () => {
     );
   }, [doctors, accessQuery]);
 
+  /* ── PDF etiquetas de acomodo ── */
+  const handleGenerarDocumentoAcomodo = async () => {
+    const items = allDocsRef.current
+      .filter((m) => m.activo !== false && isOrderedAcomodo(parseAcomodo(m.numeroAcomodo)))
+      .slice()
+      .sort((a, b) => {
+        const na = parseAcomodo(a.numeroAcomodo);
+        const nb = parseAcomodo(b.numeroAcomodo);
+        if (na !== nb) return na - nb;
+        return String(a.medicamento || '').localeCompare(String(b.medicamento || ''), 'es');
+      });
+
+    if (!items.length) {
+      setError('No hay medicamentos activos con número de acomodo desde 1 para generar el documento.');
+      return;
+    }
+
+    setGeneratingPdf(true);
+    setError('');
+    try {
+      const blob = await pdf(<EtiquetasAcomodoPDF medicamentos={items} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `Documento_Acomodo_${stamp}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      setError('No se pudo generar el documento de acomodo. Intenta de nuevo.');
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
   /* ═══════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════ */
@@ -429,12 +693,21 @@ const Inventario = () => {
             Gestion, altas, bajas y control del catalogo de medicamentos.
           </p>
         </div>
-        <button type="button"
-          style={{ border: '1px solid #111', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 700, color: '#fff', background: '#111', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          onClick={openNew}>
-          <Plus size={14} />
-          Nuevo medicamento
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <button type="button"
+            disabled={generatingPdf}
+            style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 14px', fontSize: 12, fontWeight: 700, color: '#111', background: '#fff', cursor: generatingPdf ? 'not-allowed' : 'pointer', opacity: generatingPdf ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            onClick={handleGenerarDocumentoAcomodo}>
+            <FileText size={14} />
+            {generatingPdf ? 'Generando…' : 'Generar documento de acomodo'}
+          </button>
+          <button type="button"
+            style={{ border: '1px solid #111', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 700, color: '#fff', background: '#111', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            onClick={openNew}>
+            <Plus size={14} />
+            Nuevo medicamento
+          </button>
+        </div>
       </div>
 
       {/* ── ERROR ── */}
@@ -751,8 +1024,16 @@ const Inventario = () => {
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>N° de acomodo</label>
-                      <input style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
-                        value={form.numeroAcomodo} onChange={e => setForm(p => ({ ...p, numeroAcomodo: e.target.value }))} />
+                      <input
+                        style={{ width: '100%', padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, outline: 'none', color: '#111', boxSizing: 'border-box' }}
+                        inputMode="numeric"
+                        placeholder="Ej. 6"
+                        value={form.numeroAcomodo}
+                        onChange={e => setForm(p => ({ ...p, numeroAcomodo: e.target.value.replace(/[^\d]/g, '') }))}
+                      />
+                      <p style={{ fontSize: 10, color: '#6b7280', margin: '4px 0 0', lineHeight: 1.35 }}>
+                        El 0 se puede repetir en varios medicamentos. El orden del anaquel inicia en 1: si ese número ya está ocupado, el sistema reordena los siguientes automáticamente.
+                      </p>
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Presentacion</label>
@@ -898,7 +1179,7 @@ const Inventario = () => {
               </div>
               <div>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: '#111', margin: 0 }}>Eliminar medicamento</h3>
-                <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>Esta accion no se puede deshacer.</p>
+                <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>Esta acción no se puede deshacer. Si tenía número de acomodo, el orden del anaquel se ajustará solo.</p>
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -909,6 +1190,48 @@ const Inventario = () => {
               <button onClick={() => handleDelete(confirmDelete)}
                 style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #111', color: '#fff', background: '#111', cursor: 'pointer', fontWeight: 700 }}>
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ REACOMODO CONFIRM ═══ */}
+      {confirmAcomodo && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #e5e7eb', width: '100%', maxWidth: 420, padding: 22, display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.12)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <RefreshCcw size={18} style={{ color: '#111' }} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: '#111', margin: 0 }}>{confirmAcomodo.title}</h3>
+                <p style={{ fontSize: 13, color: '#374151', margin: '8px 0 0', lineHeight: 1.45 }}>
+                  {confirmAcomodo.message}
+                </p>
+                {confirmAcomodo.detail && (
+                  <p style={{ fontSize: 12, color: '#6b7280', margin: '8px 0 0', lineHeight: 1.45 }}>
+                    {confirmAcomodo.detail}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4 }}>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setConfirmAcomodo(null)}
+                style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #d1d5db', color: '#6b7280', background: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => executeSave(confirmAcomodo)}
+                style={{ padding: '8px 16px', fontSize: 12, borderRadius: 6, border: '1px solid #111', color: '#fff', background: '#111', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1, fontWeight: 700 }}
+              >
+                {saving ? 'Guardando...' : 'Continuar'}
               </button>
             </div>
           </div>

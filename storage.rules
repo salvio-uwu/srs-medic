@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Auth de personal. Signup público y anónimo están bloqueados en Auth/Functions;
+    // no usar firestore.get/exists aquí: en este proyecto niegan uploads legítimos
+    // (storage/unauthorized) aunque el usuario sí lea Firestore con el mismo uid.
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // PDFs compartidos: sin lectura pública directa (alt=media).
+    // Los enlaces QR siguen funcionando vía URL firmada (token=), que no usa estas reglas.
+    match /expedientes_compartidos/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /expedientes/{pacienteId}/documentos/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /chat_files/{chatId}/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /chat_stickers/{userId}/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /usuarios/{userId}/{path=**} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+
+    match /estudios_previos/{pacienteId}/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /capacitacion/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /ssa_auditorias/{auditId}/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    match /bitacoras_limpieza/{path=**} {
+      allow read, write: if isAuth();
+    }
+
+    match /pacientes/{fileName} {
+      allow read, write: if isAuth();
+    }
+
+    // Deny-by-default: bloquea listado/descarga anónima del bucket (Strix vuln-0001).
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

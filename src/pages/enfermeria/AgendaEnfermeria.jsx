@@ -24,6 +24,11 @@ import CustomDropdown from '../../components/CustomDropdown';
 import { PAYMENT_METHOD_OPTIONS } from '../../services/enfermeriaPatientLogService';
 import EstadoPacienteBadge from '../../components/EstadoPacienteBadge';
 import { getEstadoDetallado } from '../../utils/citaStatus';
+import {
+  pacienteHaVenidoAConsulta,
+  resolverTipoConsultaConHistorial,
+} from '../../utils/tipoConsultaPaciente';
+import { reportFirebasePermissionError } from '../../utils/firebaseErrors';
 import useIsMobile from '../../hooks/useIsMobile';
 
 const formatDateLabel = (dateValue, options = { day: '2-digit', month: 'short', year: 'numeric' }) => {
@@ -207,6 +212,7 @@ const AgendaEnfermeria = () => {
     tipoConsulta: 'Primera vez', formaPago: '',
     enfermeroAsignadoId: '', enfermeroAsignadoNombre: ''
   });
+  const [tipoConsultaDetectado, setTipoConsultaDetectado] = useState(false);
 
   // --- ESTADOS DE UI (Toasts y Alertas) ---
   const [toast, setToast] = useState({ show: false, msg: '', type: 'error' });
@@ -449,38 +455,28 @@ const AgendaEnfermeria = () => {
     }, [currentDate]);
 
     useEffect(() => {
-        const qDocs = query(collection(db, "users"), where("rol", "in", ["medico", "doctor"]));
-        const unsub = onSnapshot(qDocs, (snap) => {
-            const medicosActivos = snap.docs
-                .map((d) => ({ id: d.id, ...d.data() }))
-                .filter((item) => item.activo !== false);
-            setDoctores(medicosActivos);
-        }, () => {});
-
-        return () => unsub();
-    }, []);
-
-    useEffect(() => {
-        const qMotivos = query(collection(db, "catalogo_motivos_consulta"), orderBy("nombre", "asc"));
-        const qConsultorios = query(collection(db, "catalogo_consultorios"), orderBy("nombre", "asc"));
-        const qSucursales = query(collection(db, "catalogo_sucursales"), orderBy("nombre", "asc"));
-
-        const unsub1 = onSnapshot(qMotivos, (snap) => {
-            setCatalogoMotivos(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false).sort((a, b) => (b.usoCount || 0) - (a.usoCount || 0) || (a.nombre || '').localeCompare(b.nombre || '')));
-        }, () => {});
-        const unsub2 = onSnapshot(qConsultorios, (snap) => {
-            setConsultorios(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
-        }, () => {});
-        const unsub3 = onSnapshot(qSucursales, (snap) => {
-            setCatalogoSucursales(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
-        }, () => {});
-
-        const qEnfermeros = query(collection(db, 'users'), where('rol', 'in', ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']));
-        const unsub4 = onSnapshot(qEnfermeros, (snap) => {
-            setEnfermeros(snap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id })).filter((item) => item.nombre));
-        }, () => {});
-
-        return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+        let cancelled = false;
+        const cargarCatalogos = async () => {
+            try {
+                const [docsSnap, motivosSnap, consultoriosSnap, sucursalesSnap, enfermerosSnap] = await Promise.all([
+                    getDocs(query(collection(db, 'users'), where('rol', 'in', ['medico', 'doctor']))),
+                    getDocs(query(collection(db, 'catalogo_motivos_consulta'), orderBy('nombre', 'asc'))),
+                    getDocs(query(collection(db, 'catalogo_consultorios'), orderBy('nombre', 'asc'))),
+                    getDocs(query(collection(db, 'catalogo_sucursales'), orderBy('nombre', 'asc'))),
+                    getDocs(query(collection(db, 'users'), where('rol', 'in', ['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']))),
+                ]);
+                if (cancelled) return;
+                setDoctores(docsSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
+                setCatalogoMotivos(motivosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false).sort((a, b) => (b.usoCount || 0) - (a.usoCount || 0) || (a.nombre || '').localeCompare(b.nombre || '')));
+                setConsultorios(consultoriosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
+                setCatalogoSucursales(sucursalesSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((item) => item.activo !== false));
+                setEnfermeros(enfermerosSnap.docs.map((d) => ({ id: d.id, nombre: d.data().nombre || d.data().email || d.id })).filter((item) => item.nombre));
+            } catch (err) {
+                if (!cancelled) console.warn('Catálogos agenda enfermería no disponibles:', err?.message || err);
+            }
+        };
+        cargarCatalogos();
+        return () => { cancelled = true; };
     }, []);
 
     /* ── HORARIOS BLOQUEADOS POR DOCTORES (TIEMPO REAL) ── */
@@ -720,9 +716,24 @@ const AgendaEnfermeria = () => {
     setShowPacienteModal(false);
   };
 
-  const seleccionarPaciente = (p) => {
+  const seleccionarPaciente = async (p) => {
     setNuevaCita(prev => ({ ...prev, paciente: p.nombre, pacienteId: p.id, pacienteTelefono: p.telefono }));
     setMostrarSugerencias(false);
+    setTipoConsultaDetectado(false);
+    try {
+      const haVenido = await pacienteHaVenidoAConsulta(p.id);
+      if (!haVenido) return;
+      setNuevaCita((prev) => {
+        if (prev.pacienteId !== p.id) return prev;
+        return {
+          ...prev,
+          tipoConsulta: resolverTipoConsultaConHistorial(prev.tipoConsulta, true, 'label'),
+        };
+      });
+      setTipoConsultaDetectado(true);
+    } catch (err) {
+      console.warn('No se pudo detectar tipo de consulta:', err);
+    }
   };
 
   const iniciarAgendado = (slot) => {
@@ -875,6 +886,13 @@ const handleGuardarCita = async (e) => {
             return;
         }
 
+        const haVenido = await pacienteHaVenidoAConsulta(nuevaCita.pacienteId);
+        const tipoConsultaFinal = resolverTipoConsultaConHistorial(nuevaCita.tipoConsulta, haVenido, 'label');
+        if (tipoConsultaFinal !== nuevaCita.tipoConsulta) {
+            setTipoConsultaDetectado(true);
+            showToast('Se marcó como subsecuente: el paciente ya tiene consulta previa.', 'info');
+        }
+
         const motivoData = catalogoMotivos.find((m) => m.id === nuevaCita.motivoId) || catalogoMotivos.find((m) => m.nombre === nuevaCita.motivo);
         const consultorioData = consultorios.find((c) => c.id === nuevaCita.consultorioId) || consultorios.find((c) => c.nombre === nuevaCita.consultorio);
                 const sucursalData = catalogoSucursales.find((s) => s.id === nuevaCita.sucursalId)
@@ -898,6 +916,7 @@ const handleGuardarCita = async (e) => {
 
                 const payloadBase = {
           ...nuevaCita,
+          tipoConsulta: tipoConsultaFinal,
           motivo: motivoData?.nombre || nuevaCita.motivo,
           motivoId: motivoData?.id || nuevaCita.motivoId || '',
           motivoPrecio: Number(motivoData?.precio || 0),
@@ -994,6 +1013,7 @@ const handleGuardarCita = async (e) => {
                     enfermeroAsignadoId: '',
                     enfermeroAsignadoNombre: ''
         });
+        setTipoConsultaDetectado(false);
         } catch (e) { 
         console.error(e); 
         showToast("Error al guardar la cita en el servidor", "error"); 
@@ -1320,7 +1340,14 @@ const handleGuardarCita = async (e) => {
             setHistorialDocumentosRefresh((prev) => prev + 1);
         } catch (e) {
             console.error('Error al cargar estudio:', e);
-            showToast('Error al cargar el estudio. Intenta de nuevo.', 'error');
+            reportFirebasePermissionError(e, { source: 'agenda-enfermeria-upload-estudio' });
+            const detalle = e?.code || e?.message || '';
+            showToast(
+              detalle
+                ? `Error al cargar el estudio (${detalle}). Intenta de nuevo.`
+                : 'Error al cargar el estudio. Intenta de nuevo.',
+              'error'
+            );
         }
         setUploadingEstudio(false);
     };
@@ -2311,6 +2338,7 @@ const handleGuardarCita = async (e) => {
                                     value={nuevaCita.paciente}
                                     onChange={(e) => {
                                         setNuevaCita({...nuevaCita, paciente: e.target.value, pacienteId: '', pacienteTelefono: ''});
+                                        setTipoConsultaDetectado(false);
                                         const txt = e.target.value.toLowerCase().trim();
                                         if(txt.length > 1) {
                                             fetchPacientesSugerencias(txt);
@@ -2516,10 +2544,18 @@ const handleGuardarCita = async (e) => {
                                     { value: 'Subsecuente', label: 'Subsecuente' }
                                 ]}
                                 value={nuevaCita.tipoConsulta}
-                                onChange={val => setNuevaCita({...nuevaCita, tipoConsulta: val})}
+                                onChange={val => {
+                                    setTipoConsultaDetectado(false);
+                                    setNuevaCita({...nuevaCita, tipoConsulta: val});
+                                }}
                                 placeholder="Seleccionar tipo..."
                                 inputStyle={inputStyle}
                             />
+                            {tipoConsultaDetectado && nuevaCita.tipoConsulta === 'Subsecuente' && (
+                                <p className="mt-1.5 text-[11px] font-semibold text-emerald-700">
+                                    Detectado automáticamente: el paciente ya tiene consulta previa.
+                                </p>
+                            )}
                         </div>
                     </div>
 
