@@ -28,6 +28,7 @@ import {
   pacienteHaVenidoAConsulta,
   resolverTipoConsultaConHistorial,
 } from '../../utils/tipoConsultaPaciente';
+import { openAppRoute, encodeRoute } from '../../utils/routeObfuscator';
 import { reportFirebasePermissionError } from '../../utils/firebaseErrors';
 import useIsMobile from '../../hooks/useIsMobile';
 
@@ -970,7 +971,8 @@ const handleGuardarCita = async (e) => {
 
                 // Redirigir la pestaña a la orden de servicio cuando se tenga el ID
                 if (esCitaEnfermeria && ordenWindow) {
-                    ordenWindow.location.href = `/enfermeria/orden-servicio?citaId=${citaRef.id}`;
+                    ordenWindow.location.href = encodeRoute(`/enfermeria/orden-servicio/${citaRef.id}?citaId=${citaRef.id}`);
+                    try { sessionStorage.setItem('srs:ordenServicioCitaId', citaRef.id); } catch { /* ignore */ }
                 }
 
                 if (nuevaCita.esTeleconsulta && nuevaCita.pacienteTelefono) {
@@ -2697,8 +2699,12 @@ const handleGuardarCita = async (e) => {
                                     )}
                                     {selectedCita.esCitaEnfermeria && (
                                         <button onClick={() => {
-                                            const qs = new URLSearchParams({ citaId: selectedCita.id });
-                                            window.open(`/enfermeria/orden-servicio?${qs.toString()}`, '_blank');
+                                            const id = String(selectedCita.id || '').trim();
+                                            if (!id) return;
+                                            openAppRoute(`/enfermeria/orden-servicio/${encodeURIComponent(id)}?citaId=${encodeURIComponent(id)}`, {
+                                              storageKey: 'srs:ordenServicioCitaId',
+                                              storageValue: id,
+                                            });
                                         }} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d1d5db', background: '#fff', color: '#111', fontSize: '10px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                             <Syringe size={11} /> {(selectedCita.ordenEnfermeriaGenerada || selectedCita.ordenEnfermeriaId) ? 'Editar hoja' : 'Hoja de servicio'}
                                         </button>

@@ -13,11 +13,12 @@
 const SKIP_PREFIXES = ['/login', '/portal', '/inicio', '/compartido'];
 
 const shouldObfuscate = (pathname) => {
-  if (pathname === '/' || pathname === '') return false;
-  return !SKIP_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  const pathOnly = String(pathname || '').split(/[?#]/)[0];
+  if (pathOnly === '/' || pathOnly === '') return false;
+  return !SKIP_PREFIXES.some((prefix) => pathOnly.startsWith(prefix));
 };
 
-// Codifica una ruta interna a su representacion publica
+// Codifica una ruta interna (pathname + search + hash) a su representacion publica
 export const encodeRoute = (internalPath) => {
   if (!shouldObfuscate(internalPath)) return internalPath;
   const encoded = btoa(unescape(encodeURIComponent(internalPath)))
@@ -27,17 +28,53 @@ export const encodeRoute = (internalPath) => {
   return '/app/' + encoded;
 };
 
-// Decodifica una ruta publica a su ruta interna original
+/**
+ * Decodifica una ruta publica a su ruta interna original.
+ * Soporta query/hash fuera del segmento ofuscado (legacy) y query embebida en el payload.
+ */
 export const decodeRoute = (publicPath) => {
   if (!publicPath || !publicPath.startsWith('/app/')) return publicPath;
-  const encoded = publicPath.slice(5);
+  const withoutApp = publicPath.slice(5);
+  const suffixMatch = withoutApp.match(/[?#].*$/);
+  const encoded = suffixMatch ? withoutApp.slice(0, suffixMatch.index) : withoutApp;
+  const externalSuffix = suffixMatch ? suffixMatch[0] : '';
+
   let base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
   while (base64.length % 4) base64 += '=';
   try {
-    return decodeURIComponent(escape(atob(base64)));
+    const decoded = decodeURIComponent(escape(atob(base64)));
+    if (!decoded.startsWith('/')) return publicPath;
+    // Si el payload ya trae ?/#, ignorar suffix externo duplicado
+    if (externalSuffix && !decoded.includes('?') && !decoded.includes('#')) {
+      return decoded + externalSuffix;
+    }
+    return decoded;
   } catch {
     return publicPath;
   }
+};
+
+/**
+ * Abre una ruta interna de la app en pestaña nueva, ofuscada y con respaldo de sessionStorage.
+ * Evita perder query params (p. ej. citaId en orden de servicio).
+ */
+export const openAppRoute = (internalPath, { storageKey, storageValue } = {}) => {
+  const path = String(internalPath || '').trim();
+  if (!path.startsWith('/')) return null;
+  if (storageKey && storageValue != null) {
+    try {
+      sessionStorage.setItem(storageKey, String(storageValue));
+    } catch {
+      // sessionStorage puede fallar en modo privado
+    }
+  }
+  const target = encodeRoute(path);
+  const win = window.open(target, '_blank', 'noopener,noreferrer');
+  if (!win) {
+    // Popup bloqueado: navegar en la misma pestaña
+    window.location.assign(target);
+  }
+  return win;
 };
 
 /**

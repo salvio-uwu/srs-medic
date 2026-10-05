@@ -25,6 +25,7 @@ import {
   pacienteHaVenidoAConsulta,
   resolverTipoConsultaConHistorial,
 } from '../utils/tipoConsultaPaciente';
+import { openAppRoute, encodeRoute } from '../utils/routeObfuscator';
 
 const NOTICIAS_FALLBACK = [
   {
@@ -3176,7 +3177,8 @@ const Agenda = () => {
 
       // Si es cita de enfermería, redirigir la pestaña ya abierta a la orden de servicio
       if (esCitaEnfermeria && ordenWindow) {
-        ordenWindow.location.href = `/enfermeria/orden-servicio?citaId=${citaRef.id}`;
+        ordenWindow.location.href = encodeRoute(`/enfermeria/orden-servicio/${citaRef.id}?citaId=${citaRef.id}`);
+        try { sessionStorage.setItem('srs:ordenServicioCitaId', citaRef.id); } catch { /* ignore */ }
       }
 
       // Cerrar modal y resetear formulario inmediatamente
@@ -5069,7 +5071,14 @@ const Agenda = () => {
                         {/* Abrir Orden Enfermeria */}
                         {selectedCita.esCitaEnfermeria && (
                           <button
-                            onClick={() => window.open(`/enfermeria/orden-servicio?citaId=${selectedCita.id}`, '_blank')}
+                            onClick={() => {
+                              const id = String(selectedCita.id || '').trim();
+                              if (!id) return;
+                              openAppRoute(`/enfermeria/orden-servicio/${encodeURIComponent(id)}?citaId=${encodeURIComponent(id)}`, {
+                                storageKey: 'srs:ordenServicioCitaId',
+                                storageValue: id,
+                              });
+                            }}
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: 14, border: '1px solid #a7f3d0', background: '#ecfdf5', cursor: 'pointer', transition: 'all .15s', textAlign: 'center' }}
                           >
                             <div style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#d1fae5', color: '#059669' }}><ClipboardList size={16}/></div>

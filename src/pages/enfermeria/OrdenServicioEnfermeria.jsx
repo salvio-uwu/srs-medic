@@ -4,7 +4,7 @@ import {
   Activity, Hash, ClipboardList, AlertCircle,
   CheckCircle, Stethoscope, Package, ChevronLeft
 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useParams } from 'react-router-dom';
 import { db } from '../../config/firebase';
 import {
   doc, getDoc, addDoc, updateDoc, collection, serverTimestamp
@@ -12,6 +12,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 
 const VIA_OPTIONS = ['Intramuscular', 'Intravenosa', 'Oral', 'Subcutánea', 'Tópica', 'Inhalatoria', 'Sublingual', 'Otra'];
+const ORDEN_CITA_STORAGE_KEY = 'srs:ordenServicioCitaId';
 
 const SIGNOS_CAMPOS = [
   { key: 'ta', label: 'T/A (mmHg)', placeholder: '120/80' },
@@ -24,10 +25,37 @@ const SIGNOS_CAMPOS = [
   { key: 'talla', label: 'Talla (m)', placeholder: '1.70' },
 ];
 
+const readCitaIdFromHash = () => {
+  if (typeof window === 'undefined') return '';
+  const raw = String(window.location.hash || '').replace(/^#/, '');
+  if (!raw) return '';
+  try {
+    return new URLSearchParams(raw).get('citaId') || '';
+  } catch {
+    const m = raw.match(/(?:^|&)citaId=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+};
+
 const OrdenServicioEnfermeria = () => {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
-  const citaId = useMemo(() => searchParams.get('citaId') || '', [searchParams]);
+  const params = useParams();
+  const citaId = useMemo(() => {
+    const fromSearch = String(searchParams.get('citaId') || '').trim();
+    if (fromSearch && fromSearch !== 'undefined' && fromSearch !== 'null') return fromSearch;
+    const fromPath = String(params.citaId || '').trim();
+    if (fromPath && fromPath !== 'undefined' && fromPath !== 'null') return fromPath;
+    const fromHash = String(readCitaIdFromHash() || '').trim();
+    if (fromHash) return fromHash;
+    try {
+      const fromSession = String(sessionStorage.getItem(ORDEN_CITA_STORAGE_KEY) || '').trim();
+      if (fromSession) return fromSession;
+    } catch {
+      // ignore
+    }
+    return '';
+  }, [searchParams, params.citaId]);
 
   const [cita, setCita] = useState(null);
   const [ordenId, setOrdenId] = useState('');

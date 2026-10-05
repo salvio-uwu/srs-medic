@@ -277,7 +277,8 @@ service cloud.firestore {
     // ── Operaciones ──────────────────────────────────────────────────────
     match /inventario/{docId} {
       allow read: if isStaff();
-      allow write: if isAdminRole() || isJefaturaRole();
+      // Enfermería de piso integra entradas aprobadas a su sucursal (además de jefatura/admin)
+      allow write: if isAdminRole() || isJefaturaRole() || isEnfermeriaRole();
     }
 
     match /bitacorasLimpieza/{docId} {

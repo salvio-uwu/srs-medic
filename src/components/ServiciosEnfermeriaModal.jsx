@@ -6,6 +6,9 @@ import {
 import { db } from '../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import EstadoPacienteBadge from './EstadoPacienteBadge';
+import { openAppRoute } from '../utils/routeObfuscator';
+
+const ORDEN_CITA_STORAGE_KEY = 'srs:ordenServicioCitaId';
 
 const toInputDateValue = (date) => {
   const d = date instanceof Date ? date : new Date(date);
@@ -92,8 +95,12 @@ const ServiciosEnfermeriaModal = ({
   if (!open) return null;
 
   const abrirHoja = (cita) => {
-    const qs = new URLSearchParams({ citaId: cita.id });
-    window.open(`/enfermeria/orden-servicio?${qs.toString()}`, '_blank');
+    const id = String(cita?.id || '').trim();
+    if (!id) return;
+    openAppRoute(`/enfermeria/orden-servicio/${encodeURIComponent(id)}?citaId=${encodeURIComponent(id)}`, {
+      storageKey: ORDEN_CITA_STORAGE_KEY,
+      storageValue: id,
+    });
   };
 
   return (

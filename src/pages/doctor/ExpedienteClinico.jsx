@@ -472,6 +472,97 @@ const parseFirestoreDate = (rawValue) => {
   return null;
 };
 
+const CAMPOS_SIGNOS_TRIAGE = ['ta', 'temp', 'fc', 'fr', 'spo2', 'glucosa', 'peso', 'talla', 'imc'];
+const CAMPOS_ANTRO_TRIAGE = ['peso', 'talla', 'imc'];
+
+const valorSignoTriage = (value) => String(value ?? '').trim();
+
+const aplicarCampoTriageSiNoEditado = (actual, lastSynced, incoming) => {
+  const incomingStr = valorSignoTriage(incoming);
+  if (!incomingStr) return actual;
+  const actualStr = valorSignoTriage(actual);
+  if (!actualStr) return incoming;
+  if (actualStr === valorSignoTriage(lastSynced)) return incoming;
+  return actual;
+};
+
+const aplicarSignosTriageAExpediente = (prevExpediente, incomingSv = {}, lastSynced = {}) => {
+  const exploracionPrev = prevExpediente?.consulta?.exploracion || {};
+  const signosActuales = exploracionPrev.signos || {};
+  const antropometriaActual = exploracionPrev.antropometria || {};
+  const listaGluActual = exploracionPrev.glucosa?.lista || [];
+
+  const nextSignos = { ...signosActuales };
+  CAMPOS_SIGNOS_TRIAGE.forEach((campo) => {
+    nextSignos[campo] = aplicarCampoTriageSiNoEditado(signosActuales[campo], lastSynced[campo], incomingSv[campo]);
+  });
+
+  const nextAntropometria = { ...antropometriaActual };
+  CAMPOS_ANTRO_TRIAGE.forEach((campo) => {
+    nextAntropometria[campo] = aplicarCampoTriageSiNoEditado(antropometriaActual[campo], lastSynced[campo], incomingSv[campo]);
+  });
+
+  let nextGlucosaLista = listaGluActual;
+  const glucosaIncoming = valorSignoTriage(incomingSv.glucosa);
+  if (glucosaIncoming && valorSignoTriage(nextSignos.glucosa) === glucosaIncoming) {
+    const idxTriage = listaGluActual.findIndex((g) => g?.origen === 'triage');
+    const valorListaActual = idxTriage >= 0 ? valorSignoTriage(listaGluActual[idxTriage]?.valor) : '';
+    const sePuedeActualizarLista = !valorListaActual
+      || valorListaActual === valorSignoTriage(lastSynced.glucosa)
+      || valorListaActual === glucosaIncoming;
+    if (sePuedeActualizarLista) {
+      const entryTriage = {
+        fecha: new Date().toISOString().split('T')[0],
+        categoria: 'Capilar (triage)',
+        valor: incomingSv.glucosa,
+        origen: 'triage'
+      };
+      if (idxTriage >= 0) {
+        nextGlucosaLista = listaGluActual.map((g, i) => (i === idxTriage ? { ...g, ...entryTriage } : g));
+      } else {
+        nextGlucosaLista = [...listaGluActual, entryTriage];
+      }
+    }
+  }
+
+  const signosSinCambio =
+    JSON.stringify(signosActuales) === JSON.stringify(nextSignos)
+    && JSON.stringify(antropometriaActual) === JSON.stringify(nextAntropometria)
+    && JSON.stringify(listaGluActual) === JSON.stringify(nextGlucosaLista);
+
+  if (signosSinCambio) {
+    return { nextExpediente: prevExpediente, changed: false, replacedPesoOTalla: false };
+  }
+
+  const pesoAnterior = valorSignoTriage(antropometriaActual.peso) || valorSignoTriage(signosActuales.peso);
+  const tallaAnterior = valorSignoTriage(antropometriaActual.talla) || valorSignoTriage(signosActuales.talla);
+  const pesoNuevo = valorSignoTriage(nextAntropometria.peso) || valorSignoTriage(nextSignos.peso);
+  const tallaNueva = valorSignoTriage(nextAntropometria.talla) || valorSignoTriage(nextSignos.talla);
+  const replacedPesoOTalla = Boolean(
+    (pesoAnterior && pesoAnterior !== pesoNuevo) || (tallaAnterior && tallaAnterior !== tallaNueva)
+  );
+
+  return {
+    nextExpediente: {
+      ...prevExpediente,
+      consulta: {
+        ...prevExpediente.consulta,
+        exploracion: {
+          ...exploracionPrev,
+          signos: nextSignos,
+          antropometria: nextAntropometria,
+          glucosa: {
+            ...(exploracionPrev.glucosa || {}),
+            lista: nextGlucosaLista
+          }
+        }
+      }
+    },
+    changed: true,
+    replacedPesoOTalla
+  };
+};
+
 const formatDateIso = (date) => {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
   const year = date.getFullYear();
@@ -948,6 +1039,7 @@ const ExpedienteClinico = () => {
   const consultaInicioRef = useRef(new Date());
   const direccionDebugRef = useRef('');
   const expedienteParaRecetaRef = useRef(null);
+  const lastTriageSignosRef = useRef({});
   const isHistoricalReviewMode = Boolean(historicalReview?.historialId);
 
   // --- LÓGICA DE TEMPORIZADOR Y AUDIO ---
@@ -1687,6 +1779,7 @@ const ExpedienteClinico = () => {
       setLoading(true);
       savingRef.current = false;
       saveCompletedRef.current = false;
+      lastTriageSignosRef.current = {};
       citaEntryStateRef.current = {
         initialized: false,
         autoStarted: false,
@@ -1984,6 +2077,7 @@ const ExpedienteClinico = () => {
 
           // A) Signos Vitales
           if (dataCita.signos_vitales) {
+            lastTriageSignosRef.current = { ...dataCita.signos_vitales };
             nuevosDatos.consulta.exploracion.signos = {
               ...nuevosDatos.consulta.exploracion.signos,
               ...dataCita.signos_vitales
@@ -2156,63 +2250,22 @@ const ExpedienteClinico = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacienteId, citaId]);
 
-  // --- LISTENER TIEMPO REAL: Signos vitales de triage capturados después de iniciar consulta ---
+  // --- LISTENER TIEMPO REAL: Signos de triage (incluye correcciones 42 → 32) ---
+  // Si el médico no editó el campo, se toma el valor nuevo de la cita.
+  // Si ya lo cambió a mano, se respeta su edición.
   useEffect(() => {
     if (!citaId || loading) return;
     const unsub = onSnapshot(doc(db, "citas", citaId), (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
       if (!data.signos_vitales) return;
+      const sv = data.signos_vitales || {};
+      const lastSynced = { ...(lastTriageSignosRef.current || {}) };
+      let replacedPesoOTalla = false;
       setExpediente((prev) => {
-        // Solo actualizar si los signos están vacíos en el expediente (no sobreescribir ediciones del doctor)
-        const signosActuales = prev.consulta?.exploracion?.signos || {};
-        const tieneSignos = signosActuales.peso || signosActuales.talla || signosActuales.temp || signosActuales.ta || signosActuales.fc;
-        if (tieneSignos) return prev;
-        const sv = data.signos_vitales || {};
-        const nextSignos = { ...prev.consulta.exploracion.signos, ...sv };
-        const nextAntropometria = {
-          ...prev.consulta.exploracion.antropometria,
-          ...(sv.peso ? { peso: sv.peso } : {}),
-          ...(sv.talla ? { talla: sv.talla } : {}),
-          ...(sv.imc ? { imc: sv.imc } : {})
-        };
-        const listaGluActual = prev.consulta?.exploracion?.glucosa?.lista || [];
-        let nextGlucosaLista = listaGluActual;
-        if (sv.glucosa) {
-          const idxTriage = listaGluActual.findIndex((g) => g?.origen === 'triage');
-          const entryTriage = {
-            fecha: new Date().toISOString().split('T')[0],
-            categoria: 'Capilar (triage)',
-            valor: sv.glucosa,
-            origen: 'triage'
-          };
-          if (idxTriage >= 0) {
-            nextGlucosaLista = listaGluActual.map((g, i) => (i === idxTriage ? { ...g, ...entryTriage } : g));
-          } else {
-            nextGlucosaLista = [...listaGluActual, entryTriage];
-          }
-        }
-        const signosSinCambio =
-          JSON.stringify(prev.consulta?.exploracion?.signos || {}) === JSON.stringify(nextSignos)
-          && JSON.stringify(prev.consulta?.exploracion?.antropometria || {}) === JSON.stringify(nextAntropometria)
-          && JSON.stringify(listaGluActual) === JSON.stringify(nextGlucosaLista);
-        if (signosSinCambio) return prev;
-
-        const nextExpediente = {
-          ...prev,
-          consulta: {
-            ...prev.consulta,
-            exploracion: {
-              ...prev.consulta.exploracion,
-              signos: nextSignos,
-              antropometria: nextAntropometria,
-              glucosa: {
-                ...(prev.consulta.exploracion.glucosa || {}),
-                lista: nextGlucosaLista
-              }
-            }
-          }
-        };
+        const applied = aplicarSignosTriageAExpediente(prev, sv, lastSynced);
+        if (!applied.changed) return prev;
+        replacedPesoOTalla = applied.replacedPesoOTalla;
 
         const currentSnapshot = buildComparableDraftSnapshot({
           expediente: prev,
@@ -2224,7 +2277,7 @@ const ExpedienteClinico = () => {
 
         if (!exitBaselineRef.current || draftSnapshotsEqual(exitBaselineRef.current, currentSnapshot)) {
           exitBaselineRef.current = buildComparableDraftSnapshot({
-            expediente: nextExpediente,
+            expediente: applied.nextExpediente,
             tempMed,
             tempAlergia,
             tempCirugia,
@@ -2232,8 +2285,12 @@ const ExpedienteClinico = () => {
           });
         }
 
-        return nextExpediente;
+        return applied.nextExpediente;
       });
+      lastTriageSignosRef.current = { ...sv };
+      if (replacedPesoOTalla) {
+        showToast('Signos vitales actualizados desde triage. Verifique dosis si ya las calculó.', 'info');
+      }
     }, () => { });
     return () => unsub();
   }, [citaId, loading, tempMed, tempAlergia, tempCirugia, eventosDocumentales]);
@@ -3671,12 +3728,55 @@ const ExpedienteClinico = () => {
     [plantillasReceta, plantillaRecetaPreferidaId]
   );
 
-  const handlePrintReceta = () => {
+  const handlePrintReceta = async () => {
 
     if (plantillasReceta.length === 0) {
       showToast('No hay plantillas de receta configuradas. Contacte al administrador.', 'error');
       expedienteParaRecetaRef.current = null;
       return;
+    }
+
+    // Receta de la consulta actual: refrescar signos de la cita por si triage se corrigió.
+    // No aplica a reimpresión histórica (esa ya trae snapshot en expedienteParaRecetaRef).
+    if (!expedienteParaRecetaRef.current && citaId) {
+      try {
+        const citaSnap = await getDoc(doc(db, 'citas', citaId));
+        const sv = citaSnap.exists() ? (citaSnap.data()?.signos_vitales || null) : null;
+        if (sv) {
+          const lastSynced = { ...(lastTriageSignosRef.current || {}) };
+          const applied = aplicarSignosTriageAExpediente(expediente, sv, lastSynced);
+          lastTriageSignosRef.current = { ...sv };
+          if (applied.changed) {
+            setExpediente((prev) => {
+              const again = aplicarSignosTriageAExpediente(prev, sv, lastSynced);
+              if (!again.changed) return prev;
+              const currentSnapshot = buildComparableDraftSnapshot({
+                expediente: prev,
+                tempMed,
+                tempAlergia,
+                tempCirugia,
+                eventosDocumentales
+              });
+              if (!exitBaselineRef.current || draftSnapshotsEqual(exitBaselineRef.current, currentSnapshot)) {
+                exitBaselineRef.current = buildComparableDraftSnapshot({
+                  expediente: again.nextExpediente,
+                  tempMed,
+                  tempAlergia,
+                  tempCirugia,
+                  eventosDocumentales
+                });
+              }
+              return again.nextExpediente;
+            });
+            if (applied.replacedPesoOTalla) {
+              showToast('Signos vitales actualizados desde triage. Verifique dosis si ya las calculó.', 'info');
+            }
+          }
+          expedienteParaRecetaRef.current = applied.nextExpediente;
+        }
+      } catch (errorReceta) {
+        console.warn('No se pudieron refrescar signos de triage al imprimir:', errorReceta);
+      }
     }
 
     if (plantillaRecetaPreferida) {

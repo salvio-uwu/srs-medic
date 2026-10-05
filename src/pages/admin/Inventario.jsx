@@ -20,6 +20,7 @@ const EMPTY_FORM = {
   color: '#eab308', medicamento: '', grupo: '', sustanciaActiva: '',
   numeroAcomodo: '', presentacion: '', dosis: '', indicacion: '',
   opcion2: '', advertencia: '', embarazo: '', nivel: 3, activo: true,
+  antibiotico: false,
   consultoriosIds: [], medicosBloqueadosIds: [],
 };
 
@@ -82,9 +83,17 @@ const parseAcomodo = (value) => {
 
 const isOrderedAcomodo = (n) => n != null && n >= 1;
 
-const detectAcomodoWidth = (rows = []) => {
+const isAntibiotico = (rowOrFlag) => {
+  if (typeof rowOrFlag === 'boolean') return rowOrFlag;
+  return !!(rowOrFlag?.antibiotico || rowOrFlag?.esAntibiotico);
+};
+
+const apartadoLabel = (antibiotico) => (antibiotico ? 'antibióticos' : 'venta libre');
+
+const detectAcomodoWidth = (rows = [], antibiotico = null) => {
   let width = 0;
   rows.forEach((row) => {
+    if (antibiotico != null && isAntibiotico(row) !== !!antibiotico) return;
     const raw = String(row.numeroAcomodo ?? '').trim().replace(/^#/, '');
     if (/^\d+$/.test(raw) && parseInt(raw, 10) >= 1) width = Math.max(width, raw.length);
   });
@@ -105,20 +114,31 @@ const acomodoUpdateFields = (formatted, user) => ({
   updatedByName: user.nombre,
 });
 
-/** Desplaza en cascada solo acomodos >= 1. El 0 nunca participa. */
-const shiftAcomodos = async ({ rows, fromInclusive, toInclusive = Infinity, delta, excludeId = null, width = 3, user }) => {
+/**
+ * Desplaza en cascada solo acomodos >= 1 del mismo apartado
+ * (venta libre o antibióticos). El 0 nunca participa.
+ */
+const shiftAcomodos = async ({
+  rows, fromInclusive, toInclusive = Infinity, delta,
+  excludeId = null, width = 3, user, antibiotico = false,
+}) => {
   if (!delta || !Number.isFinite(fromInclusive)) return 0;
   const from = Math.max(1, fromInclusive);
+  const wantAbx = !!antibiotico;
 
   const targets = rows
-    .map((row) => ({ id: row.id, n: parseAcomodo(row.numeroAcomodo) }))
+    .map((row) => ({
+      id: row.id,
+      n: parseAcomodo(row.numeroAcomodo),
+      antibiotico: isAntibiotico(row),
+    }))
     .filter((row) => {
       if (!row.id || row.id === excludeId || !isOrderedAcomodo(row.n)) return false;
+      if (row.antibiotico !== wantAbx) return false;
       if (row.n < from) return false;
       if (Number.isFinite(toInclusive) && row.n > toInclusive) return false;
       return true;
     })
-    // Al subir: primero los más altos; al bajar: primero los más bajos (evita choques temporales)
     .sort((a, b) => (delta > 0 ? b.n - a.n : a.n - b.n));
 
   if (!targets.length) return 0;
@@ -135,6 +155,21 @@ const shiftAcomodos = async ({ rows, fromInclusive, toInclusive = Infinity, delt
   }
 
   return targets.length;
+};
+
+const countShiftTargets = (rows, {
+  fromInclusive, toInclusive = Infinity, excludeId = null, antibiotico = false,
+}) => {
+  const from = Math.max(1, fromInclusive);
+  const wantAbx = !!antibiotico;
+  return rows.filter((row) => {
+    if (!row.id || row.id === excludeId) return false;
+    if (isAntibiotico(row) !== wantAbx) return false;
+    const n = parseAcomodo(row.numeroAcomodo);
+    if (!isOrderedAcomodo(n) || n < from) return false;
+    if (Number.isFinite(toInclusive) && n > toInclusive) return false;
+    return true;
+  }).length;
 };
 
 /* ─── normalize from Firestore ─── */
@@ -155,6 +190,7 @@ const normalize = (id, d = {}) => {
     presentacion: pres, dosis: dos, indicacion: ind, opcion2: op2,
     advertencia: adv, embarazo: emb, color: colorByNivel(niv), nivel: niv,
     activo: d.activo !== false,
+    antibiotico: !!(d.antibiotico || d.esAntibiotico),
     consultoriosIds: Array.isArray(d.consultoriosIds) ? d.consultoriosIds : [],
     medicosBloqueadosIds: Array.isArray(d.medicosBloqueadosIds) ? d.medicosBloqueadosIds : [],
   };
@@ -178,6 +214,8 @@ const buildPayload = (f, user, acomodoOverride = null) => {
   color: colorByNivel(Number(f.nivel) || 3),
   nivel: Number(f.nivel) || 3,
   activo: !!f.activo,
+  antibiotico: !!f.antibiotico,
+  esAntibiotico: !!f.antibiotico,
   consultoriosIds: Array.isArray(f.consultoriosIds) ? f.consultoriosIds : [],
   medicosBloqueadosIds: Array.isArray(f.medicosBloqueadosIds) ? f.medicosBloqueadosIds : [],
   // backward-compat
@@ -218,6 +256,7 @@ const Inventario = () => {
   const [search, setSearch] = useState('');
   const [nivelFilter, setNivelFilter] = useState(0);
   const [estadoFilter, setEstadoFilter] = useState('todos');
+  const [apartadoFilter, setApartadoFilter] = useState('todos'); // todos | libre | antibioticos
 
   // pagination
   const [hasMore, setHasMore] = useState(true);
@@ -322,11 +361,13 @@ const Inventario = () => {
     if (nivelFilter > 0) list = list.filter(m => m.nivel === nivelFilter);
     if (estadoFilter === 'activos') list = list.filter(m => m.activo);
     if (estadoFilter === 'inactivos') list = list.filter(m => !m.activo);
+    if (apartadoFilter === 'libre') list = list.filter(m => !m.antibiotico);
+    if (apartadoFilter === 'antibioticos') list = list.filter(m => !!m.antibiotico);
     return list;
-  }, [meds, search, nivelFilter, estadoFilter]);
+  }, [meds, search, nivelFilter, estadoFilter, apartadoFilter]);
 
   // Reset page to 1 when filters change
-  useEffect(() => { setPage(1); }, [search, nivelFilter, estadoFilter]);
+  useEffect(() => { setPage(1); }, [search, nivelFilter, estadoFilter, apartadoFilter]);
 
   /* ── paginated slice of filtered results ── */
   const totalFiltered = filtered.length;
@@ -343,6 +384,7 @@ const Inventario = () => {
       total: totalCount || all.length,
       activos: all.filter(m => m.activo).length,
       inactivos: all.filter(m => !m.activo).length,
+      antibioticos: all.filter(m => m.antibiotico).length,
       conRestricciones: all.filter(m => m.consultoriosIds.length > 0 || m.medicosBloqueadosIds.length > 0).length,
     };
   }, [meds, totalCount]);
@@ -383,6 +425,7 @@ const Inventario = () => {
       embarazo: m.embarazo || '',
       nivel: m.nivel || 3,
       activo: m.activo !== false,
+      antibiotico: !!m.antibiotico,
       consultoriosIds: m.consultoriosIds || [],
       medicosBloqueadosIds: m.medicosBloqueadosIds || [],
     });
@@ -402,95 +445,127 @@ const Inventario = () => {
     });
   };
 
-  /* ── save (con reacomodo en cascada del N° de acomodo) ── */
+  /* ── save (con reacomodo en cascada del N° de acomodo, por apartado) ── */
   const buildAcomodoPlan = () => {
     const rows = allDocsRef.current;
-    const width = detectAcomodoWidth(rows);
     const targetN = parseAcomodo(form.numeroAcomodo);
-    const oldN = editingId
-      ? parseAcomodo(rows.find((r) => r.id === editingId)?.numeroAcomodo)
-      : null;
+    const newAbx = !!form.antibiotico;
+    const width = detectAcomodoWidth(rows, newAbx);
+    const editingRow = editingId ? rows.find((r) => r.id === editingId) : null;
+    const oldN = editingRow ? parseAcomodo(editingRow.numeroAcomodo) : null;
+    const oldAbx = editingRow ? isAntibiotico(editingRow) : newAbx;
+    const apartadoChanged = !!editingId && oldAbx !== newAbx;
 
     let needsShift = false;
-    let mode = 'none'; // insert | moveForward | moveBack | clear | toZero
+    let mode = 'none';
+    // Acciones de cascada a ejecutar (orden importa)
+    const actions = [];
 
-    // 0 es repetible: no empuja a nadie. Si salía de un acomodo >= 1, sí se cierra el hueco.
-    if (targetN === 0) {
+    const pushInsert = (antibiotico, n) => {
+      const count = countShiftTargets(rows, {
+        fromInclusive: n, excludeId: editingId, antibiotico,
+      });
+      if (count > 0) {
+        actions.push({ type: 'insert', antibiotico, from: n, count });
+        needsShift = true;
+      }
+    };
+    const pushClose = (antibiotico, n) => {
+      if (!isOrderedAcomodo(n)) return;
+      const count = countShiftTargets(rows, {
+        fromInclusive: n + 1, excludeId: editingId, antibiotico,
+      });
+      if (count > 0) {
+        actions.push({ type: 'close', antibiotico, from: n + 1, count });
+        needsShift = true;
+      }
+    };
+    const pushMoveForward = (antibiotico, target, old) => {
+      const count = countShiftTargets(rows, {
+        fromInclusive: target, toInclusive: old - 1, excludeId: editingId, antibiotico,
+      });
+      if (count > 0) {
+        actions.push({ type: 'moveForward', antibiotico, from: target, to: old - 1, count });
+        needsShift = true;
+      }
+    };
+    const pushMoveBack = (antibiotico, target, old) => {
+      const count = countShiftTargets(rows, {
+        fromInclusive: old + 1, toInclusive: target, excludeId: editingId, antibiotico,
+      });
+      if (count > 0) {
+        actions.push({ type: 'moveBack', antibiotico, from: old + 1, to: target, count });
+        needsShift = true;
+      }
+    };
+
+    if (apartadoChanged) {
+      // Sale de un estante e entra al otro
+      pushClose(oldAbx, oldN);
+      if (isOrderedAcomodo(targetN)) pushInsert(newAbx, targetN);
+      mode = needsShift ? 'switchApartado' : 'none';
+    } else if (targetN === 0) {
       if (isOrderedAcomodo(oldN)) {
-        needsShift = rows.some((r) => {
-          if (r.id === editingId) return false;
-          const n = parseAcomodo(r.numeroAcomodo);
-          return isOrderedAcomodo(n) && n > oldN;
-        });
+        pushClose(newAbx, oldN);
         mode = needsShift ? 'toZero' : 'none';
       }
     } else if (isOrderedAcomodo(targetN)) {
       if (!editingId || !isOrderedAcomodo(oldN)) {
-        // Alta o venir desde 0/vacío hacia un lugar del anaquel
-        needsShift = rows.some((r) => {
-          if (r.id === editingId) return false;
-          const n = parseAcomodo(r.numeroAcomodo);
-          return isOrderedAcomodo(n) && n >= targetN;
-        });
+        pushInsert(newAbx, targetN);
         mode = needsShift ? 'insert' : 'none';
       } else if (targetN < oldN) {
-        needsShift = rows.some((r) => {
-          if (r.id === editingId) return false;
-          const n = parseAcomodo(r.numeroAcomodo);
-          return isOrderedAcomodo(n) && n >= targetN && n < oldN;
-        });
+        pushMoveForward(newAbx, targetN, oldN);
         mode = needsShift ? 'moveForward' : 'none';
       } else if (targetN > oldN) {
-        needsShift = rows.some((r) => {
-          if (r.id === editingId) return false;
-          const n = parseAcomodo(r.numeroAcomodo);
-          return isOrderedAcomodo(n) && n > oldN && n <= targetN;
-        });
+        pushMoveBack(newAbx, targetN, oldN);
         mode = needsShift ? 'moveBack' : 'none';
       }
     } else if (editingId && isOrderedAcomodo(oldN)) {
-      // Campo vacío: sale del anaquel ordenado
-      needsShift = rows.some((r) => {
-        if (r.id === editingId) return false;
-        const n = parseAcomodo(r.numeroAcomodo);
-        return isOrderedAcomodo(n) && n > oldN;
-      });
+      pushClose(oldAbx, oldN);
       mode = needsShift ? 'clear' : 'none';
     }
 
     const posLabel = targetN != null ? formatAcomodo(targetN, width) : '';
+    const apLabel = apartadoLabel(newAbx);
     let title = 'Actualizar orden del anaquel';
     let message = '';
     let detail = '';
 
     if (mode === 'insert') {
       title = 'Este número ya está en uso';
-      message = `El número #${posLabel} ya pertenece a otro medicamento. Si continúas, este medicamento ocupará ese lugar.`;
-      detail = 'Los medicamentos que estaban en esa posición o después recibirán un número nuevo de forma automática, para mantener el orden del anaquel.';
-    } else if (mode === 'moveForward') {
+      message = `El número #${posLabel} ya está ocupado en ${apLabel}. Si continúas, este medicamento ocupará ese lugar.`;
+      detail = `Solo se reordenarán los medicamentos del apartado de ${apLabel}.`;
+    } else if (mode === 'moveForward' || mode === 'moveBack') {
       title = 'Cambiar número de acomodo';
-      message = `Este medicamento pasará a ocupar el número #${posLabel}.`;
-      detail = 'Los que estaban en medio se correrán un lugar para abrirle espacio.';
-    } else if (mode === 'moveBack') {
-      title = 'Cambiar número de acomodo';
-      message = `Este medicamento pasará a ocupar el número #${posLabel}.`;
-      detail = 'Los números intermedios se ajustarán solos para no dejar huecos.';
+      message = `Este medicamento pasará a ocupar el número #${posLabel} en ${apLabel}.`;
+      detail = `Los números del mismo apartado se ajustarán solos.`;
+    } else if (mode === 'switchApartado') {
+      title = newAbx ? 'Mover a estante de antibióticos' : 'Mover a venta libre';
+      message = newAbx
+        ? 'Este medicamento se marcará como antibiótico y pasará al anaquel de antibióticos.'
+        : 'Este medicamento dejará de ser antibiótico y pasará al anaquel de venta libre.';
+      detail = 'Se cerrará su lugar en el estante anterior y se acomodará en el nuevo apartado.';
     } else if (mode === 'toZero') {
       title = 'Pasar a acomodo 0';
-      message = 'Este medicamento quedará con número 0. Puedes tener varios medicamentos con 0 al mismo tiempo.';
-      detail = 'El lugar que ocupaba en el anaquel (desde 1) se cerrará y los siguientes números se ajustarán solos.';
+      message = 'Este medicamento quedará con número 0. Puedes tener varios con 0.';
+      detail = `El lugar que ocupaba en ${apLabel} se cerrará automáticamente.`;
     } else if (mode === 'clear') {
       title = 'Quitar número de acomodo';
       message = 'Se quitará el número de acomodo de este medicamento.';
-      detail = 'Los siguientes en el anaquel se ajustarán para no dejar un espacio vacío.';
+      detail = `Los siguientes en ${apLabel} se ajustarán para no dejar un espacio vacío.`;
     }
 
-    return { rows, width, targetN, oldN, needsShift, mode, title, message, detail };
+    return {
+      rows, width, targetN, oldN, newAbx, oldAbx, apartadoChanged,
+      needsShift, mode, actions, title, message, detail,
+    };
   };
 
   const executeSave = async (plan) => {
     const user = resolveUser();
-    const { rows, width, targetN, oldN } = plan;
+    const {
+      rows, width, targetN, oldN, newAbx, oldAbx, apartadoChanged, actions = [],
+    } = plan;
     const formattedAcomodo = targetN != null ? formatAcomodo(targetN, width) : '';
     const payload = buildPayload(form, user, formattedAcomodo);
 
@@ -499,31 +574,78 @@ const Inventario = () => {
     setConfirmAcomodo(null);
 
     try {
-      if (targetN === 0) {
-        // Sale del anaquel ordenado hacia 0 (repetible)
-        if (isOrderedAcomodo(oldN)) {
+      // Ejecutar acciones de cascada en orden
+      for (const action of actions) {
+        const abx = !!action.antibiotico;
+        const w = detectAcomodoWidth(rows, abx) || width;
+        if (action.type === 'insert') {
           await shiftAcomodos({
-            rows, fromInclusive: oldN + 1, delta: -1, excludeId: editingId, width, user,
+            rows, fromInclusive: action.from, delta: 1,
+            excludeId: editingId, width: w, user, antibiotico: abx,
+          });
+        } else if (action.type === 'close') {
+          await shiftAcomodos({
+            rows, fromInclusive: action.from, delta: -1,
+            excludeId: editingId, width: w, user, antibiotico: abx,
+          });
+        } else if (action.type === 'moveForward') {
+          await shiftAcomodos({
+            rows, fromInclusive: action.from, toInclusive: action.to, delta: 1,
+            excludeId: editingId, width: w, user, antibiotico: abx,
+          });
+        } else if (action.type === 'moveBack') {
+          await shiftAcomodos({
+            rows, fromInclusive: action.from, toInclusive: action.to, delta: -1,
+            excludeId: editingId, width: w, user, antibiotico: abx,
           });
         }
-      } else if (isOrderedAcomodo(targetN)) {
-        if (!editingId || !isOrderedAcomodo(oldN)) {
+      }
+
+      // Fallback si no venía plan con actions (compat)
+      if (!actions.length) {
+        if (apartadoChanged) {
+          if (isOrderedAcomodo(oldN)) {
+            await shiftAcomodos({
+              rows, fromInclusive: oldN + 1, delta: -1,
+              excludeId: editingId, width: detectAcomodoWidth(rows, oldAbx), user, antibiotico: oldAbx,
+            });
+          }
+          if (isOrderedAcomodo(targetN)) {
+            await shiftAcomodos({
+              rows, fromInclusive: targetN, delta: 1,
+              excludeId: editingId, width, user, antibiotico: newAbx,
+            });
+          }
+        } else if (targetN === 0) {
+          if (isOrderedAcomodo(oldN)) {
+            await shiftAcomodos({
+              rows, fromInclusive: oldN + 1, delta: -1,
+              excludeId: editingId, width, user, antibiotico: newAbx,
+            });
+          }
+        } else if (isOrderedAcomodo(targetN)) {
+          if (!editingId || !isOrderedAcomodo(oldN)) {
+            await shiftAcomodos({
+              rows, fromInclusive: targetN, delta: 1,
+              excludeId: editingId, width, user, antibiotico: newAbx,
+            });
+          } else if (targetN < oldN) {
+            await shiftAcomodos({
+              rows, fromInclusive: targetN, toInclusive: oldN - 1, delta: 1,
+              excludeId: editingId, width, user, antibiotico: newAbx,
+            });
+          } else if (targetN > oldN) {
+            await shiftAcomodos({
+              rows, fromInclusive: oldN + 1, toInclusive: targetN, delta: -1,
+              excludeId: editingId, width, user, antibiotico: newAbx,
+            });
+          }
+        } else if (editingId && isOrderedAcomodo(oldN)) {
           await shiftAcomodos({
-            rows, fromInclusive: targetN, delta: 1, excludeId: editingId, width, user,
-          });
-        } else if (targetN < oldN) {
-          await shiftAcomodos({
-            rows, fromInclusive: targetN, toInclusive: oldN - 1, delta: 1, excludeId: editingId, width, user,
-          });
-        } else if (targetN > oldN) {
-          await shiftAcomodos({
-            rows, fromInclusive: oldN + 1, toInclusive: targetN, delta: -1, excludeId: editingId, width, user,
+            rows, fromInclusive: oldN + 1, delta: -1,
+            excludeId: editingId, width, user, antibiotico: oldAbx,
           });
         }
-      } else if (editingId && isOrderedAcomodo(oldN)) {
-        await shiftAcomodos({
-          rows, fromInclusive: oldN + 1, delta: -1, excludeId: editingId, width, user,
-        });
       }
 
       if (editingId) {
@@ -583,17 +705,19 @@ const Inventario = () => {
     }
   };
 
-  /* ── delete (cierra hueco de acomodo) ── */
+  /* ── delete (cierra hueco de acomodo en su apartado) ── */
   const handleDelete = async (id) => {
     try {
       const user = resolveUser();
       const rows = allDocsRef.current;
-      const width = detectAcomodoWidth(rows);
-      const deletedN = parseAcomodo(rows.find((r) => r.id === id)?.numeroAcomodo);
+      const deleted = rows.find((r) => r.id === id);
+      const deletedN = parseAcomodo(deleted?.numeroAcomodo);
+      const deletedAbx = isAntibiotico(deleted);
+      const width = detectAcomodoWidth(rows, deletedAbx);
 
       await deleteDoc(doc(db, 'catalogo_medicamentos', id));
 
-      // Solo cerrar hueco si salía del anaquel ordenado (>= 1). El 0 no mueve a nadie.
+      // Solo cerrar hueco si salía del anaquel ordenado (>= 1) de su apartado.
       if (isOrderedAcomodo(deletedN)) {
         await shiftAcomodos({
           rows,
@@ -602,6 +726,7 @@ const Inventario = () => {
           excludeId: id,
           width,
           user,
+          antibiotico: deletedAbx,
         });
       }
 
@@ -640,19 +765,22 @@ const Inventario = () => {
     );
   }, [doctors, accessQuery]);
 
-  /* ── PDF etiquetas de acomodo ── */
+  /* ── PDF etiquetas de acomodo (venta libre + antibióticos) ── */
   const handleGenerarDocumentoAcomodo = async () => {
-    const items = allDocsRef.current
-      .filter((m) => m.activo !== false && isOrderedAcomodo(parseAcomodo(m.numeroAcomodo)))
-      .slice()
-      .sort((a, b) => {
-        const na = parseAcomodo(a.numeroAcomodo);
-        const nb = parseAcomodo(b.numeroAcomodo);
-        if (na !== nb) return na - nb;
-        return String(a.medicamento || '').localeCompare(String(b.medicamento || ''), 'es');
-      });
+    const sortAcomodo = (list) => list.slice().sort((a, b) => {
+      const na = parseAcomodo(a.numeroAcomodo);
+      const nb = parseAcomodo(b.numeroAcomodo);
+      if (na !== nb) return na - nb;
+      return String(a.medicamento || '').localeCompare(String(b.medicamento || ''), 'es');
+    });
 
-    if (!items.length) {
+    const activos = allDocsRef.current.filter(
+      (m) => m.activo !== false && isOrderedAcomodo(parseAcomodo(m.numeroAcomodo))
+    );
+    const ventaLibre = sortAcomodo(activos.filter((m) => !m.antibiotico));
+    const antibioticos = sortAcomodo(activos.filter((m) => !!m.antibiotico));
+
+    if (!ventaLibre.length && !antibioticos.length) {
       setError('No hay medicamentos activos con número de acomodo desde 1 para generar el documento.');
       return;
     }
@@ -660,7 +788,9 @@ const Inventario = () => {
     setGeneratingPdf(true);
     setError('');
     try {
-      const blob = await pdf(<EtiquetasAcomodoPDF medicamentos={items} />).toBlob();
+      const blob = await pdf(
+        <EtiquetasAcomodoPDF ventaLibre={ventaLibre} antibioticos={antibioticos} />
+      ).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const stamp = new Date().toISOString().slice(0, 10);
@@ -731,6 +861,9 @@ const Inventario = () => {
             Inactivos: {stats.inactivos}
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 11, fontWeight: 700, color: '#111' }}>
+            Antibióticos: {stats.antibioticos}
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fafafa', fontSize: 11, fontWeight: 700, color: '#111' }}>
             Con reglas: {stats.conRestricciones}
           </span>
         </div>
@@ -761,6 +894,14 @@ const Inventario = () => {
           <option value="todos">Todos</option>
           <option value="activos">Activos</option>
           <option value="inactivos">Inactivos</option>
+        </select>
+        <select
+          style={{ padding: '8px 12px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', color: '#111', outline: 'none' }}
+          value={apartadoFilter}
+          onChange={e => setApartadoFilter(e.target.value)}>
+          <option value="todos">Todos los estantes</option>
+          <option value="libre">Venta libre</option>
+          <option value="antibioticos">Antibióticos</option>
         </select>
         <button type="button"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 12, borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#4b5563', fontWeight: 600, cursor: 'pointer' }}
@@ -818,6 +959,9 @@ const Inventario = () => {
                           {!m.activo && (
                             <span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 600, background: '#e5e7eb', color: '#6b7280' }}>OFF</span>
                           )}
+                          {m.antibiotico && (
+                            <span style={{ flexShrink: 0, padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700, background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' }}>ABX</span>
+                          )}
                           {(m.consultoriosIds.length > 0 || m.medicosBloqueadosIds.length > 0) && (
                             <span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: '50%', background: '#4b5563' }} title="Tiene reglas de acceso" />
                           )}
@@ -831,7 +975,10 @@ const Inventario = () => {
                       </td>
                       <td style={{ padding: '8px 12px', color: '#4b5563', maxWidth: 100 }}>
                         {m.numeroAcomodo ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 4, background: '#f3f4f6', border: '1px solid #e5e7eb', fontSize: 10, fontWeight: 700, color: '#111' }}>#{m.numeroAcomodo}</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 4, background: '#f3f4f6', border: '1px solid #e5e7eb', fontSize: 10, fontWeight: 700, color: '#111' }}>#{m.numeroAcomodo}</span>
+                            <span style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600 }}>{m.antibiotico ? 'ABX' : 'VL'}</span>
+                          </span>
                         ) : (
                           <span style={{ color: '#d1d5db' }}>—</span>
                         )}
@@ -1032,7 +1179,7 @@ const Inventario = () => {
                         onChange={e => setForm(p => ({ ...p, numeroAcomodo: e.target.value.replace(/[^\d]/g, '') }))}
                       />
                       <p style={{ fontSize: 10, color: '#6b7280', margin: '4px 0 0', lineHeight: 1.35 }}>
-                        El 0 se puede repetir en varios medicamentos. El orden del anaquel inicia en 1: si ese número ya está ocupado, el sistema reordena los siguientes automáticamente.
+                        El 0 se puede repetir (no se vende / sin anaquel). Desde 1, el reorden es solo dentro del mismo estante: venta libre o antibióticos.
                       </p>
                     </div>
                     <div>
@@ -1080,13 +1227,23 @@ const Inventario = () => {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280' }}>Activo:</label>
-                    <button type="button"
-                      style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: '1px solid #e5e7eb', color: form.activo ? '#111' : '#6b7280', background: form.activo ? '#fff' : '#e5e7eb', cursor: 'pointer' }}
-                      onClick={() => setForm(p => ({ ...p, activo: !p.activo }))}>
-                      {form.activo ? 'Si' : 'No'}
-                    </button>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280' }}>Antibiótico (estante aparte):</label>
+                      <button type="button"
+                        style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: form.antibiotico ? '1px solid #fecaca' : '1px solid #e5e7eb', color: form.antibiotico ? '#991b1b' : '#6b7280', background: form.antibiotico ? '#fee2e2' : '#fff', cursor: 'pointer' }}
+                        onClick={() => setForm(p => ({ ...p, antibiotico: !p.antibiotico }))}>
+                        {form.antibiotico ? 'Sí — anaquel antibióticos' : 'No — venta libre'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280' }}>Activo:</label>
+                      <button type="button"
+                        style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: '1px solid #e5e7eb', color: form.activo ? '#111' : '#6b7280', background: form.activo ? '#fff' : '#e5e7eb', cursor: 'pointer' }}
+                        onClick={() => setForm(p => ({ ...p, activo: !p.activo }))}>
+                        {form.activo ? 'Si' : 'No'}
+                      </button>
+                    </div>
                   </div>
                 </>
               ) : (

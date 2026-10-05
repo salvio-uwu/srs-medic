@@ -1,4 +1,5 @@
 // Etiquetas de acomodo — colometría del PDF de referencia ETIQUETAS MEDICAMENTO 2025
+// Dos apartados: venta libre (1→∞) y antibióticos (1→∞)
 import React from 'react';
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 
@@ -25,6 +26,25 @@ const s = StyleSheet.create({
     paddingHorizontal: 6,
     fontFamily: 'Helvetica',
     backgroundColor: '#ffffff',
+  },
+  sectionBanner: {
+    marginBottom: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#111827',
+  },
+  sectionBannerText: {
+    fontFamily: 'Helvetica-Bold',
+    fontSize: 11,
+    color: '#ffffff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sectionSub: {
+    fontFamily: 'Helvetica',
+    fontSize: 8,
+    color: '#d1d5db',
+    marginTop: 2,
   },
   grid: {
     flex: 1,
@@ -81,7 +101,6 @@ const chunkPages = (items) => {
   for (let i = 0; i < items.length; i += PER_PAGE) {
     pages.push(items.slice(i, i + PER_PAGE));
   }
-  if (!pages.length) pages.push([]);
   return pages;
 };
 
@@ -116,31 +135,76 @@ const EtiquetaCell = ({ med }) => {
   );
 };
 
-const EtiquetasAcomodoPDF = ({ medicamentos = [] }) => {
-  const pages = chunkPages(medicamentos);
+const SectionPages = ({ title, subtitle, items, keyPrefix }) => {
+  if (!items.length) return null;
+  const pages = chunkPages(items);
+
+  return pages.map((pageItems, pageIdx) => {
+    const columns = buildColumns(pageItems);
+    return (
+      <Page key={`${keyPrefix}-${pageIdx}`} size="LETTER" style={s.page}>
+        {pageIdx === 0 ? (
+          <View style={s.sectionBanner}>
+            <Text style={s.sectionBannerText}>{title}</Text>
+            {subtitle ? <Text style={s.sectionSub}>{subtitle}</Text> : null}
+          </View>
+        ) : null}
+        <View style={s.grid}>
+          {columns.map((colItems, colIdx) => (
+            <View key={`${keyPrefix}-c-${pageIdx}-${colIdx}`} style={s.column}>
+              {colItems.map((med, rowIdx) => (
+                <EtiquetaCell
+                  key={med?.id || `${keyPrefix}-e-${pageIdx}-${colIdx}-${rowIdx}`}
+                  med={med}
+                />
+              ))}
+            </View>
+          ))}
+        </View>
+      </Page>
+    );
+  });
+};
+
+const EtiquetasAcomodoPDF = ({
+  ventaLibre = [],
+  antibioticos = [],
+  // compat: si alguien pasa medicamentos planos, se tratan como venta libre
+  medicamentos = [],
+}) => {
+  const libre = ventaLibre.length ? ventaLibre : medicamentos.filter((m) => !m.antibiotico);
+  const abx = antibioticos.length
+    ? antibioticos
+    : medicamentos.filter((m) => !!m.antibiotico);
+
+  const hasAny = libre.length > 0 || abx.length > 0;
 
   return (
     <Document
       title="Documento de acomodo"
       author="SRS-Medic"
-      subject="Etiquetas de anaquel por número de acomodo"
+      subject="Etiquetas de anaquel: venta libre y antibióticos"
     >
-      {pages.map((pageItems, pageIdx) => {
-        const columns = buildColumns(pageItems);
-        return (
-          <Page key={`p-${pageIdx}`} size="LETTER" style={s.page}>
-            <View style={s.grid}>
-              {columns.map((colItems, colIdx) => (
-                <View key={`c-${pageIdx}-${colIdx}`} style={s.column}>
-                  {colItems.map((med, rowIdx) => (
-                    <EtiquetaCell key={med?.id || `e-${pageIdx}-${colIdx}-${rowIdx}`} med={med} />
-                  ))}
-                </View>
-              ))}
-            </View>
-          </Page>
-        );
-      })}
+      {!hasAny ? (
+        <Page size="LETTER" style={s.page}>
+          <View style={s.sectionBanner}>
+            <Text style={s.sectionBannerText}>Sin medicamentos para etiquetar</Text>
+          </View>
+        </Page>
+      ) : null}
+
+      <SectionPages
+        keyPrefix="vl"
+        title="Venta libre"
+        subtitle={`Anaquel general · ${libre.length} etiqueta(s) · numeración propia 1 → ∞`}
+        items={libre}
+      />
+      <SectionPages
+        keyPrefix="abx"
+        title="Antibióticos"
+        subtitle={`Estante aparte · ${abx.length} etiqueta(s) · numeración propia 1 → ∞`}
+        items={abx}
+      />
     </Document>
   );
 };

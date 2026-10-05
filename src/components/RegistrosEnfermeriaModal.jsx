@@ -1339,7 +1339,14 @@ const RegistrosEnfermeriaModal = ({ onClose, enfermeraNombre, sucursal = '', sta
       showToast('Entrada integrada al inventario de tu sucursal.', 'success');
     } catch (err) {
       console.error(err);
-      showToast('No se pudo integrar al inventario.', 'error');
+      const denied = String(err?.code || '').includes('permission-denied')
+        || /insufficient permissions|permission denied/i.test(String(err?.message || ''));
+      showToast(
+        denied
+          ? 'No tienes permiso para integrar al inventario. Contacta a jefatura o sistemas.'
+          : 'No se pudo integrar al inventario.',
+        'error'
+      );
     } finally {
       setIntegrandoId(null);
     }

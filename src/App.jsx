@@ -1036,6 +1036,7 @@ function App() {
         <Route path="/enfermeria/caducidades" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><CaducidadesEnfermeria /></PermissionRoute>} />
         <Route path="/enfermeria/expediente" element={<PermissionRoute permissionId="enfermeria.dashboard" fallbackRoles={['enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa']}><ExpedienteClinico /></PermissionRoute>} />
         {/* La orden de servicio la abre quien agenda: enfermería, recepción, médicos o admin */}
+        <Route path="/enfermeria/orden-servicio/:citaId" element={<PermissionRoute permissionId={['enfermeria.dashboard', 'shared.agenda', 'doctor.agenda', 'admin.dashboard']} fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo', 'medico', 'doctor']}><OrdenServicioEnfermeria /></PermissionRoute>} />
         <Route path="/enfermeria/orden-servicio" element={<PermissionRoute permissionId={['enfermeria.dashboard', 'shared.agenda', 'doctor.agenda', 'admin.dashboard']} fallbackRoles={['admin', 'admin_maestro', 'administrador', 'enfermeria', 'enfermera', 'enfermero', 'jefa_enfermeria', 'jefa', 'recepcion', 'operativo', 'medico', 'doctor']}><OrdenServicioEnfermeria /></PermissionRoute>} />
 
         {/* --- RUTAS COMPARTIDAS --- */}

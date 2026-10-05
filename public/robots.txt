@@ -1,0 +1,13 @@
+# Sistema clínico interno — no indexar en buscadores.
+# Meta necesita leer la página de inicio para verificar el dominio.
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Facebot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: *
+Disallow: /
